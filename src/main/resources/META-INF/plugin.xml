@@ -1,0 +1,31 @@
+<idea-plugin>
+    <id>com.bloxbean.intelliada</id>
+    <name>IntelliAda Cadano Integration</name>
+    <vendor email="info@bloxbean.com" url="https://github.com/bloxbean/intelliada/">BloxBean IntelliAda Project
+    </vendor>
+
+    <description><![CDATA[
+    Intellij IDEA plugin for Cardano blockchain
+    ]]></description>
+
+    <idea-version since-build="202"/>
+
+    <!-- please see https://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
+         on how to target different products -->
+<!--    <depends>com.intellij.modules.platform</depends>-->
+
+    <extensions defaultExtensionNs="com.intellij">
+
+        <toolWindow id="Cardano"
+                    anchor="right"
+                    factoryClass="com.bloxbean.intelliada.idea.toolwindow.CardanoToolWindowFactory"/>
+
+    </extensions>
+
+    <actions>
+
+        <action id="HelloAction" class="com.bloxbean.intelliada.idea.toolwindow.HelloAction" text="HelloAction IntelliAda">
+            <add-to-group group-id="NewGroup"  />
+        </action>
+    </actions>
+</idea-plugin>
