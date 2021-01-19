@@ -1,0 +1,151 @@
+package com.bloxbean.intelliada.idea.toolwindow.ui;
+
+import com.bloxbean.intelliada.idea.configuration.action.CreateRemoteNodeAction;
+import com.bloxbean.intelliada.idea.configuration.action.DeleteRemoteNodeAction;
+import com.bloxbean.intelliada.idea.configuration.action.UpdateRemoteNodeAction;
+import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.messaging.RemoteNodeChangeNotifier;
+import com.bloxbean.intelliada.idea.toolwindow.CardanoExplorerTreeStructure;
+import com.intellij.ide.util.treeView.NodeRenderer;
+import com.intellij.openapi.Disposable;
+import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.SimpleToolWindowPanel;
+import com.intellij.ui.PopupHandler;
+import com.intellij.ui.ScrollPaneFactory;
+import com.intellij.ui.tree.AsyncTreeModel;
+import com.intellij.ui.tree.StructureTreeModel;
+import com.intellij.ui.treeStructure.Tree;
+import com.intellij.util.ui.JBUI;
+import org.jetbrains.annotations.Nullable;
+
+import javax.swing.*;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreePath;
+import java.awt.*;
+
+public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvider, Disposable {
+    private final static String CARDANO_EXPLORER_POPUP = "CardanoExplorerPopup";
+    private Project myProject;
+    private Tree myTree;
+    private StructureTreeModel myTreeModel;
+    private CardanoExplorerTreeStructure myTreeStructure;
+
+//    private final TreeExpander myTreeExpander = new DefaultTreeExpander(() -> myTree) {
+//        @Override
+//        protected boolean isEnabled(@NotNull JTree tree) {
+//            return true;
+//        }
+//    };
+
+    public CardanoExplorer(Project project) {
+        super(true, true);
+
+//        setTransferHandler(new MyTransferHandler());
+        myProject = project;
+
+        myTreeStructure = new CardanoExplorerTreeStructure(project);
+//       // myTreeStructure.setFilteredTargets(AntConfigurationBase.getInstance(project).isFilterTargets());
+        final StructureTreeModel treeModel = new StructureTreeModel<>(myTreeStructure, this);
+        myTreeModel = treeModel;
+        myTree = new Tree(new AsyncTreeModel(treeModel, this));
+        myTree.setRootVisible(true);
+        myTree.setShowsRootHandles(true);
+        myTree.setCellRenderer(new NodeRenderer());
+
+        setToolbar(createToolbarPanel());
+        setContent(ScrollPaneFactory.createScrollPane(myTree));
+        ToolTipManager.sharedInstance().registerComponent(myTree);
+
+        attachListeners();
+        attachHandlers();
+    }
+
+    private void attachHandlers() {
+        myTree.addMouseListener(new PopupHandler() {
+            @Override
+            public void invokePopup(Component comp, int x, int y) {
+                popupInvoked(comp, x, y);
+            }
+        });
+    }
+
+    private void attachListeners() {
+        ApplicationManager.getApplication().getMessageBus().connect(this)
+                .subscribe(RemoteNodeChangeNotifier.CHANGE_CARDANO_REMOTE_NODE_TOPIC, new RemoteNodeChangeNotifier() {
+
+                    @Override
+                    public void nodeAdded(RemoteNode node) {
+                        myTreeModel.invalidate();
+                    }
+
+                    @Override
+                    public void nodeUpdated(RemoteNode node) {
+                        myTreeModel.invalidate();
+                    }
+
+                    @Override
+                    public void nodeDeleted(RemoteNode node) {
+                        myTreeModel.invalidate();
+                    }
+                });
+    }
+
+    private void popupInvoked(Component comp, int x, int y) {
+        Object userObject = null;
+        final TreePath path = myTree.getSelectionPath();
+        if (path != null) {
+            final DefaultMutableTreeNode node = (DefaultMutableTreeNode)path.getLastPathComponent();
+            if (node != null) {
+                userObject = node.getUserObject();
+            }
+        }
+
+        final DefaultActionGroup group = new DefaultActionGroup();
+        if(userObject instanceof com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor) {
+            com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor remoteNodeDescriptor = ((com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor)userObject);
+            RemoteNode nodeInfo = remoteNodeDescriptor.getNode();
+
+            group.add(new UpdateRemoteNodeAction(nodeInfo));
+            group.add(new DeleteRemoteNodeAction(nodeInfo));
+
+        } else if(userObject instanceof CardanoExplorerTreeStructure.RemoteNodesDescriptor) {
+            group.add(new CreateRemoteNodeAction());
+        }
+
+
+    final ActionPopupMenu popupMenu = ActionManager.getInstance().createActionPopupMenu(CardanoExplorer.CARDANO_EXPLORER_POPUP, group);
+        popupMenu.getComponent().show(comp, x, y);
+    }
+
+    @Override
+    public @Nullable JComponent getToolbar() {
+        return createToolbarPanel();
+    }
+
+    private JPanel createToolbarPanel() {
+        final DefaultActionGroup group = new DefaultActionGroup();
+        group.add(new CreateRemoteNodeAction());
+//        group.add(new RemoveAction());
+//        group.add(new RunAction());
+//        group.add(new ShowAllTargetsAction());
+//        AnAction action = CommonActionsManager.getInstance().createExpandAllAction(myTreeExpander, this);
+//        action.getTemplatePresentation().setDescription(AntBundle.messagePointer("ant.explorer.expand.all.nodes.action.description"));
+//        group.add(action);
+//        action = CommonActionsManager.getInstance().createCollapseAllAction(myTreeExpander, this);
+//        action.getTemplatePresentation().setDescription(AntBundle.messagePointer("ant.explorer.collapse.all.nodes.action.description"));
+//        group.add(action);
+//        group.add(myAntBuildFilePropertiesAction);
+
+        final ActionToolbar actionToolBar = ActionManager.getInstance().createActionToolbar(ActionPlaces.ANT_EXPLORER_TOOLBAR, group, true);
+        return JBUI.Panels.simplePanel(actionToolBar.getComponent());
+    }
+
+
+    @Override
+    public void dispose() {
+        myTree = null;
+        myProject = null;
+    }
+}

@@ -1,8 +1,11 @@
 package com.bloxbean.intelliada.idea.toolwindow;
 
+import com.bloxbean.intelliada.idea.toolwindow.ui.CardanoExplorer;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowFactory;
+import com.intellij.ui.content.Content;
+import com.intellij.ui.content.ContentManager;
 
 public class CardanoToolWindowFactory implements ToolWindowFactory  {
     public final static String CARDANO_WINDOW_ID = "Cardano";
@@ -14,7 +17,11 @@ public class CardanoToolWindowFactory implements ToolWindowFactory  {
 
     @Override
     public void createToolWindowContent(Project project, ToolWindow toolWindow) {
-
+        CardanoExplorer explorer = new CardanoExplorer(project);
+        ContentManager contentManager = toolWindow.getContentManager();
+        Content content = contentManager.getFactory().createContent(explorer, null, false);
+        contentManager.addContent(content);
+        content.setDisposer(explorer);
     }
 
     @Override

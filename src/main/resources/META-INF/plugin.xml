@@ -20,6 +20,7 @@
                     anchor="right"
                     factoryClass="com.bloxbean.intelliada.idea.toolwindow.CardanoToolWindowFactory"/>
 
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState"/>
     </extensions>
 
     <actions>
