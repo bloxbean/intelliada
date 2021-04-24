@@ -1,11 +1,15 @@
 package com.bloxbean.intelliada.idea.toolwindow.ui;
 
-import com.bloxbean.intelliada.idea.configuration.action.CreateRemoteNodeAction;
-import com.bloxbean.intelliada.idea.configuration.action.DeleteRemoteNodeAction;
-import com.bloxbean.intelliada.idea.configuration.action.UpdateRemoteNodeAction;
+import com.bloxbean.intelliada.idea.account.action.AccountListAction;
+import com.bloxbean.intelliada.idea.configuration.action.*;
+import com.bloxbean.intelliada.idea.configuration.model.CLIProvider;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.messaging.CLIProvidersChangeNotifier;
 import com.bloxbean.intelliada.idea.core.messaging.RemoteNodeChangeNotifier;
+import com.bloxbean.intelliada.idea.toolwindow.CLIProviderDescriptor;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoExplorerTreeStructure;
+import com.bloxbean.intelliada.idea.toolwindow.action.NetworkInfoAction;
+import com.bloxbean.intelliada.idea.toolwindow.action.SetDefaultProviderAction;
 import com.intellij.ide.util.treeView.NodeRenderer;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
@@ -90,26 +94,65 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
                         myTreeModel.invalidate();
                     }
                 });
+
+        //TODO limited change scope
+        ApplicationManager.getApplication().getMessageBus().connect(this)
+                .subscribe(CLIProvidersChangeNotifier.CHANGE_CLI_PROVIDERS_TOPIC, new CLIProvidersChangeNotifier() {
+                    @Override
+                    public void providerAdded(CLIProvider provider) {
+                        myTreeModel.invalidate();
+                    }
+
+                    @Override
+                    public void providerUpdated(CLIProvider provider) {
+                        myTreeModel.invalidate();
+                    }
+
+                    @Override
+                    public void providerDeleted(CLIProvider provider) {
+                        myTreeModel.invalidate();
+                    }
+
+                    @Override
+                    public void defaultProviderChanged(String newProviderId) {
+                        myTreeModel.invalidate();
+                    }
+                });
     }
 
     private void popupInvoked(Component comp, int x, int y) {
         Object userObject = null;
         final TreePath path = myTree.getSelectionPath();
         if (path != null) {
-            final DefaultMutableTreeNode node = (DefaultMutableTreeNode)path.getLastPathComponent();
+            final DefaultMutableTreeNode node = (DefaultMutableTreeNode) path.getLastPathComponent();
             if (node != null) {
                 userObject = node.getUserObject();
             }
         }
 
         final DefaultActionGroup group = new DefaultActionGroup();
-        if(userObject instanceof com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor) {
-            com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor remoteNodeDescriptor = ((com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor)userObject);
+        if (userObject instanceof com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor) {
+            com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor remoteNodeDescriptor = ((com.bloxbean.intelliada.idea.toolwindow.RemoteNodeDescriptor) userObject);
             RemoteNode nodeInfo = remoteNodeDescriptor.getNode();
 
             group.add(new UpdateRemoteNodeAction(nodeInfo));
             group.add(new DeleteRemoteNodeAction(nodeInfo));
 
+            group.add(new NetworkInfoAction(nodeInfo));
+
+        }  else if (userObject instanceof CLIProviderDescriptor) {
+            CLIProviderDescriptor providerDescriptor = (CLIProviderDescriptor)userObject;
+            CLIProvider cliProvider = providerDescriptor.getProvider();
+
+            group.add(new UpdateCLIProviderAction(cliProvider));
+            group.add(new DeleteCLIProviderAction(cliProvider));
+
+            if(!providerDescriptor.isDefaultProvider()) {
+                group.add(new SetDefaultProviderAction(cliProvider.getId()));
+            }
+
+        }   else if(userObject instanceof CardanoExplorerTreeStructure.CLIProvidersDescriptor) {
+            group.add(new CreateCLIProviderAction());
         } else if(userObject instanceof CardanoExplorerTreeStructure.RemoteNodesDescriptor) {
             group.add(new CreateRemoteNodeAction());
         }
@@ -127,6 +170,7 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
     private JPanel createToolbarPanel() {
         final DefaultActionGroup group = new DefaultActionGroup();
         group.add(new CreateRemoteNodeAction());
+        group.add(new AccountListAction());
 //        group.add(new RemoveAction());
 //        group.add(new RunAction());
 //        group.add(new ShowAllTargetsAction());

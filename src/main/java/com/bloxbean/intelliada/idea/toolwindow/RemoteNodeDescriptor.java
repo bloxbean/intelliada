@@ -1,7 +1,7 @@
 package com.bloxbean.intelliada.idea.toolwindow;
 
+import com.bloxbean.intelliada.idea.common.CardanoIcons;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
-import com.intellij.icons.AllIcons;
 import com.intellij.ide.util.treeView.NodeDescriptor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
@@ -17,7 +17,7 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
 
         myName = node.getName() + " [" + StringUtil.trimLog(node.getWalletApiEndpoint(), 40) + "]";
         myColor = JBColor.GREEN;
-        myClosedIcon = AllIcons.General.Settings;
+        myClosedIcon = CardanoIcons.CARDANO_ICON_16x16;
 
         if(node.getId() != null) {
 //            if (sdk.getId().equals(compilerNodeId)){

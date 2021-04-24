@@ -20,13 +20,16 @@
                     anchor="right"
                     factoryClass="com.bloxbean.intelliada.idea.toolwindow.CardanoToolWindowFactory"/>
 
+        <toolWindow id="Cardano Log"
+                    anchor="bottom"
+                    factoryClass="com.bloxbean.intelliada.idea.toolwindow.CardanoLogToolWindowFactory"/>
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.toolwindow.CardanoConsole"/>
+
         <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState"/>
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.CLIProvidersState"/>
     </extensions>
 
     <actions>
 
-        <action id="HelloAction" class="com.bloxbean.intelliada.idea.toolwindow.HelloAction" text="HelloAction IntelliAda">
-            <add-to-group group-id="NewGroup"  />
-        </action>
     </actions>
 </idea-plugin>
