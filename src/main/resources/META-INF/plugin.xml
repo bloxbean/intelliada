@@ -8,7 +8,7 @@
     Intellij IDEA plugin for Cardano blockchain
     ]]></description>
 
-    <idea-version since-build="202"/>
+    <idea-version since-build="211"/>
 
     <!-- please see https://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
