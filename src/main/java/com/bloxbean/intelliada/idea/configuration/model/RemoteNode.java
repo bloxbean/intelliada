@@ -1,20 +1,28 @@
 package com.bloxbean.intelliada.idea.configuration.model;
 
+import com.bloxbean.intelliada.idea.core.util.NodeType;
+
 import java.util.Objects;
 
 public class RemoteNode {
     private String id;
     private String name;
-    private String walletApiEndpoint;
+    private NodeType nodeType;
+    private String apiEndpoint;
+    private String authKey;
+    private String network;
+    private String networkId;
+    private String protocolMagic;
 
     public RemoteNode() {
 
     }
 
-    public RemoteNode(String id, String name, String walletApiEndpoint) {
+    public RemoteNode(String id, String name, NodeType nodeType, String apiEndpoint) {
         this.id = id;
         this.name = name;
-        this.walletApiEndpoint = walletApiEndpoint;
+        this.nodeType = nodeType;
+        this.apiEndpoint = apiEndpoint;
     }
 
     public String getId() {
@@ -33,19 +41,64 @@ public class RemoteNode {
         this.name = name;
     }
 
-    public String getWalletApiEndpoint() {
-        return walletApiEndpoint;
+    public String getApiEndpoint() {
+        return apiEndpoint;
     }
 
-    public void setWalletApiEndpoint(String walletApiEndpoint) {
-        this.walletApiEndpoint = walletApiEndpoint;
+    public void setApiEndpoint(String apiEndpoint) {
+        this.apiEndpoint = apiEndpoint;
+    }
+
+    public NodeType getNodeType() {
+        return nodeType;
+    }
+
+    public void setNodeType(NodeType nodeType) {
+        this.nodeType = nodeType;
+    }
+
+    public String getAuthKey() {
+        return authKey;
+    }
+
+    public void setAuthKey(String authKey) {
+        this.authKey = authKey;
+    }
+
+    public String getNetwork() {
+        return network;
+    }
+
+    public void setNetwork(String network) {
+        this.network = network;
+    }
+
+    public String getNetworkId() {
+        return networkId;
+    }
+
+    public void setNetworkId(String networkId) {
+        this.networkId = networkId;
+    }
+
+    public String getProtocolMagic() {
+        return protocolMagic;
+    }
+
+    public void setProtocolMagic(String protocolMagic) {
+        this.protocolMagic = protocolMagic;
     }
 
     public void updateValues(RemoteNode node) { //Update everything except id
         if(node == null) return;
 
         this.setName(node.getName());
-        this.setWalletApiEndpoint(node.getWalletApiEndpoint());
+        this.setApiEndpoint(node.getApiEndpoint());
+        this.setNodeType(node.getNodeType());
+        this.setAuthKey(node.getAuthKey());
+        this.setNetwork(node.getNetwork());
+        this.setNetworkId(node.getNetworkId());
+        this.setProtocolMagic(node.getProtocolMagic());
     }
 
     @Override

@@ -15,7 +15,7 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
         super(project, parentDescriptor);
         this.node = node;
 
-        myName = node.getName() + " [" + StringUtil.trimLog(node.getWalletApiEndpoint(), 40) + "]";
+        myName = node.getName() + " [" + StringUtil.trimLog(node.getApiEndpoint(), 40) + "]";
         myColor = JBColor.GREEN;
         myClosedIcon = CardanoIcons.CARDANO_ICON_16x16;
 

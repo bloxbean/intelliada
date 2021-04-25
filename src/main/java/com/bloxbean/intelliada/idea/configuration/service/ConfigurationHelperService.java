@@ -29,7 +29,12 @@ public class ConfigurationHelperService {
             }
 
             node.setName(nodeConfigDialog.getRemoteNodeConfigPanel().getName());
-            node.setWalletApiEndpoint(nodeConfigDialog.getRemoteNodeConfigPanel().getWalletApiEndPoint());
+            node.setNodeType(nodeConfigDialog.getRemoteNodeConfigPanel().getNodeType());
+            node.setApiEndpoint(nodeConfigDialog.getRemoteNodeConfigPanel().getApiEndpoint());
+            node.setAuthKey(nodeConfigDialog.getRemoteNodeConfigPanel().getAuthKey());
+            node.setNetwork(nodeConfigDialog.getRemoteNodeConfigPanel().getNetwork());
+            node.setNetworkId(nodeConfigDialog.getRemoteNodeConfigPanel().getNetworkId());
+            node.setProtocolMagic(nodeConfigDialog.getRemoteNodeConfigPanel().getProtocolMagic());
 
             if (remoteNode == null) {
                 stateService.addRemoteNode(node);

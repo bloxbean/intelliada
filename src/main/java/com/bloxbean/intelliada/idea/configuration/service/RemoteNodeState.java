@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.configuration.service;
 
+import com.bloxbean.intelliada.idea.core.util.NodeType;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.ServiceManager;
@@ -40,7 +41,16 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             Element entry = new Element("remoteNode");
             entry.setAttribute("id", node.getId());
             entry.setAttribute("name", node.getName());
-            entry.setAttribute("walletApiEndPoint", StringUtil.notNullize(node.getWalletApiEndpoint()));
+            if(node.getNodeType() != null)
+                entry.setAttribute("nodeType", node.getNodeType().getName());
+            else
+                entry.setAttribute("nodeType", "");
+            entry.setAttribute("apiEndPoint", StringUtil.notNullize(node.getApiEndpoint()));
+            entry.setAttribute("authKey", StringUtil.notNullize(node.getAuthKey()));
+            entry.setAttribute("network", StringUtil.notNullize(node.getNetwork()));
+            entry.setAttribute("networkId", StringUtil.notNullize(node.getNetworkId()));
+            entry.setAttribute("protocolMagic", StringUtil.notNullize(node.getProtocolMagic()));
+
 //            entry.setAttribute("version", StringUtil.notNullize(node.getVersion()));
 
             state.addContent(entry);
@@ -56,9 +66,22 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
         for (Element child : elm.getChildren("remoteNode")) {
             String id = child.getAttributeValue("id");
             String name = child.getAttributeValue("name");
-            String home = child.getAttributeValue("walletApiEndPoint");
+            String nodeTypeStr = child.getAttributeValue("nodeType");
+            String apiEndPoint = child.getAttributeValue("apiEndPoint");
+            String authKey = child.getAttributeValue("authKey");
+            String network = child.getAttributeValue("network");
+            String networkId = child.getAttributeValue("networkId");
+            String protocolMagic = child.getAttributeValue("protocolMagic");
 
-            RemoteNode node = new RemoteNode(id, name, home);
+            NodeType nodeType = null;
+            if(!StringUtil.isEmpty(nodeTypeStr))
+                nodeType = NodeType.valueOf(nodeTypeStr);
+
+            RemoteNode node = new RemoteNode(id, name, nodeType, apiEndPoint);
+            node.setAuthKey(authKey);
+            node.setNetwork(network);
+            node.setNetworkId(networkId);
+            node.setProtocolMagic(protocolMagic);
 
             list.add(node);
         }
