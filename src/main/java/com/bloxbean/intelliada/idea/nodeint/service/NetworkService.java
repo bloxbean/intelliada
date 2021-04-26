@@ -12,7 +12,7 @@ public class NetworkService {
         apiClient.setBasePath("/api/v0");
         apiClient.setPort(443);
         apiClient.setScheme("https");
-        apiClient.setRequestInterceptor(reqBuilder -> reqBuilder.setHeader("project_id", "Z9JP6nrZp5xtaFnopu9aknGxdQd3pZHG"));
+        apiClient.setRequestInterceptor(reqBuilder -> reqBuilder.setHeader("project_id", "xxxxxxx"));
 //
         CardanoLedgerApi ledgerApi = new CardanoLedgerApi(apiClient);
         GenesisContent genesisContent = ledgerApi.genesisGet();
