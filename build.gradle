@@ -24,25 +24,25 @@ plugins {
     id 'java'
     id 'idea'
     id 'org.jetbrains.intellij' version '0.7.2'
+    id "org.openapi.generator" version "5.1.0"
 }
 
 group 'com.bloxbean'
 version '0.0.1'
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+sourceCompatibility = 11
+targetCompatibility = 11
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
+    compile project(":gen:blockfrost-api")
     compile fileTree(include: ['*.jar'], dir: 'lib')
     compile 'com.bloxbean.cardano:cardano-client-lib:0.0.1'
     testCompile group: 'junit', name: 'junit', version: '4.12'
 }
-
-//sourceSets.main.java.srcDirs 'src/main/gen'
 
 String changeLogAsHtml() {
     Parser parser = Parser.builder().build()
@@ -65,3 +65,33 @@ intellij {
 patchPluginXml {
     changeNotes changeLogAsHtml()
 }
+
+openApiGenerate {
+    generatorName = "java"
+    inputSpec = "$rootDir/gen/blockfrost-swagger.json".toString()
+    outputDir = "$rootDir/gen/blockfrost-api".toString()
+    apiPackage = "com.bloxbean.cardano.blockfrost.api"
+    invokerPackage = "com.bloxbean.cardano.blockfrost.invoker"
+    modelPackage = "com.bloxbean.cardano.blockfrost.model"
+    groupId = "com.bloxbean.cardano"
+    id = "blockfrost-api"
+    version = "0.1"
+    library = "native"
+    configOptions = [
+            dateLibrary: "java8"
+    ]
+    globalProperties = [
+            modelDocs: "false"
+    ]
+    skipValidateSpec = true
+    //logToStderr = true
+    generateAliasAsModel = false
+    generateApiTests = false
+    generateModelDocumentation = false
+    generateModelTests = false
+    // set to true and set environment variable {LANG}_POST_PROCESS_FILE
+    // (e.g. SCALA_POST_PROCESS_FILE) to the linter/formatter to be processed.
+    // This command will be passed one file at a time for most supported post processors.
+//    enablePostProcessFile = false
+}
+

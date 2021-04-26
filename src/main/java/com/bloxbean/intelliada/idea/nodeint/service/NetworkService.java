@@ -1,29 +1,26 @@
 package com.bloxbean.intelliada.idea.nodeint.service;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import com.bloxbean.cardano.blockfrost.api.CardanoLedgerApi;
+import com.bloxbean.cardano.blockfrost.invoker.ApiClient;
+import com.bloxbean.cardano.blockfrost.model.GenesisContent;
 
 public class NetworkService {
 
-//    public Object getNetworkInfo(RemoteNode remoteNode) throws Exception {
-//        ActorSystem as = ActorSystem.create();
-//        ExecutorService es = Executors.newFixedThreadPool(1);
-//        CardanoApiBuilder builder =
-//                CardanoApiBuilder.create(remoteNode.getWalletApiEndpoint())
-//                        .withActorSystem(as) // <- ActorSystem optional
-//                        .withExecutorService(es); // <- ExecutorService optional
+    public Object getNetworkInfo() throws Exception {
+        ApiClient apiClient = new ApiClient();
+        apiClient.setHost("cardano-testnet.blockfrost.io");
+        apiClient.setBasePath("/api/v0");
+        apiClient.setPort(443);
+        apiClient.setScheme("https");
+        apiClient.setRequestInterceptor(reqBuilder -> reqBuilder.setHeader("project_id", "Z9JP6nrZp5xtaFnopu9aknGxdQd3pZHG"));
 //
-//        CardanoApi api = builder.build();
-//        CardanoApiCodec.NetworkInfo networkInfo = api.networkInfo().toCompletableFuture().get();
-//        return networkInfo;
-//
-////        Retrofit retrofit = new Retrofit.Builder()
-////                .baseUrl(remoteNode.getWalletApiEndpoint())
-////                .build();
-////
-////        NetworkInfoService service = retrofit.create(NetworkInfoService.class);
-////        Object body = service.networkInformation().execute().body();
-////
-////        return body;
-//    }
+        CardanoLedgerApi ledgerApi = new CardanoLedgerApi(apiClient);
+        GenesisContent genesisContent = ledgerApi.genesisGet();
+        System.out.println(genesisContent);
+        return null;
+    }
+
+    public static void main(String[] args) throws Exception {
+        new NetworkService().getNetworkInfo();
+    }
 }
