@@ -10,6 +10,7 @@ import com.bloxbean.intelliada.idea.toolwindow.CLIProviderDescriptor;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoExplorerTreeStructure;
 import com.bloxbean.intelliada.idea.toolwindow.action.NetworkInfoAction;
 import com.bloxbean.intelliada.idea.toolwindow.action.SetDefaultProviderAction;
+import com.bloxbean.intelliada.idea.toolwindow.action.SetDefaultRemoteNodeAction;
 import com.intellij.ide.util.treeView.NodeRenderer;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
@@ -93,6 +94,11 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
                     public void nodeDeleted(RemoteNode node) {
                         myTreeModel.invalidate();
                     }
+
+                    @Override
+                    public void defaultNodeChanged(String nodeId) {
+                        myTreeModel.invalidate();
+                    }
                 });
 
         //TODO limited change scope
@@ -137,6 +143,10 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
 
             group.add(new UpdateRemoteNodeAction(nodeInfo));
             group.add(new DeleteRemoteNodeAction(nodeInfo));
+
+            if(!remoteNodeDescriptor.isDefaultNode()) {
+                group.add(new SetDefaultRemoteNodeAction(nodeInfo.getId()));
+            }
 
             group.add(new NetworkInfoAction(nodeInfo));
 

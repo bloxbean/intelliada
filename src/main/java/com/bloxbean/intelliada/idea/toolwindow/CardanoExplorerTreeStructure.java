@@ -107,7 +107,8 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
 
 
         if(element instanceof RemoteNode) {
-            return new RemoteNodeDescriptor(project, parentDescriptor, (RemoteNode) element,  deploymentNodeId);
+            String defaultNodeId = RemoteNodeState.getInstance().getDefaultNode();
+            return new RemoteNodeDescriptor(project, parentDescriptor, (RemoteNode) element,  defaultNodeId);
         } else if(element instanceof CLIProvider) {
             String defaultProvider = CLIProvidersState.getInstance().getDefaultProvider();
             return new CLIProviderDescriptor(project, parentDescriptor, (CLIProvider) element, defaultProvider);

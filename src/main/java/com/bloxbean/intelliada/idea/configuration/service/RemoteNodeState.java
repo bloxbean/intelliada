@@ -27,6 +27,7 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
     }
 
     private List<RemoteNode> remoteNodes;
+    private String defaultNode;
 
     public RemoteNodeState() {
         this.remoteNodes = new ArrayList<>();
@@ -56,12 +57,17 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             state.addContent(entry);
         }
 
+        if(defaultNode != null)
+            state.setAttribute("defaultNode", defaultNode);
+
         return state;
     }
 
     @Override
     public void loadState(@NotNull Element elm) {
         List<RemoteNode> list = new ArrayList<>();
+
+        defaultNode = elm.getAttributeValue("defaultNode");
 
         for (Element child : elm.getChildren("remoteNode")) {
             String id = child.getAttributeValue("id");
@@ -113,5 +119,24 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
     public void removeRemoteNode(RemoteNode node) {
         if(remoteNodes == null || node == null) return;
         remoteNodes.remove(node);
+    }
+
+    public String getDefaultNode() {
+        return defaultNode;
+    }
+
+    public RemoteNode getDefaultRemoteNode() {
+        if(StringUtil.isEmpty(defaultNode)) return null;
+        if(remoteNodes == null || remoteNodes.size() == 0) return null;
+
+        for(RemoteNode node: remoteNodes) {
+            if(defaultNode.equals(node.getId()))
+                return node;
+        }
+        return null;
+    }
+
+    public void setDefaultNode(String defaultNode) {
+        this.defaultNode = defaultNode;
     }
 }

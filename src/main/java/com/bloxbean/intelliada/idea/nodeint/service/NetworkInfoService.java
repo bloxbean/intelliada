@@ -1,7 +1,7 @@
 package com.bloxbean.intelliada.idea.nodeint.service;
 
-public interface NetworkInfoService {
+import com.bloxbean.intelliada.idea.nodeint.model.Result;
 
-//    @GET("/network/information")
-//    Call<Object> networkInformation();
+public interface NetworkInfoService {
+    public Result getNetworkInfo();
 }

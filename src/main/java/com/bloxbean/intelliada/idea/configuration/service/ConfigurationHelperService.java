@@ -142,4 +142,18 @@ public class ConfigurationHelperService {
             providersChangeNotifier.defaultProviderChanged(defaultProviderId);
         }
     }
+
+    public static void setDefaultRemoteNode(String defaultNodeId) {
+        if(StringUtil.isEmpty(defaultNodeId))
+            return;
+
+        RemoteNodeState state = RemoteNodeState.getInstance();
+
+        if(state != null) {
+            state.setDefaultNode(defaultNodeId);
+
+            RemoteNodeChangeNotifier nodeChangeNotifier = ApplicationManager.getApplication().getMessageBus().syncPublisher(RemoteNodeChangeNotifier.CHANGE_CARDANO_REMOTE_NODE_TOPIC);
+            nodeChangeNotifier.defaultNodeChanged(defaultNodeId);
+        }
+    }
 }

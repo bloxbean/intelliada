@@ -1,9 +1,14 @@
 package com.bloxbean.intelliada.idea.toolwindow.action;
 
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
-import com.bloxbean.intelliada.idea.nodeint.service.NetworkService;
+import com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState;
+import com.bloxbean.intelliada.idea.nodeint.model.Result;
+import com.bloxbean.intelliada.idea.nodeint.service.NetworkInfoService;
+import com.bloxbean.intelliada.idea.nodeint.service.blockfrost.BFNetworkInfoServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
+import com.bloxbean.intelliada.idea.util.IdeaUtil;
 import com.intellij.icons.AllIcons;
+import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.progress.ProgressIndicator;
@@ -39,10 +44,23 @@ public class NetworkInfoAction extends AnAction {
             public void run(@NotNull ProgressIndicator indicator) {
                 console.showInfoMessage(String.format("Getting network information ...\n"));
 
-                NetworkService networkService = new NetworkService();
+                RemoteNode remoteNode = RemoteNodeState.getInstance().getDefaultRemoteNode();
+                if(remoteNode == null) {
+                    console.showErrorMessage("Please select a remote node as default and try again.");
+                    return;
+                }
+
                 try {
-//                    Object networkInfo = networkService.getNetworkInfo(node);
-//                    console.showInfoMessage(networkInfo.toString());
+                    NetworkInfoService networkService = new BFNetworkInfoServiceImpl(remoteNode);
+                    Result result = networkService.getNetworkInfo();
+                    if(result.isSuccessful()) {
+                        console.showInfoMessage(result.getResponse());
+//                        IdeaUtil.showNotification(project, getTitle(), String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
+                    } else {
+                        console.showErrorMessage(String.format("%s failed", getTxnCommand()));
+                        IdeaUtil.showNotification(project, getTitle(), String.format("%s failed", getTxnCommand()), NotificationType.ERROR, null);
+
+                    }
                 } catch (Exception exception) {
                     exception.printStackTrace();
                     console.showErrorMessage("Error getting network info", exception);
@@ -51,7 +69,10 @@ public class NetworkInfoAction extends AnAction {
         };
 
         ProgressManager.getInstance().runProcessWithProgressAsynchronously(task, new BackgroundableProcessIndicator(task));
+    }
 
+    private String getTxnCommand() {
+        return "Get Network Info";
     }
 }
 

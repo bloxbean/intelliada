@@ -6,7 +6,8 @@ import com.intellij.util.messages.Topic;
 public interface RemoteNodeChangeNotifier {
     Topic<RemoteNodeChangeNotifier> CHANGE_CARDANO_REMOTE_NODE_TOPIC = Topic.create("CardanoRemoteNodeTopic", RemoteNodeChangeNotifier.class);
 
-    void nodeAdded(RemoteNode sdk);
-    void nodeUpdated(RemoteNode sdk);
-    void nodeDeleted(RemoteNode sdk);
+    void nodeAdded(RemoteNode node);
+    void nodeUpdated(RemoteNode node);
+    void nodeDeleted(RemoteNode node);
+    void defaultNodeChanged(String nodeId);
 }

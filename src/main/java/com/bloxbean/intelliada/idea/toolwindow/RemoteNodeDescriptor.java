@@ -9,9 +9,10 @@ import com.intellij.ui.JBColor;
 
 public class RemoteNodeDescriptor extends NodeDescriptor {
 
+    private boolean isDefaultNode;
     private RemoteNode node;
 
-    public RemoteNodeDescriptor(final Project project, final NodeDescriptor parentDescriptor, RemoteNode node, String deploymentNodeId) {
+    public RemoteNodeDescriptor(final Project project, final NodeDescriptor parentDescriptor, RemoteNode node, String defaultNodeId) {
         super(project, parentDescriptor);
         this.node = node;
 
@@ -20,6 +21,12 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
         myClosedIcon = CardanoIcons.CARDANO_ICON_16x16;
 
         if(node.getId() != null) {
+            if(node.getId().equals(defaultNodeId)) {
+                myName += " (default)";
+                this.isDefaultNode = true;
+            } else {
+                this.isDefaultNode = false;
+            }
 //            if (sdk.getId().equals(compilerNodeId)){
 //                myClosedIcon = AlgoIcons.LOCALSDK_COMPILE;
 //                isCompilerTarget = true;
@@ -27,6 +34,7 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
 //                myClosedIcon = AlgoIcons.LOCALSDK;
 //            }
         } else {
+                this.isDefaultNode = false;
 //            myClosedIcon = AlgoIcons.LOCALSDK;
         }
     }
@@ -48,5 +56,9 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
 //    public boolean isCompilerTarget() {
 //        return isCompilerTarget;
 //    }
+
+    public boolean isDefaultNode() {
+        return isDefaultNode;
+    }
 
 }
