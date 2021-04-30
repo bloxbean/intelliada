@@ -3,6 +3,7 @@ package com.bloxbean.intelliada.idea.toolwindow.action;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState;
 import com.bloxbean.intelliada.idea.nodeint.model.Result;
+import com.bloxbean.intelliada.idea.nodeint.service.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.NetworkInfoService;
 import com.bloxbean.intelliada.idea.nodeint.service.blockfrost.BFNetworkInfoServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
@@ -38,20 +39,21 @@ public class NetworkInfoAction extends AnAction {
 
         CardanoConsole console = CardanoConsole.getConsole(project);
 
+        LogListenerAdapter logListenerAdapter = new LogListenerAdapter(console);
+
         Task.Backgroundable task = new Task.Backgroundable(project, "Network Info") {
 
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 console.showInfoMessage(String.format("Getting network information ...\n"));
 
-                RemoteNode remoteNode = RemoteNodeState.getInstance().getDefaultRemoteNode();
-                if(remoteNode == null) {
-                    console.showErrorMessage("Please select a remote node as default and try again.");
+                if(node == null) {
+                    console.showErrorMessage("Remote node cannot be null. Please select a valid node.");
                     return;
                 }
 
                 try {
-                    NetworkInfoService networkService = new BFNetworkInfoServiceImpl(remoteNode);
+                    NetworkInfoService networkService = new BFNetworkInfoServiceImpl(node, logListenerAdapter);
                     Result result = networkService.getNetworkInfo();
                     if(result.isSuccessful()) {
                         console.showInfoMessage(result.getResponse());
@@ -62,7 +64,6 @@ public class NetworkInfoAction extends AnAction {
 
                     }
                 } catch (Exception exception) {
-                    exception.printStackTrace();
                     console.showErrorMessage("Error getting network info", exception);
                 }
             }
