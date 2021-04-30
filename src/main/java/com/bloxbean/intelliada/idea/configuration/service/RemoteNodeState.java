@@ -43,7 +43,7 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             entry.setAttribute("id", node.getId());
             entry.setAttribute("name", node.getName());
             if(node.getNodeType() != null)
-                entry.setAttribute("nodeType", node.getNodeType().getName());
+                entry.setAttribute("nodeType", node.getNodeType().name());
             else
                 entry.setAttribute("nodeType", "");
             entry.setAttribute("apiEndPoint", StringUtil.notNullize(node.getApiEndpoint()));
@@ -81,7 +81,7 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
 
             NodeType nodeType = null;
             if(!StringUtil.isEmpty(nodeTypeStr))
-                nodeType = NodeType.valueOf(nodeTypeStr);
+                nodeType = NodeType.lookupByName(nodeTypeStr);
 
             RemoteNode node = new RemoteNode(id, name, nodeType, apiEndPoint);
             node.setAuthKey(authKey);

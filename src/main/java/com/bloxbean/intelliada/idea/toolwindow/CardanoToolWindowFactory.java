@@ -1,13 +1,14 @@
 package com.bloxbean.intelliada.idea.toolwindow;
 
 import com.bloxbean.intelliada.idea.toolwindow.ui.CardanoExplorer;
+import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowFactory;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.content.ContentManager;
 
-public class CardanoToolWindowFactory implements ToolWindowFactory  {
+public class CardanoToolWindowFactory implements ToolWindowFactory, DumbAware {
     public final static String CARDANO_WINDOW_ID = "Cardano";
 
     @Override
@@ -33,5 +34,4 @@ public class CardanoToolWindowFactory implements ToolWindowFactory  {
     public boolean shouldBeAvailable(Project project) {
         return true;
     }
-
 }
