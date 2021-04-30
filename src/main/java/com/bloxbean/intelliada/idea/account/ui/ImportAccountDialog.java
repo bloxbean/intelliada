@@ -1,6 +1,11 @@
 package com.bloxbean.intelliada.idea.account.ui;
 
+import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
+import com.bloxbean.intelliada.idea.core.util.Network;
+import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.core.util.Networks;
+import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
@@ -17,6 +22,7 @@ public class ImportAccountDialog extends DialogWrapper {
     private JTextField accountTf;
     private JCheckBox readOnlyAccount;
     private JTextField accountNameTf;
+    private JComboBox networkType;
 
     protected ImportAccountDialog() {
         super(false);
@@ -50,9 +56,11 @@ public class ImportAccountDialog extends DialogWrapper {
             public void focusLost(FocusEvent e) {
                 String mnemonic = mnemonicTf.getText();
                 try {
+                    Account account = deriveAccountFromMnemonic();
                     //Account account = new Account(mnemonic);
                     //accountTf.setText(account.getAddress().toString());
-                    accountTf.setText(UUID.randomUUID().toString()); //TODO
+                    if(account != null)
+                        accountTf.setText(account.baseAddress(0)); //TODO
                 } catch (Exception ex) {
                     accountTf.setText("");
                 }
@@ -89,16 +97,26 @@ public class ImportAccountDialog extends DialogWrapper {
         return null;
     }
 
-//    private Account deriveAccountFromMnemonic() {
-//        String mnemonic = mnemonicTf.getText().trim();
-//        try {
-//            Account account = new Account(mnemonic);
-//            return account;
-//        } catch (Exception e) {
-//            return null;
-//        }
-//    }
-//
+    private Account deriveAccountFromMnemonic() {
+        String mnemonic = mnemonicTf.getText().trim();
+
+        Network network = getNetwork();
+        com.bloxbean.cardano.client.util.Network clNetwork = null;
+
+        if(network != null) {
+            clNetwork = NetworkUtil.convertToCLNetwork(network);
+        } else {
+            clNetwork = com.bloxbean.cardano.client.util.Networks.testnet(); //default
+        }
+
+        try {
+            Account account = new Account(clNetwork, mnemonic);
+            return account;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public CardanoAccount getAccount() {
 
         if(readOnlyAccount.isSelected()) {
@@ -106,19 +124,29 @@ public class ImportAccountDialog extends DialogWrapper {
             account.setName(accountNameTf.getText());
             return account;
         } else {
-//            Account account = deriveAccountFromMnemonic();
-//            if(account == null)
-//                return null;
-//
-//            CardanoAccount algoAccount = new AlgoAccount(account.getAddress().toString(), account.toMnemonic());
-            CardanoAccount account = new CardanoAccount("dddd");
-            account.setName(accountNameTf.getText());
-            return account;
+            Account account = deriveAccountFromMnemonic();
+            if(account == null)
+                return null;
+
+            CardanoAccount cardanoAccount = new CardanoAccount(account.baseAddress(0), account.mnemonic());
+            cardanoAccount.setName(accountNameTf.getText());
+            return cardanoAccount;
         }
+    }
+
+    public Network getNetwork() {
+        return (Network) networkType.getSelectedItem();
     }
 
     @Override
     protected @Nullable JComponent createCenterPanel() {
         return mainPanel;
+    }
+
+    private void createUIComponents() {
+        // TODO: place custom component creation code here
+        networkType = new ComboBox();
+        networkType.addItem(Networks.testnet());
+        networkType.addItem(Networks.mainnet());
     }
 }

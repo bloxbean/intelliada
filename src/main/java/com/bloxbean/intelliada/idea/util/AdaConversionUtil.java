@@ -5,6 +5,8 @@ import java.math.BigInteger;
 import java.text.DecimalFormat;
 
 public class AdaConversionUtil {
+    public final static String LOVELACE = "lovelace";
+
     private static final BigInteger ONE_ADA = new BigInteger("1000000"); //1 ADA
     private static final int ADA_DECIMAL = 6;
 

@@ -5,8 +5,8 @@ import com.bloxbean.cardano.blockfrost.model.GenesisContent;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.nodeint.model.Genesis;
 import com.bloxbean.intelliada.idea.nodeint.model.Result;
-import com.bloxbean.intelliada.idea.nodeint.service.LogListener;
-import com.bloxbean.intelliada.idea.nodeint.service.NetworkInfoService;
+import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
+import com.bloxbean.intelliada.idea.nodeint.service.api.NetworkInfoService;
 
 public class BFNetworkInfoServiceImpl extends BFBaseService implements NetworkInfoService {
 

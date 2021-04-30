@@ -1,5 +1,7 @@
 package com.bloxbean.intelliada.idea.account.service;
 
+import com.bloxbean.cardano.client.account.Account;
+import com.bloxbean.cardano.client.util.Network;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.text.StringUtil;
@@ -25,25 +27,21 @@ public class AccountService {
         this.accountCacheService = accountCacheService;
     }
 
-    public CardanoAccount createNewAccount(String accountName) throws NoSuchAlgorithmException {
+    public CardanoAccount createNewAccount(String accountName, Network network) throws NoSuchAlgorithmException {
         if(StringUtil.isEmpty(accountName))
             accountName = "New Account";
 
-        CardanoAccount account = new CardanoAccount();
-//        Address address = account.getAddress();
-//
-//        AlgoAccount algoAccount = new AlgoAccount(address.toString(), account.toMnemonic());
-//        algoAccount.setName(accountName);
-
-        account.setAddress(UUID.randomUUID().toString());
-        account.setMnemonic(UUID.randomUUID().toString());
-
-        accountCacheService.storeAccount(account);
-        return account;
+        CardanoAccount cardanoAccount = new CardanoAccount();
+        Account account = new Account(network);
+        cardanoAccount.setAddress(account.baseAddress(0));
+        cardanoAccount.setMnemonic(account.mnemonic());
+        cardanoAccount.setName(accountName);
+        accountCacheService.storeAccount(cardanoAccount);
+        return cardanoAccount;
     }
 
     public CardanoAccount createNewAccount() throws NoSuchAlgorithmException {
-        return createNewAccount(null);
+        return createNewAccount(null, null);
     }
 
     public boolean importAccount(CardanoAccount account) {

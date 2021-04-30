@@ -1,10 +1,9 @@
 package com.bloxbean.intelliada.idea.toolwindow.action;
 
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
-import com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState;
 import com.bloxbean.intelliada.idea.nodeint.model.Result;
-import com.bloxbean.intelliada.idea.nodeint.service.LogListenerAdapter;
-import com.bloxbean.intelliada.idea.nodeint.service.NetworkInfoService;
+import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
+import com.bloxbean.intelliada.idea.nodeint.service.api.NetworkInfoService;
 import com.bloxbean.intelliada.idea.nodeint.service.blockfrost.BFNetworkInfoServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;

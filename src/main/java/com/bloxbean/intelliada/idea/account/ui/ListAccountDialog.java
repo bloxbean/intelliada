@@ -24,6 +24,15 @@ package com.bloxbean.intelliada.idea.account.ui;
 
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountService;
+import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState;
+import com.bloxbean.intelliada.idea.core.util.Network;
+import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.core.util.Networks;
+import com.bloxbean.intelliada.idea.nodeint.model.Result;
+import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
+import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
+import com.bloxbean.intelliada.idea.nodeint.service.blockfrost.BFAccountServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.DataManager;
@@ -56,6 +65,8 @@ import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.List;
+
+import static java.awt.event.MouseEvent.BUTTON1;
 
 public class ListAccountDialog extends DialogWrapper {
     private JPanel mainPanel;
@@ -131,14 +142,25 @@ public class ListAccountDialog extends DialogWrapper {
         importAccBtn.setIcon(AllIcons.General.Add);
         fetchBalanceButton.setIcon(AllIcons.General.Information);
         newAcctBtn.addActionListener(e -> {
-            String accountName = Messages.showInputDialog(mainPanel, "Enter a name for the new account", "New Account", AllIcons.General.Information);
+//            String accountName
+//                    = Messages.showInputDialog(mainPanel, "Enter a name for the new account", "New Account", AllIcons.General.Information);
+
+            CreateAccountDialog dialog = new CreateAccountDialog();
+            boolean ok = dialog.showAndGet();
+            if(!ok) return;
+
+            String accountName = dialog.getAccountName();
+            Network network = dialog.getNetwork();
+
+            com.bloxbean.cardano.client.util.Network clNetwork = NetworkUtil.convertToCLNetwork(network);
+
             if(!StringUtil.isEmpty(accountName))
                 accountName = accountName.trim();
             else
                 return; //cancel
 
             try {
-                accountService.createNewAccount(accountName);
+                accountService.createNewAccount(accountName, clNetwork);
                 poulateAccounts();
                 Messages.showInfoMessage(project, String.format("New account '%s' has been added successfully. " +
                         "\nIf you don't see the account, please close and re-open the account list dialog", accountName), "Account  Create");
@@ -186,12 +208,20 @@ public class ListAccountDialog extends DialogWrapper {
         accListTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseReleased(MouseEvent e) {
-                tableRowPopupMenuHandler(e);
+                if(e.getClickCount() == 1)
+                    tableRowPopupMenuHandler(e);
             }
 
             @Override
             public void mousePressed(MouseEvent e) {
-                tableRowPopupMenuHandler(e);
+                if(e.getClickCount() == 1)
+                    tableRowPopupMenuHandler(e);
+            }
+
+            public void mouseClicked(MouseEvent me) {
+                if (me.getClickCount() == 2 && me.getButton() == BUTTON1) {     // to detect doble click events
+                    handleDoubleClickEvents();
+                }
             }
         });
 
@@ -215,6 +245,23 @@ public class ListAccountDialog extends DialogWrapper {
             popup.show(relativePoint);
         }
     }
+
+    private void handleDoubleClickEvents() {
+        int rowindex = accListTable.getSelectedRow();
+        if (rowindex < 0)
+            return;
+
+        int column = accListTable.getSelectedColumn(); // select a column
+        CardanoAccount account = tableModel.getAccounts().get(rowindex);
+        if(account == null)
+            return;
+        if(column == 0) {
+            //showAccountDetails(account);
+        } else if(column == 1) {
+            copyAddress(account);
+        }
+    }
+
 
     private ListPopup createPopup(CardanoAccount account) {
         final DefaultActionGroup group = new DefaultActionGroup();
@@ -275,12 +322,16 @@ public class ListAccountDialog extends DialogWrapper {
             @Override
             public void actionPerformed(@NotNull AnActionEvent e) {
                 CardanoAccount cardanoAccount = getSelectAccount();
-                StringSelection stringSelection = new StringSelection(cardanoAccount.getAddress().toString());
-                Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-                clipboard.setContents(stringSelection, null);
-                Messages.showInfoMessage("Address copied to the clipboard", "Copy Address");
+                copyAddress(cardanoAccount);
             }
         };
+    }
+
+    private void copyAddress(CardanoAccount cardanoAccount) {
+        StringSelection stringSelection = new StringSelection(cardanoAccount.getAddress().toString());
+        Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+        clipboard.setContents(stringSelection, null);
+        Messages.showInfoMessage("Address copied to the clipboard", "Copy Address");
     }
 
     private AnAction createCopyMnemonicAction(CardanoAccount account) {
@@ -311,30 +362,35 @@ public class ListAccountDialog extends DialogWrapper {
                     public void run() {
                         ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
                         float counter = 0;
-//                        AlgoAccountService accountService = null;
-//                        try {
-//                             accountService = new AlgoAccountService(project, new LogListenerAdapter(console));
-//                        } catch (DeploymentTargetNotConfigured deploymentTargetNotConfigured) {
-//                            IdeaUtil.showNotification(project, "Algorand Configuration",
-//                                    "Algorand deployment node is not configured.", NotificationType.ERROR, ConfigurationAction.ACTION_ID);
-//                        }
-//                        if(accountService == null)
-//                            return;
+
+                        RemoteNode remoteNode = RemoteNodeState.getInstance().getDefaultRemoteNode();
+                        if(remoteNode == null) {
+                            console.showErrorMessage("Please select a remote node as default");
+                            return;
+                        }
+                        CardanoAccountService cardanoAccountService = null;
+                        cardanoAccountService = new BFAccountServiceImpl(remoteNode, new LogListenerAdapter(console));
 
                         for (CardanoAccount account : tableModel.getAccounts()) {
                             //TODO fetch balance
                             try {
-                                Long balance = 1L; //TODO accountService.getBalance(account.getAddress());
+                                Result<Long> result = cardanoAccountService.getBalance(account.getAddress());
 
-                                progressIndicator.setFraction(counter++ / tableModel.getAccounts().size());
-                                if(progressIndicator.isCanceled()) {
-                                    break;
-                                }
+                                if(result.isSuccessful()) {
+                                    progressIndicator.setFraction(counter++ / tableModel.getAccounts().size());
+                                    if (progressIndicator.isCanceled()) {
+                                        break;
+                                    }
 
-                                if (balance != null) {
-                                    account.setBalance(balance);
+                                    Long balance = result.getValue();
+                                    if (result.getValue() != null) {
+                                        account.setBalance(balance);
+                                    }
+                                    tableModel.fireTableRowsUpdated((int) counter - 1, (int) counter - 1);
+                                } else {
+                                    console.showErrorMessage("Error getting balance for account : " + account.getAddress());
+                                    console.showErrorMessage(result.getResponse());
                                 }
-                                tableModel.fireTableRowsUpdated((int)counter - 1, (int)counter-1);
                             } catch (Exception e) {
                                 console.showErrorMessage("Error getting balance for account : " + account.getAddress());
                                 console.showErrorMessage(e.getMessage());

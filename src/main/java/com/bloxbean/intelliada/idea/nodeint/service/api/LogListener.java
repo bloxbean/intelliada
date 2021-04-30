@@ -1,4 +1,4 @@
-package com.bloxbean.intelliada.idea.nodeint.service;
+package com.bloxbean.intelliada.idea.nodeint.service.api;
 
 public interface LogListener {
     public void info(String msg);

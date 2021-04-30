@@ -24,6 +24,10 @@ package com.bloxbean.intelliada.idea.account.action;
 
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountService;
+import com.bloxbean.intelliada.idea.account.ui.CreateAccountDialog;
+import com.bloxbean.intelliada.idea.core.util.Network;
+import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
 import com.intellij.icons.AllIcons;
@@ -54,21 +58,21 @@ public class CreateAccountAction extends AnAction {
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
 
-        String accountName = Messages.showInputDialog(project, "Enter a name for the new account", "New Account", AllIcons.General.Information);
-        if(!StringUtil.isEmpty(accountName))
-            accountName = accountName.trim();
-        else {
-            IdeaUtil.showNotification(project, "Account Create",
-                    "Account name cannot be empty", NotificationType.ERROR, null);
-            return;
-        }
+        CreateAccountDialog dialog = new CreateAccountDialog();
+        boolean ok = dialog.showAndGet();
+        if(!ok) return;
+
+        String accountName = dialog.getAccountName();
+        Network network = dialog.getNetwork();
+
+        com.bloxbean.cardano.client.util.Network clNetwork = NetworkUtil.convertToCLNetwork(network);
 
         AccountService accountService = new AccountService();
 
         CardanoConsole console = CardanoConsole.getConsole(project);
 
         try {
-            CardanoAccount account = accountService.createNewAccount(accountName);
+            CardanoAccount account = accountService.createNewAccount(accountName, clNetwork);
 
             console.clearAndshow();
             console.showInfoMessage(String.format("Address: %s", account.getAddress()));

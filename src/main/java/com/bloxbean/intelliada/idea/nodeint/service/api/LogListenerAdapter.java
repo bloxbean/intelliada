@@ -1,4 +1,4 @@
-package com.bloxbean.intelliada.idea.nodeint.service;
+package com.bloxbean.intelliada.idea.nodeint.service.api;
 
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 
