@@ -22,21 +22,19 @@
 
 package com.bloxbean.intelliada.idea.account.ui;
 
+import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountService;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
-import com.bloxbean.intelliada.idea.core.util.Networks;
-import com.bloxbean.intelliada.idea.nodeint.model.Result;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
-import com.bloxbean.intelliada.idea.nodeint.service.blockfrost.BFAccountServiceImpl;
+import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.DataManager;
-import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DataContext;
@@ -152,7 +150,7 @@ public class ListAccountDialog extends DialogWrapper {
             String accountName = dialog.getAccountName();
             Network network = dialog.getNetwork();
 
-            com.bloxbean.cardano.client.util.Network clNetwork = NetworkUtil.convertToCLNetwork(network);
+            com.bloxbean.cardano.client.common.model.Network clNetwork = NetworkUtil.convertToCLNetwork(network);
 
             if(!StringUtil.isEmpty(accountName))
                 accountName = accountName.trim();
@@ -369,7 +367,7 @@ public class ListAccountDialog extends DialogWrapper {
                             return;
                         }
                         CardanoAccountService cardanoAccountService = null;
-                        cardanoAccountService = new BFAccountServiceImpl(remoteNode, new LogListenerAdapter(console));
+                        cardanoAccountService = new AccountServiceImpl(remoteNode, new LogListenerAdapter(console));
 
                         for (CardanoAccount account : tableModel.getAccounts()) {
                             //TODO fetch balance

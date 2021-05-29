@@ -11,6 +11,7 @@ import com.bloxbean.intelliada.idea.toolwindow.CardanoExplorerTreeStructure;
 import com.bloxbean.intelliada.idea.toolwindow.action.NetworkInfoAction;
 import com.bloxbean.intelliada.idea.toolwindow.action.SetDefaultProviderAction;
 import com.bloxbean.intelliada.idea.toolwindow.action.SetDefaultRemoteNodeAction;
+import com.bloxbean.intelliada.idea.transaction.action.PaymentTransactionAction;
 import com.intellij.ide.util.treeView.NodeRenderer;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
@@ -181,6 +182,7 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
         final DefaultActionGroup group = new DefaultActionGroup();
         group.add(new CreateRemoteNodeAction());
         group.add(new AccountListAction());
+        group.add(new PaymentTransactionAction());
 //        group.add(new RemoveAction());
 //        group.add(new RunAction());
 //        group.add(new ShowAllTargetsAction());

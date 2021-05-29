@@ -60,7 +60,7 @@ public class ImportAccountDialog extends DialogWrapper {
                     //Account account = new Account(mnemonic);
                     //accountTf.setText(account.getAddress().toString());
                     if(account != null)
-                        accountTf.setText(account.baseAddress(0)); //TODO
+                        accountTf.setText(account.baseAddress()); //TODO
                 } catch (Exception ex) {
                     accountTf.setText("");
                 }
@@ -101,18 +101,19 @@ public class ImportAccountDialog extends DialogWrapper {
         String mnemonic = mnemonicTf.getText().trim();
 
         Network network = getNetwork();
-        com.bloxbean.cardano.client.util.Network clNetwork = null;
+        com.bloxbean.cardano.client.common.model.Network clNetwork = null;
 
         if(network != null) {
             clNetwork = NetworkUtil.convertToCLNetwork(network);
         } else {
-            clNetwork = com.bloxbean.cardano.client.util.Networks.testnet(); //default
+            clNetwork = com.bloxbean.cardano.client.common.model.Networks.testnet(); //default
         }
 
         try {
             Account account = new Account(clNetwork, mnemonic);
             return account;
-        } catch (Exception e) {
+        } catch (Error e) {
+            //e.printStackTrace();
             return null;
         }
     }
@@ -128,7 +129,7 @@ public class ImportAccountDialog extends DialogWrapper {
             if(account == null)
                 return null;
 
-            CardanoAccount cardanoAccount = new CardanoAccount(account.baseAddress(0), account.mnemonic());
+            CardanoAccount cardanoAccount = new CardanoAccount(account.baseAddress(), account.mnemonic());
             cardanoAccount.setName(accountNameTf.getText());
             return cardanoAccount;
         }

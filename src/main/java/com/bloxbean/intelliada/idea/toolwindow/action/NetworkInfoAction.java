@@ -1,12 +1,13 @@
 package com.bloxbean.intelliada.idea.toolwindow.action;
 
+import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
-import com.bloxbean.intelliada.idea.nodeint.model.Result;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.NetworkInfoService;
-import com.bloxbean.intelliada.idea.nodeint.service.blockfrost.BFNetworkInfoServiceImpl;
+import com.bloxbean.intelliada.idea.nodeint.service.impl.NetworkServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
+import com.bloxbean.intelliada.idea.util.JsonUtil;
 import com.intellij.icons.AllIcons;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
@@ -52,10 +53,11 @@ public class NetworkInfoAction extends AnAction {
                 }
 
                 try {
-                    NetworkInfoService networkService = new BFNetworkInfoServiceImpl(node, logListenerAdapter);
+                    NetworkInfoService networkService = new NetworkServiceImpl(node, logListenerAdapter);
                     Result result = networkService.getNetworkInfo();
+                    console.clear();
                     if(result.isSuccessful()) {
-                        console.showInfoMessage(result.getResponse());
+                        console.showInfoMessage(JsonUtil.getPrettyJson(result.getValue()));
 //                        IdeaUtil.showNotification(project, getTitle(), String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
                     } else {
                         console.showErrorMessage(String.format("%s failed", getTxnCommand()));

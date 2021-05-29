@@ -65,7 +65,7 @@ public class CreateAccountAction extends AnAction {
         String accountName = dialog.getAccountName();
         Network network = dialog.getNetwork();
 
-        com.bloxbean.cardano.client.util.Network clNetwork = NetworkUtil.convertToCLNetwork(network);
+        com.bloxbean.cardano.client.common.model.Network clNetwork = NetworkUtil.convertToCLNetwork(network);
 
         AccountService accountService = new AccountService();
 

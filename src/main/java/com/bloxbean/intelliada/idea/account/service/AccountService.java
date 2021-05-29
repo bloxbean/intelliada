@@ -1,7 +1,7 @@
 package com.bloxbean.intelliada.idea.account.service;
 
 import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.util.Network;
+import com.bloxbean.cardano.client.common.model.Network;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.text.StringUtil;
@@ -33,7 +33,7 @@ public class AccountService {
 
         CardanoAccount cardanoAccount = new CardanoAccount();
         Account account = new Account(network);
-        cardanoAccount.setAddress(account.baseAddress(0));
+        cardanoAccount.setAddress(account.baseAddress());
         cardanoAccount.setMnemonic(account.mnemonic());
         cardanoAccount.setName(accountName);
         accountCacheService.storeAccount(cardanoAccount);
