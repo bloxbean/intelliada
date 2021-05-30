@@ -121,8 +121,32 @@ public class CardanoConsole {
 
     }
 
+    public  void show() {
+        ApplicationManager.getApplication().invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                Project project = ProjectManager.getInstance().getDefaultProject();
+                if(project == null) return;
+                ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow(CardanoLogToolWindowFactory.CARDANO_LOG_WINDOW_ID);
+
+                if(toolWindow != null && !toolWindow.isAvailable()) {
+                    toolWindow.setAvailable(true);
+                }
+
+                if(toolWindow != null && !toolWindow.isVisible()) {
+                    toolWindow.show(null);
+                }
+            }
+        });
+
+    }
+
     public void showInfoMessage(String message) {
         showMessage(message , ConsoleViewContentType.NORMAL_OUTPUT);
+    }
+
+    public void showInfoMessage(String message, boolean noLineBreak) {
+        showMessage(message , ConsoleViewContentType.NORMAL_OUTPUT, noLineBreak);
     }
 
     public void showSuccessMessage(String message) {
@@ -170,6 +194,10 @@ public class CardanoConsole {
 //    }
 
     private void showMessage(String message, ConsoleViewContentType type) {
+        showMessage(message, type, true);
+    }
+
+    private void showMessage(String message, ConsoleViewContentType type, boolean linebreak) {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -184,7 +212,11 @@ public class CardanoConsole {
                     return;
                 }
 
-                view.print(message + "\n", type);
+                if(linebreak) {
+                    view.print(message + "\n", type);
+                } else {
+                    view.print(message, type);
+                }
             }
         });
     }

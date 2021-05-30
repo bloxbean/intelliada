@@ -25,16 +25,17 @@ package com.bloxbean.intelliada.idea.account.ui;
 import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountService;
-import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
-import com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
+import com.bloxbean.intelliada.idea.util.IdeaUtil;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.DataManager;
+import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DataContext;
@@ -350,9 +351,8 @@ public class ListAccountDialog extends DialogWrapper {
         if (tableModel.getAccounts() == null) return;
 
         if(isRemote) {
-            AccountService accountListFetcher = new AccountService();
             CardanoConsole console = CardanoConsole.getConsole(project);
-            console.clearAndshow();
+            console.show();
 
             try {
                 ProgressManager.getInstance().runProcessWithProgressSynchronously(new Runnable() {
@@ -361,18 +361,20 @@ public class ListAccountDialog extends DialogWrapper {
                         ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
                         float counter = 0;
 
-                        RemoteNode remoteNode = RemoteNodeState.getInstance().getDefaultRemoteNode();
-                        if(remoteNode == null) {
-                            console.showErrorMessage("Please select a remote node as default");
+                        CardanoAccountService cardanoAccountService = null;
+                        try {
+                            cardanoAccountService = new AccountServiceImpl(project, new LogListenerAdapter(console));
+                        } catch (TargetNodeNotConfigured targetNodeNotConfigured) {
+                            console.showErrorMessage(targetNodeNotConfigured.getMessage());
+                            IdeaUtil.showNotification(project, "Node Configuration",
+                                    "Cardano default remote node is not configured", NotificationType.ERROR, null);
                             return;
                         }
-                        CardanoAccountService cardanoAccountService = null;
-                        cardanoAccountService = new AccountServiceImpl(remoteNode, new LogListenerAdapter(console));
 
                         for (CardanoAccount account : tableModel.getAccounts()) {
                             //TODO fetch balance
                             try {
-                                Result<Long> result = cardanoAccountService.getBalance(account.getAddress());
+                                Result<Long> result = cardanoAccountService.getAdaBalance(account.getAddress());
 
                                 if(result.isSuccessful()) {
                                     progressIndicator.setFraction(counter++ / tableModel.getAccounts().size());
@@ -391,7 +393,7 @@ public class ListAccountDialog extends DialogWrapper {
                                 }
                             } catch (Exception e) {
                                 console.showErrorMessage("Error getting balance for account : " + account.getAddress());
-                                console.showErrorMessage(e.getMessage());
+                                console.showErrorMessage(e.getMessage(), e);
                             }
 //                           //TO BigInteger balance = accountListFetcher.getBalance(account, isRemote);
                         }

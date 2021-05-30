@@ -1,14 +1,19 @@
 package com.bloxbean.intelliada.idea.nodeint.service.api;
 
-import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 
+import java.math.BigInteger;
 import java.util.List;
 
 public interface TransactionService {
 
-    public Result transfer(List<PaymentTransaction> transactions, TransactionDetailsParams detailsParams) throws ApiCallException;
+    public BigInteger calculateFee(PaymentTransaction paymentTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
+            throws ApiCallException;
+
+    public String transfer(List<PaymentTransaction> transactions,
+                                   TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
 
 }

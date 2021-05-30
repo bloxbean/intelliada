@@ -3,7 +3,7 @@
   <grid id="27dc6" binding="mainPanel" layout-manager="GridLayoutManager" row-count="1" column-count="1" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
     <margin top="0" left="0" bottom="0" right="0"/>
     <constraints>
-      <xy x="20" y="20" width="720" height="218"/>
+      <xy x="20" y="20" width="720" height="295"/>
     </constraints>
     <properties/>
     <border type="none" title=""/>
@@ -17,7 +17,7 @@
         <properties/>
         <border type="none"/>
         <children>
-          <grid id="8f865" layout-manager="GridLayoutManager" row-count="1" column-count="1" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
+          <grid id="8f865" layout-manager="GridLayoutManager" row-count="2" column-count="1" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
             <margin top="0" left="0" bottom="0" right="0"/>
             <constraints>
               <tabbedpane title="Payment"/>
@@ -27,11 +27,16 @@
             <children>
               <nested-form id="1e7b5" form-file="com/bloxbean/intelliada/idea/transaction/ui/TransactionEntryForm.form" binding="txnEntryForm">
                 <constraints>
-                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="1" fill="1" indent="0" use-parent-layout="false">
+                  <grid row="1" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="1" fill="1" indent="0" use-parent-layout="false">
                     <minimum-size width="700" height="-1"/>
                   </grid>
                 </constraints>
               </nested-form>
+              <vspacer id="72d52">
+                <constraints>
+                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="6" hsize-policy="1" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
+                </constraints>
+              </vspacer>
             </children>
           </grid>
           <grid id="4001f" layout-manager="FormLayout">
@@ -43,7 +48,7 @@
             <properties/>
             <border type="none"/>
             <children>
-              <nested-form id="56372" form-file="com/bloxbean/intelliada/idea/transaction/ui/TransactionDtlEntryForm.form">
+              <nested-form id="56372" form-file="com/bloxbean/intelliada/idea/transaction/ui/TransactionDtlEntryForm.form" binding="txnDtlForm">
                 <constraints>
                   <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="0" indent="0" use-parent-layout="false"/>
                   <forms/>

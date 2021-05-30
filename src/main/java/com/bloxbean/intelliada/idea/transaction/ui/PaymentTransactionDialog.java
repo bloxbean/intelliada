@@ -10,11 +10,23 @@ public class PaymentTransactionDialog extends DialogWrapper {
     private JPanel mainPanel;
     private TransactionEntryForm txnEntryForm;
     private JTabbedPane tabbedPane1;
+    private TransactionDtlEntryForm txnDtlForm;
 
     public PaymentTransactionDialog(@Nullable Project project) {
         super(project, true);
         init();
         setTitle("Payment Transaction");
+
+        txnEntryForm.initializeData(project);
+        txnDtlForm.initializeData(project);
+    }
+
+    public TransactionEntryForm getTxnEntryForm() {
+        return txnEntryForm;
+    }
+
+    public TransactionDtlEntryForm getTransactionDetlEntryForm() {
+        return txnDtlForm;
     }
 
     @Override

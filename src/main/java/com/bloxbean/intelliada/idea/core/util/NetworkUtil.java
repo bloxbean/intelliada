@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.core.util;
 
 import com.bloxbean.cardano.client.common.model.Network;
+import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 
 public class NetworkUtil {
 
@@ -12,5 +13,19 @@ public class NetworkUtil {
             clNetwork = com.bloxbean.cardano.client.common.model.Networks.testnet();
 
         return clNetwork;
+    }
+
+    public static boolean isTestNet(RemoteNode node) {
+        if(String.valueOf(com.bloxbean.cardano.client.common.model.Networks.testnet().protocol_magic).equals(node.getProtocolMagic()))
+            return true;
+        else
+            return false;
+    }
+
+    public static boolean isMainnet(RemoteNode node) {
+        if(String.valueOf(com.bloxbean.cardano.client.common.model.Networks.mainnet().protocol_magic).equals(node.getProtocolMagic()))
+            return true;
+        else
+            return false;
     }
 }

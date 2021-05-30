@@ -29,5 +29,10 @@ public class LogListenerAdapter implements LogListener {
         console.showErrorMessage(msg);
         console.showWarningMessage(t.getMessage());
     }
+
+    @Override
+    public void info(String msg, boolean noLineBreak) {
+        console.showInfoMessage(msg, noLineBreak);
+    }
 }
 

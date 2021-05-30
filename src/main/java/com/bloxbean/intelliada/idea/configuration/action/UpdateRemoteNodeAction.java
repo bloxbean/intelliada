@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.configuration.action;
 
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.configuration.service.ConfigurationHelperService;
+import com.bloxbean.intelliada.idea.nodeint.service.NodeServiceFactory;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
@@ -20,7 +21,9 @@ public class UpdateRemoteNodeAction extends AnAction {
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
 
-        if(node != null)
+        if(node != null) {
             ConfigurationHelperService.createOrUpdateRemoteNodeConfiguration(project, node);
+            NodeServiceFactory.getInstance().nodeRemoved(node);
+        }
     }
 }

@@ -10,4 +10,8 @@ public interface LogListener {
     default public void warn(String msg, Throwable t) {
 
     }
+
+    default public void info(String msg, boolean noLineBreak) {
+
+    }
 }
