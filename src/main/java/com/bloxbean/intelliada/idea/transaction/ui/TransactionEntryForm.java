@@ -7,18 +7,16 @@ import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountChooser;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
-import com.bloxbean.intelliada.idea.configuration.service.ConfigurationHelperService;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
-import com.bloxbean.intelliada.idea.nodeint.service.api.NetworkInfoService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.model.AssetBalance;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
-import com.bloxbean.intelliada.idea.nodeint.service.impl.NetworkServiceImpl;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.TransactionServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
+import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
 import com.bloxbean.intelliada.idea.util.AdaConversionUtil;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
@@ -53,6 +51,7 @@ public class TransactionEntryForm {
     private Project project;
     private DefaultComboBoxModel<AssetBalance> availableBalanceComboBoxModel;
     private boolean isMainnet;
+    private TransactionEntryListener transactionEntryListener;
 
     public TransactionEntryForm() {
         feeLabel.setText(ADA_SYMBOL + "");
@@ -67,7 +66,7 @@ public class TransactionEntryForm {
         senderAccChooserBtn.addActionListener(e -> {
             CardanoAccount cardanoAccount = AccountChooser.getSelectedAccount(project, true);
             if(cardanoAccount != null) {
-                senderTf.setText(cardanoAccount.getAddress());
+                setSenderAddress(cardanoAccount.getAddress());
                 senderMnemonicTf.setText(cardanoAccount.getMnemonic());
 
                 fetchSenderBalance();
@@ -95,10 +94,10 @@ public class TransactionEntryForm {
                     if(node != null) {
                         if(NetworkUtil.isMainnet(node)) {
                             Account account = new Account(mnemonic);
-                            senderTf.setText(account.baseAddress());
+                            setSenderAddress(account.baseAddress());
                         } else {
                             Account account = new Account(Networks.testnet(), mnemonic);
-                            senderTf.setText(account.baseAddress());
+                            setSenderAddress(account.baseAddress());
                         }
                     } else {
                         console.showErrorMessage("Target Cardano node is not configured. Please select a default node first.");
@@ -141,6 +140,13 @@ public class TransactionEntryForm {
                 feeTf.setEditable(false);
             }
         });
+    }
+
+    private void setSenderAddress(String address) {
+        senderTf.setText(address);
+        if(transactionEntryListener != null && address != null && !address.isEmpty()) {
+            transactionEntryListener.senderAddressChanged(senderTf.getText());
+        }
     }
 
     private void fetchSenderBalance() {
@@ -296,7 +302,9 @@ public class TransactionEntryForm {
         }
     }
 
-
+    public void addTransactionEntryListener(TransactionEntryListener transactionEntryListener) {
+        this.transactionEntryListener = transactionEntryListener;
+    }
 
     private void createUIComponents() {
         // TODO: place custom component creation code here

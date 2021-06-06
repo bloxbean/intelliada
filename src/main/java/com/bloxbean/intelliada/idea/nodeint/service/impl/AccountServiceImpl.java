@@ -1,14 +1,17 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
+import com.bloxbean.cardano.client.backend.common.OrderEnum;
 import com.bloxbean.cardano.client.backend.exception.ApiException;
 import com.bloxbean.cardano.client.backend.model.AddressContent;
 import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.cardano.client.backend.model.TxContentOutputAmount;
+import com.bloxbean.cardano.client.backend.model.Utxo;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.model.LedgerAccount;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
 import com.bloxbean.intelliada.idea.nodeint.service.api.model.AssetBalance;
+import com.bloxbean.intelliada.idea.util.JsonUtil;
 import com.intellij.openapi.project.Project;
 
 import java.math.BigInteger;
@@ -75,7 +78,7 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
                     logListener.error(result.toString());
                 throw new ApiException("Unable to get address details");
             }
-            logListener.info(addressContent.toString());
+            logListener.info(JsonUtil.getPrettyJson(addressContent));
         } catch (Exception e) {
             logListener.error("Error getting account balance", e);
             return Collections.EMPTY_LIST;
@@ -109,5 +112,23 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
         }
 
         return assetBalances;
+    }
+
+    @Override
+    public List<Utxo> getUtxos(String address, int count, int page, OrderEnum order) {
+        try {
+            Result<List<Utxo>> result = backendService.getUtxoService().getUtxos(address, count, page, order);
+            if(result.isSuccessful()) {
+                logListener.info(JsonUtil.getPrettyJson(result.getValue()));
+                return result.getValue();
+            } else {
+                if(result != null)
+                    logListener.error(result.toString());
+                throw new ApiException("Unable to get utxos for the address");
+            }
+        } catch (Exception e) {
+            logListener.error("Error getting Utxos for the address: " + address, e);
+            return Collections.EMPTY_LIST;
+        }
     }
 }

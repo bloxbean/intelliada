@@ -1,7 +1,6 @@
 package com.bloxbean.intelliada.idea.transaction.action;
 
-import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.cardano.client.backend.model.Utxo;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
@@ -12,6 +11,7 @@ import com.bloxbean.intelliada.idea.transaction.ui.PaymentTransactionDialog;
 import com.bloxbean.intelliada.idea.transaction.ui.TransactionDtlEntryForm;
 import com.bloxbean.intelliada.idea.transaction.ui.TransactionEntryForm;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
+import com.bloxbean.intelliada.idea.utxos.ui.UtxoSelectEntryForm;
 import com.intellij.icons.AllIcons;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
@@ -51,16 +51,17 @@ public class PaymentTransactionAction extends AnAction {
         }
 
         TransactionEntryForm txnEntryForm = dialog.getTxnEntryForm();
-//        Account sender = txnEntryForm.getSender();
-//        String receiver = txnEntryForm.getReceiver();
-//        String unit = txnEntryForm.getUnit();
-//        BigInteger amount = txnEntryForm.getAmount();
-//        BigInteger fee = txnEntryForm.getFee();
 
         TransactionDtlEntryForm transactionDtlEntryForm = dialog.getTransactionDetlEntryForm();
         BigInteger ttl = transactionDtlEntryForm.getTtl();
 
         PaymentTransaction paymentTransaction = txnEntryForm.buildTransaction();
+
+        UtxoSelectEntryForm utxoSelectEntryForm = dialog.getUtxoSelectEntryForm();
+        List<Utxo> selectedUtxos = utxoSelectEntryForm.getUtxos();
+        if(selectedUtxos != null && selectedUtxos.size() > 0) {
+            paymentTransaction.setUtxosToInclude(selectedUtxos);
+        }
 
         TransactionDetailsParams detailsParams = new TransactionDetailsParams();
         if(ttl != null)

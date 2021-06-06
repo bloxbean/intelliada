@@ -1,10 +1,12 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
+import com.bloxbean.cardano.client.backend.api.helper.model.TransactionResult;
 import com.bloxbean.cardano.client.backend.model.Block;
 import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
+import com.bloxbean.cardano.client.transaction.spec.Transaction;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
@@ -75,13 +77,20 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
         try {
             printTransactionRequests(transactions);
 
-            Result<String> result = backendService.getTransactionHelperService().transfer(transactions, detailsParams, metadata);
+            Result<TransactionResult> result = backendService.getTransactionHelperService().transfer(transactions, detailsParams, metadata);
+            try {
+                byte[] txnCborBytes = result.getValue().getSignedTxn();
+                Transaction transaction = Transaction.deserialize(txnCborBytes);
+                logListener.info("Transaction Request: " + JsonUtil.getPrettyJson(transaction));
+            } catch (Exception e) {
+
+            }
             if (result.isSuccessful()) {
                 logListener.info("Transaction submitted successfully");
-                logListener.info("Transaction id: " + result.getValue());
+                logListener.info("Transaction id: " + result.getValue().getTransactionId());
 
-                waitForTransaction(result.getValue());
-                return result.getValue();
+                waitForTransaction(result.getValue().getTransactionId());
+                return result.getValue().getTransactionId();
             } else {
                 logListener.error("Transaction failed");
                 logListener.error(result.toString());

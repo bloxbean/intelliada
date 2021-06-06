@@ -1,5 +1,7 @@
 package com.bloxbean.intelliada.idea.transaction.ui;
 
+import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
+import com.bloxbean.intelliada.idea.utxos.ui.UtxoSelectEntryForm;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import org.jetbrains.annotations.Nullable;
@@ -11,6 +13,7 @@ public class PaymentTransactionDialog extends DialogWrapper {
     private TransactionEntryForm txnEntryForm;
     private JTabbedPane tabbedPane1;
     private TransactionDtlEntryForm txnDtlForm;
+    private UtxoSelectEntryForm utxoSelectEntryForm;
 
     public PaymentTransactionDialog(@Nullable Project project) {
         super(project, true);
@@ -19,6 +22,24 @@ public class PaymentTransactionDialog extends DialogWrapper {
 
         txnEntryForm.initializeData(project);
         txnDtlForm.initializeData(project);
+        utxoSelectEntryForm.initialize(project);
+        attachTransactionEntryListener();
+    }
+
+    private void attachTransactionEntryListener() {
+        TransactionEntryListener transactionEntryListener = new TransactionEntryListener() {
+            @Override
+            public void senderAddressChanged(String address) {
+                utxoSelectEntryForm.setAddress(address);
+            }
+
+            @Override
+            public void receiverAddressChanged(String receiver) {
+                //Not used for now
+            }
+        };
+
+        txnEntryForm.addTransactionEntryListener(transactionEntryListener);
     }
 
     public TransactionEntryForm getTxnEntryForm() {
@@ -27,6 +48,10 @@ public class PaymentTransactionDialog extends DialogWrapper {
 
     public TransactionDtlEntryForm getTransactionDetlEntryForm() {
         return txnDtlForm;
+    }
+
+    public UtxoSelectEntryForm getUtxoSelectEntryForm() {
+        return utxoSelectEntryForm;
     }
 
     @Override

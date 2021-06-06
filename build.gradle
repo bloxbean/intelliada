@@ -40,7 +40,7 @@ repositories {
 
 dependencies {
     compile fileTree(include: ['*.jar'], dir: 'lib')
-    compile('com.bloxbean.cardano:cardano-client-lib:0.1.0') {
+    compile('com.bloxbean.cardano:cardano-client-lib:0.1.2-SNAPSHOT') {
         exclude group: 'org.slf4j', module: 'slf4j-api'
     }
     compileOnly 'org.projectlombok:lombok:1.18.20'

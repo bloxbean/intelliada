@@ -3,55 +3,84 @@
   <grid id="27dc6" binding="mainPanel" layout-manager="GridLayoutManager" row-count="1" column-count="1" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
     <margin top="0" left="0" bottom="0" right="0"/>
     <constraints>
-      <xy x="20" y="20" width="720" height="295"/>
+      <xy x="20" y="20" width="750" height="450"/>
     </constraints>
-    <properties/>
+    <properties>
+      <minimumSize width="750" height="450"/>
+      <preferredSize width="750" height="350"/>
+    </properties>
     <border type="none" title=""/>
     <children>
       <tabbedpane id="3e921" binding="tabbedPane1" default-binding="true">
         <constraints>
-          <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false">
-            <preferred-size width="200" height="200"/>
-          </grid>
+          <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
         </constraints>
         <properties/>
         <border type="none"/>
         <children>
-          <grid id="8f865" layout-manager="GridLayoutManager" row-count="2" column-count="1" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
-            <margin top="0" left="0" bottom="0" right="0"/>
+          <grid id="8f865" layout-manager="GridLayoutManager" row-count="3" column-count="1" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
+            <margin top="5" left="0" bottom="0" right="0"/>
             <constraints>
-              <tabbedpane title="Payment"/>
+              <tabbedpane title="Transaction"/>
             </constraints>
             <properties/>
             <border type="none"/>
             <children>
               <nested-form id="1e7b5" form-file="com/bloxbean/intelliada/idea/transaction/ui/TransactionEntryForm.form" binding="txnEntryForm">
                 <constraints>
-                  <grid row="1" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="1" fill="1" indent="0" use-parent-layout="false">
+                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="1" fill="1" indent="0" use-parent-layout="false">
                     <minimum-size width="700" height="-1"/>
                   </grid>
                 </constraints>
               </nested-form>
-              <vspacer id="72d52">
+              <grid id="7f092" layout-manager="FormLayout">
+                <rowspec value="center:d:grow"/>
+                <rowspec value="top:3dlu:noGrow"/>
+                <rowspec value="center:max(d;4px):noGrow"/>
+                <colspec value="fill:d:grow"/>
                 <constraints>
-                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="6" hsize-policy="1" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
+                  <grid row="2" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="1" fill="1" indent="0" use-parent-layout="false"/>
                 </constraints>
-              </vspacer>
+                <properties/>
+                <border type="none" title="Utxo Selector (Optional)"/>
+                <children>
+                  <nested-form id="672d2" form-file="com/bloxbean/intelliada/idea/utxos/ui/UtxoSelectEntryForm.form" binding="utxoSelectEntryForm">
+                    <constraints>
+                      <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="0" indent="0" use-parent-layout="false"/>
+                      <forms/>
+                    </constraints>
+                  </nested-form>
+                  <component id="c3e0" class="javax.swing.JLabel">
+                    <constraints>
+                      <grid row="2" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
+                      <forms/>
+                    </constraints>
+                    <properties>
+                      <font size="11" style="2"/>
+                      <text value="You may want to select specific utxos to be included in the transaction. "/>
+                    </properties>
+                  </component>
+                </children>
+              </grid>
+              <component id="eae75" class="javax.swing.JSeparator">
+                <constraints>
+                  <grid row="1" column="0" row-span="1" col-span="1" vsize-policy="6" hsize-policy="6" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
+                </constraints>
+                <properties/>
+              </component>
             </children>
           </grid>
-          <grid id="4001f" layout-manager="FormLayout">
-            <rowspec value="center:d:noGrow"/>
-            <colspec value="fill:d:grow"/>
+          <grid id="4001f" layout-manager="GridLayoutManager" row-count="1" column-count="1" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
+            <margin top="5" left="0" bottom="0" right="0"/>
             <constraints>
-              <tabbedpane title="Txn Details"/>
+              <tabbedpane title="Other Details"/>
             </constraints>
             <properties/>
             <border type="none"/>
             <children>
               <nested-form id="56372" form-file="com/bloxbean/intelliada/idea/transaction/ui/TransactionDtlEntryForm.form" binding="txnDtlForm">
                 <constraints>
-                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="0" indent="0" use-parent-layout="false"/>
-                  <forms/>
+                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="9" fill="0" indent="0" use-parent-layout="false"/>
                 </constraints>
               </nested-form>
             </children>
