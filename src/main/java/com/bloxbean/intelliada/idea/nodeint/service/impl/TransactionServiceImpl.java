@@ -102,11 +102,14 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
     }
 
     private void printTransactionRequests(List<PaymentTransaction> transactions) {
-        logListener.info("Transaction Request: ");
         int count = 1;
         for(PaymentTransaction transaction: transactions) {
-            logListener.info("Transaction - " + count++);
-            logListener.info(JsonUtil.getPrettyJson(transaction));
+            logListener.info("\nTransaction - " + count++);
+            logListener.info("Sender   : " + transaction.getSender());
+            logListener.info("Receiver : " + transaction.getReceiver());
+            logListener.info("Unit     : " + transaction.getUnit());
+            logListener.info("Amount   : " + transaction.getAmount());
+            logListener.info("-------------------------------------------\n");
         }
     }
 

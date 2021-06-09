@@ -22,7 +22,9 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.ComboBox;
+import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.event.FocusEvent;
@@ -304,6 +306,26 @@ public class TransactionEntryForm {
 
     public void addTransactionEntryListener(TransactionEntryListener transactionEntryListener) {
         this.transactionEntryListener = transactionEntryListener;
+    }
+
+    public @Nullable ValidationInfo doValidate() {
+        if(getSender() == null) {
+            return new ValidationInfo("Please select a valid sender Account or enter valid sender Mnemonic", senderTf);
+        }
+
+        if(getUnit() == null) {
+            return new ValidationInfo("Please select a valid asset to transfer", availableBalanceCB);
+        }
+
+        if(StringUtil.isEmpty(getReceiver())) {
+            return new ValidationInfo("Please select a valid receiver address", receiverTf);
+        }
+
+        if(getAmount() == null) {
+            return new ValidationInfo("Please enter valid amount", amountTf);
+        }
+
+        return null;
     }
 
     private void createUIComponents() {

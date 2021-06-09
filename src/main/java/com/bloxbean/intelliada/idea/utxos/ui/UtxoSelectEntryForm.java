@@ -1,14 +1,17 @@
 package com.bloxbean.intelliada.idea.utxos.ui;
 
+import com.bloxbean.cardano.client.backend.model.Amount;
 import com.bloxbean.cardano.client.backend.model.Utxo;
 import com.bloxbean.intelliada.idea.utxos.service.UtxoChooser;
 import com.bloxbean.intelliada.idea.utxos.ui.model.UtxoWrapper;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.components.JBList;
 
 import javax.swing.*;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -28,6 +31,7 @@ public class UtxoSelectEntryForm {
 
     public void initialize(Project project) {
         utxosJList.setModel(utxoListModel);
+        utxosJList.setSelectionMode(DefaultListSelectionModel.SINGLE_SELECTION);
 
         addButton.addActionListener(e -> {
             if(StringUtil.isEmpty(address)) {
@@ -35,9 +39,21 @@ public class UtxoSelectEntryForm {
                 return;
             }
 
-            List<Utxo> utxoList = UtxoChooser.selectUtxos(project, address, Collections.emptyList());
+            List<Utxo> utxos = getUtxos();
+            List<Utxo> utxoList = UtxoChooser.selectUtxos(project, address, utxos);
             if(utxoList != null && utxoList.size() > 0) {
-                utxoList.forEach(utxo -> utxoListModel.addElement(new UtxoWrapper(utxo)));
+                utxoList.forEach(utxo -> {
+                    if(!utxos.contains(utxo)) {
+                        utxoListModel.addElement(new UtxoWrapper(utxo));
+                    }
+                });
+            }
+        });
+
+        deleteButton.addActionListener(e -> {
+            int index = utxosJList.getSelectedIndex();
+            if(index != -1) {
+                utxoListModel.remove(index);
             }
         });
     }
@@ -58,6 +74,33 @@ public class UtxoSelectEntryForm {
         }
 
         return utxos;
+    }
+
+    public ValidationInfo doValidate(String unit, BigInteger quantity) {
+        if(unit != null && unit.length() >= 8 && !verifyUtxoAmountsForTokenAmount(unit, quantity)) {
+            return new ValidationInfo("Not enough quantity found in utxos for unit : "
+                    + unit.substring(0, 7) + "...", utxosJList);
+        } else
+            return null;
+    }
+
+    private boolean verifyUtxoAmountsForTokenAmount(String unit, BigInteger quantity) {
+        List<Utxo> utxoList = getUtxos();
+        if(utxoList == null || utxoList.size() == 0)
+            return true;
+        BigInteger inputAmount = BigInteger.ZERO;
+        for(Utxo utxo: utxoList){
+            for(Amount amt: utxo.getAmount()) {
+                if(unit.equals(amt.getUnit())) {
+                    inputAmount = inputAmount.add(amt.getQuantity());
+                }
+            }
+        };
+
+        if(inputAmount.compareTo(quantity) != -1)
+            return true;
+        else
+            return false;
     }
 
     private void createUIComponents() {

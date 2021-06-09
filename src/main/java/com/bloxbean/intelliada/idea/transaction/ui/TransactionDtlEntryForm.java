@@ -7,7 +7,9 @@ import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.math.BigInteger;
@@ -66,5 +68,9 @@ public class TransactionDtlEntryForm {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    public @Nullable ValidationInfo doValidate() {
+        return null;
     }
 }
