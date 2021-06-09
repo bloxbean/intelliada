@@ -40,6 +40,7 @@ public class CardanoConsole {
     private ConsoleView view;
 
     private Project project;
+    private LoadingConsoleHelper loadingConsole;
 
     public static CardanoConsole getConsole(Project project) {
         if(project == null)
@@ -193,6 +194,10 @@ public class CardanoConsole {
 //        });
 //    }
 
+    public void printWait(String message) {
+        animate(message, ConsoleViewContentType.NORMAL_OUTPUT);
+    }
+
     private void showMessage(String message, ConsoleViewContentType type) {
         showMessage(message, type, true);
     }
@@ -217,6 +222,31 @@ public class CardanoConsole {
                 } else {
                     view.print(message, type);
                 }
+            }
+        });
+    }
+
+    private void animate(String message, ConsoleViewContentType type) {
+        ApplicationManager.getApplication().invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                if(view == null) {
+                    view = createCardanoConsoleView(CONSOLE_VIEW);
+                }
+
+                if(view == null) {
+                    if(LOG.isDebugEnabled()) {
+                        LOG.error("Console view could not be created.");
+                    }
+                    return;
+                }
+
+                if(loadingConsole == null) {
+                    loadingConsole = new LoadingConsoleHelper(view);
+                }
+
+                loadingConsole.animate(message);
+
             }
         });
     }

@@ -74,7 +74,7 @@ public class NodeBaseService {
         }
 
         try {
-                logListener.info("Waiting for transaction to be mined ....", false);
+                //logListener.info("Waiting for transaction to be mined ....");
                 int count = 0;
                 while (count < 60) {
                     Result<TransactionContent> txnResult = backendService.getTransactionService()
@@ -85,11 +85,11 @@ public class NodeBaseService {
                         logListener.info(JsonUtil.getPrettyJson(txnResult.getValue()));
                         return;
                     } else {
-                        logListener.info("...", false);
+                        logListener.printWait(count  + " sec - " + " Waiting for transaction to be mined.");
                     }
 
                     count++;
-                    Thread.currentThread().sleep(2000);
+                    Thread.currentThread().sleep(1000);
                 }
                 logListener.info("");
                 logListener.warn("Taking too long to mine the transaction. " +

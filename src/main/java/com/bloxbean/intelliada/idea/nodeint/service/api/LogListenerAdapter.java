@@ -34,5 +34,10 @@ public class LogListenerAdapter implements LogListener {
     public void info(String msg, boolean noLineBreak) {
         console.showInfoMessage(msg, noLineBreak);
     }
+
+    @Override
+    public void printWait(String msg) {
+        console.printWait(msg);
+    }
 }
 

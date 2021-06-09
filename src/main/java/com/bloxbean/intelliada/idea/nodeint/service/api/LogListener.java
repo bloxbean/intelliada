@@ -14,4 +14,8 @@ public interface LogListener {
     default public void info(String msg, boolean noLineBreak) {
 
     }
+
+    default public void printWait(String msg) {
+
+    }
 }
