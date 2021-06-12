@@ -6,6 +6,8 @@ import com.bloxbean.intelliada.idea.configuration.model.CLIProvider;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.messaging.CLIProvidersChangeNotifier;
 import com.bloxbean.intelliada.idea.core.messaging.RemoteNodeChangeNotifier;
+import com.bloxbean.intelliada.idea.scripts.action.CreateScriptPubkeyAction;
+import com.bloxbean.intelliada.idea.scripts.action.ListScriptsAction;
 import com.bloxbean.intelliada.idea.toolwindow.CLIProviderDescriptor;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoExplorerTreeStructure;
 import com.bloxbean.intelliada.idea.toolwindow.action.NetworkInfoAction;
@@ -183,6 +185,9 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
         group.add(new CreateRemoteNodeAction());
         group.add(new AccountListAction());
         group.add(new PaymentTransactionAction());
+
+        group.add(new CreateScriptPubkeyAction());
+        group.add(new ListScriptsAction());
 //        group.add(new RemoveAction());
 //        group.add(new RunAction());
 //        group.add(new ShowAllTargetsAction());

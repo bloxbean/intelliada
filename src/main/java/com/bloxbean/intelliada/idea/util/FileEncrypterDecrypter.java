@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package com.bloxbean.intelliada.idea.account.cache;
+package com.bloxbean.intelliada.idea.util;
 
 import javax.crypto.*;
 import javax.crypto.spec.IvParameterSpec;
@@ -31,7 +31,7 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 
-class FileEncrypterDecrypter {
+public class FileEncrypterDecrypter {
 
     private SecretKey secretKey;
     private Cipher cipher = null;

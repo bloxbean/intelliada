@@ -20,10 +20,12 @@
  * SOFTWARE.
  */
 
-package com.bloxbean.intelliada.idea.account.cache;
+package com.bloxbean.intelliada.idea.scripts.cache;
 
+import com.bloxbean.cardano.client.transaction.spec.script.*;
 import com.bloxbean.intelliada.idea.util.FileEncrypterDecrypter;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.text.StringUtil;
 
@@ -31,10 +33,10 @@ import javax.crypto.SecretKey;
 import java.io.*;
 import java.util.Properties;
 
-public class GlobalCache {
-    private final static Logger log = Logger.getInstance(GlobalCache.class);
+public class GlobalScriptCache {
+    private final static Logger log = Logger.getInstance(GlobalScriptCache.class);
 
-    public static String ACCOUNT_CACHE = ".cardano.account.conf";
+    public static String SCRIPTS_CACHE = ".cardano.scripts.conf";
 
     //props in key file
     private final static String SECRET_KEY = "secret-key";
@@ -44,14 +46,21 @@ public class GlobalCache {
 
     private ObjectMapper objectMapper;
 
-    public GlobalCache(String targetFolder) {
+    public GlobalScriptCache(String targetFolder) {
         this.targetFolder = targetFolder;
 
         this.objectMapper = new ObjectMapper();
+        this.objectMapper.registerSubtypes(new NamedType(ScriptPubkey.class, "ScriptPubkey"));
+        this.objectMapper.registerSubtypes(new NamedType(ScriptAll.class, "ScriptAll"));
+        this.objectMapper.registerSubtypes(new NamedType(ScriptAny.class, "ScriptAny"));
+        this.objectMapper.registerSubtypes(new NamedType(ScriptAtLeast.class, "ScriptAtLeast"));
+        this.objectMapper.registerSubtypes(new NamedType(RequireTimeAfter.class, "RequireTimeAfter"));
+        this.objectMapper.registerSubtypes(new NamedType(RequireTimeBefore.class, "RequireTimeBefore"));
+
     }
 
-    public void setAccountCache(AccountCache accountCache) {
-        File file = getAccountCacheFile();
+    public void setScriptCache(ScriptCache scriptCache) {
+        File file = getScriptsCacheFile();
 
         SecretKey secretKey = getSecretKeyFromFile();
         if(secretKey == null) { //Create a secret key
@@ -59,119 +68,119 @@ public class GlobalCache {
         }
 
         if(secretKey == null) { //If secret is still null. write cache in plain text
-            getAccountCacheKeyFile().delete();
-            writeAccountCacheToFile(accountCache, file);
+            getScriptCacheKeyFile().delete();
+            writeScriptCacheToFile(scriptCache, file);
         } else {
             try {
-                String jsonContent = writeAccountCacheToJson(accountCache);
+                String jsonContent = writeScriptCacheToJson(scriptCache);
 
                 FileEncrypterDecrypter fileEncrypterDecrypter = new FileEncrypterDecrypter(secretKey);
-                fileEncrypterDecrypter.encrypt(jsonContent, getAccountCacheFile().getAbsolutePath());
+                fileEncrypterDecrypter.encrypt(jsonContent, getScriptsCacheFile().getAbsolutePath());
             } catch (Exception e) {
-                log.debug("Error writing encrypted account cache content.", e);
+                log.debug("Error writing encrypted script cache content.", e);
                 //Let's try to write plain content and delete secret file as fallback
-                getAccountCacheKeyFile().delete();
-                writeAccountCacheToFile(accountCache, file);
+                getScriptCacheKeyFile().delete();
+                writeScriptCacheToFile(scriptCache, file);
             }
         }
     }
 
-    public AccountCache getAccountCache() {
-        File file = getAccountCacheFile();
-        File keyFile = getAccountCacheKeyFile();
+    public ScriptCache getScriptCache() {
+        File file = getScriptsCacheFile();
+        File keyFile = getScriptCacheKeyFile();
 
         if(!file.exists())
-            return new AccountCache();
+            return new ScriptCache();
 
         if(keyFile.exists()) {
             SecretKey secretKey = getSecretKeyFromFile();
             if(secretKey == null) {
-                return new AccountCache();
+                return new ScriptCache();
             } else {
                 try {
                     FileEncrypterDecrypter fileEncrypterDecrypter = new FileEncrypterDecrypter(secretKey);
                     String encContent = fileEncrypterDecrypter.decrypt(file);
-                    return readAccountCacheFromJson(encContent);
+                    return readScriptCacheFromJson(encContent);
                 } catch (Exception e) {
-                    log.warn("Account cache could not be read", e);
-                    return new AccountCache();
+                    log.warn("Script cache could not be read", e);
+                    return new ScriptCache();
                 }
             }
         } else { //If not encrypted. Just to support older version and migration
-            AccountCache accountCache = readAccountCacheFromFile(file);
+            ScriptCache scriptCache = readScriptCacheFromFile(file);
 
-            return accountCache;
+            return scriptCache;
         }
     }
 
-    private AccountCache readAccountCacheFromJson(String content) {
-        AccountCache accountCache = null;
+    private ScriptCache readScriptCacheFromJson(String content) {
+        ScriptCache scriptCache = null;
 
         try {
-            accountCache = objectMapper.readValue(content, AccountCache.class);
+            scriptCache = objectMapper.readValue(content, ScriptCache.class);
         } catch (Exception e) {
-            accountCache = new AccountCache();
-            log.warn("Could not read from account cache: " + e.getMessage());
+            scriptCache = new ScriptCache();
+            log.warn("Could not read from script cache: " + e.getMessage());
             if(log.isDebugEnabled()) {
-                log.debug("Could not read from account cache", e);
+                log.debug("Could not read from script cache", e);
             }
         }
-        return accountCache;
+        return scriptCache;
     }
 
-    private AccountCache readAccountCacheFromFile(File file) {
-        AccountCache accountCache = null;
+    private ScriptCache readScriptCacheFromFile(File file) {
+        ScriptCache scriptCache = null;
 
         try {
-            accountCache = objectMapper.readValue(file, AccountCache.class);
+            scriptCache = objectMapper.readValue(file, ScriptCache.class);
         } catch (Exception e) {
-            accountCache = new AccountCache();
+            scriptCache = new ScriptCache();
             //e.printStackTrace();
-            log.warn("Could not read from account cache: " + e.getMessage());
+            log.warn("Could not read from script cache: " + e.getMessage());
             if(log.isDebugEnabled()) {
-                log.debug("Could not read from account cache", e);
+                log.debug("Could not read from script cache", e);
             }
         }
-        return accountCache;
+        return scriptCache;
     }
 
-    private String writeAccountCacheToJson(AccountCache accountCache) {
+    private String writeScriptCacheToJson(ScriptCache scriptCache) {
         try {
             StringWriter writer = new StringWriter();
-            objectMapper.writeValue(writer, accountCache);
+            objectMapper.writeValue(writer, scriptCache);
             return writer.toString();
         } catch (Exception e) {
-            log.warn("Could not convert account cache to json", e);
+            log.warn("Could not convert script cache to json", e);
             if (log.isDebugEnabled()) {
-                log.debug("Could not convert account cache to json", e);
+                log.debug("Could not convert script cache to json", e);
             }
         }
 
         return null;
     }
 
-    private void writeAccountCacheToFile(AccountCache accountCache, File file) {
+    private void writeScriptCacheToFile(ScriptCache scriptCache, File file) {
         try {
-            objectMapper.writeValue(file, accountCache);
+            objectMapper.writeValue(file, scriptCache);
         } catch (Exception e) {
-            log.warn("Could not write to account cache", e);
+            log.warn("Could not write to script cache", e);
             if (log.isDebugEnabled()) {
-                log.debug("Could not write to account cache", e);
+                log.debug("Could not write to script cache", e);
             }
         }
     }
 
-    public void clearAccountCache() {
-        File file = getAccountCacheFile();
+    public void clearScriptCache() {
+        File file = getScriptsCacheFile();
         file.delete();
 
-        File keyFile = getAccountCacheKeyFile();
+        File keyFile = getScriptCacheKeyFile();
         keyFile.delete();
     }
 
     private SecretKey getSecretKeyFromFile() {
         try {
-            File keyFile = getAccountCacheKeyFile();
+            File keyFile = getScriptCacheKeyFile();
             if (!keyFile.exists()) {
                 return null;
             }
@@ -209,18 +218,18 @@ public class GlobalCache {
         props.put(SECRET_KEY, key);
         props.put(PROTECTION_MODE, "none");
 
-        File keyFile = getAccountCacheKeyFile();
+        File keyFile = getScriptCacheKeyFile();
         writeKeyProperties(keyFile, props);
 
         return FileEncrypterDecrypter.getSecretKeyFromEncodedKey(key);
     }
 
-    private File getAccountCacheFile() {
-        return new File(targetFolder, ACCOUNT_CACHE);
+    private File getScriptsCacheFile() {
+        return new File(targetFolder, SCRIPTS_CACHE);
     }
 
-    private File getAccountCacheKeyFile() {
-        return new File(targetFolder, ACCOUNT_CACHE + ".key");
+    private File getScriptCacheKeyFile() {
+        return new File(targetFolder, SCRIPTS_CACHE + ".key");
     }
 
     private void writeKeyProperties(File file, Properties props) {
