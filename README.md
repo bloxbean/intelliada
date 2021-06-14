@@ -1,4 +1,4 @@
-![IntelliAda](https://user-images.githubusercontent.com/35016438/121780784-70bef480-cbd4-11eb-8321-9114c691ef7a.png)
+![IntelliAda](https://user-images.githubusercontent.com/35016438/121795762-5d4c7180-cc46-11eb-8d67-412fda27bea4.png)
 
 ### IntelliAda (Under Development)
 
