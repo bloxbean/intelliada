@@ -289,6 +289,11 @@ public class ListAccountDialog extends DialogWrapper {
 //                    poulateAccounts();
 //                }
             }
+
+            @Override
+            public boolean isDumbAware() {
+                return true;
+            }
         };
     }
 
@@ -313,6 +318,11 @@ public class ListAccountDialog extends DialogWrapper {
                 }
 
             }
+
+            @Override
+            public boolean isDumbAware() {
+                return true;
+            }
         };
     }
 
@@ -322,6 +332,11 @@ public class ListAccountDialog extends DialogWrapper {
             public void actionPerformed(@NotNull AnActionEvent e) {
                 CardanoAccount cardanoAccount = getSelectAccount();
                 copyAddress(cardanoAccount);
+            }
+
+            @Override
+            public boolean isDumbAware() {
+                return true;
             }
         };
     }
@@ -342,6 +357,11 @@ public class ListAccountDialog extends DialogWrapper {
                 Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
                 clipboard.setContents(stringSelection, null);
                 Messages.showInfoMessage("Mnemonic phase copied to the clipboard", "Copy Mnemonic");
+            }
+
+            @Override
+            public boolean isDumbAware() {
+                return true;
             }
         };
     }

@@ -1,10 +1,9 @@
 package com.bloxbean.intelliada.idea.scripts.ui;
 
-import com.bloxbean.intelliada.idea.scripts.ScriptExportUtil;
+import com.bloxbean.intelliada.idea.scripts.util.ScriptExportUtil;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptService;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
-import com.bloxbean.intelliada.idea.util.JsonUtil;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.DataManager;
 import com.intellij.openapi.actionSystem.AnAction;
@@ -49,6 +48,17 @@ public class ScriptChooserDialog extends DialogWrapper {
         init();
     }
 
+    public ScriptInfo getSelectedScript() {
+        int selectedRow = scriptTable.getSelectedRow();
+        if (selectedRow == -1)
+            return null;
+        else if (selectedRow <= tableModel.getScriptInfos().size() - 1) {
+            return tableModel.getScriptInfos().get(selectedRow);
+        } else {
+            return null;
+        }
+    }
+
     private void initialize() {
         initializeTable();
         loadScriptInfos(project);
@@ -77,7 +87,7 @@ public class ScriptChooserDialog extends DialogWrapper {
                 } else if(selectedRowsCount == 1) {
                     ScriptInfo scriptInfo = tableModel.getScriptInfos().get(index);
                     if(scriptInfo.getScript() != null)
-                        sourceEditor.setText(JsonUtil.getPrettyJson(scriptInfo.getScript()));
+                        sourceEditor.setText(scriptInfo.printFormatted());
                 }
             } else {
                 sourceEditor.setText("");
@@ -87,7 +97,7 @@ public class ScriptChooserDialog extends DialogWrapper {
         attachTableListener();
     }
 
-    public void loadScriptInfos(Project project) {
+    private void loadScriptInfos(Project project) {
         try {
             ProgressManager.getInstance().runProcessWithProgressSynchronously(new Runnable() {
                 @Override

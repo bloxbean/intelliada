@@ -7,4 +7,5 @@ import com.bloxbean.cardano.client.backend.model.Result;
 public interface NetworkInfoService {
     public Result<Genesis> getNetworkInfo() throws ApiException;
     public Long getTtl() throws ApiException;
+    public Long getCurrentSlot() throws ApiException;
 }

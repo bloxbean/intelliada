@@ -126,14 +126,22 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
     }
 
     public RemoteNode getDefaultRemoteNode() {
-        if(StringUtil.isEmpty(defaultNode)) return null;
         if(remoteNodes == null || remoteNodes.size() == 0) return null;
+
+        if(remoteNodes.size() == 1)
+            return remoteNodes.get(0); //If one node, then that's your default node
+
+        if(StringUtil.isEmpty(defaultNode)) { //Then first node is default node
+            return remoteNodes.get(0);
+        }
 
         for(RemoteNode node: remoteNodes) {
             if(defaultNode.equals(node.getId()))
                 return node;
         }
-        return null;
+
+        //default node is there but not matching with any existing node
+        return remoteNodes.get(0);
     }
 
     public void setDefaultNode(String defaultNode) {

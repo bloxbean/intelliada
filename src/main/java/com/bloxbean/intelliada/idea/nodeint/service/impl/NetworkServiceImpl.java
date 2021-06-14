@@ -37,4 +37,17 @@ public class NetworkServiceImpl extends NodeBaseService implements NetworkInfoSe
             throw new ApiException("Could not get block information from the network : \n" + result.toString());
         }
     }
+
+    @Override
+    public Long getCurrentSlot() throws ApiException {
+        Result<Block> result = backendService.getBlockService().getLastestBlock();
+        if(result.isSuccessful()) {
+            long latestSlot = result.getValue().getSlot();
+            return latestSlot;
+        } else {
+            if(result != null)
+                logListener.error(result.toString());
+            throw new ApiException("Could not get block information from the network : \n" + result.toString());
+        }
+    }
 }

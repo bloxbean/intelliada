@@ -1,4 +1,4 @@
-package com.bloxbean.intelliada.idea.scripts;
+package com.bloxbean.intelliada.idea.scripts.util;
 
 import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.bloxbean.intelliada.idea.util.JsonUtil;
@@ -19,6 +19,9 @@ public class ScriptExportUtil {
         if(project != null)
             baseDir = project.getBasePath();
 
+        if(scriptInfo == null)
+            return;
+
         JFileChooser fc = new JFileChooser();
         if(baseDir != null)
             fc.setCurrentDirectory(new File(baseDir));
@@ -32,9 +35,10 @@ public class ScriptExportUtil {
         }
 
         StringBuffer createdFileNames = new StringBuffer();
+        String fileNamePrefix = normalizeFileName(scriptInfo.getName());
         if(!StringUtil.isEmpty(scriptInfo.getAddress())) {
             //Write only script
-            String scriptFileName = scriptInfo.getName() + ".script";
+            String scriptFileName = fileNamePrefix + ".script";
             File finalFile = new File(destination, scriptFileName);
             if(finalFile.exists()) {
                 int ret = 0;
@@ -55,9 +59,9 @@ public class ScriptExportUtil {
 
         } else {
             //Write sk, vkey, script
-            String scriptFileName = scriptInfo.getName() + ".script";
-            String skeyFileName = scriptInfo.getName() + ".skey";
-            String vkeyFileName = scriptInfo.getName() + ".vkey";
+            String scriptFileName = fileNamePrefix + ".script";
+            String skeyFileName = fileNamePrefix + ".skey";
+            String vkeyFileName = fileNamePrefix + ".vkey";
 
             File scriptFile = new File(destination, scriptFileName);
             File skeyFile = new File(destination, skeyFileName);
@@ -111,5 +115,11 @@ public class ScriptExportUtil {
 
         Messages.showInfoMessage(String.format("Script Export was successful. The following files have been created. \n %s",
                 createdFileNames.toString()), "Script Export");
+    }
+
+    public static String normalizeFileName(String name) {
+        if(name == null)
+            return null;
+        return name.replaceAll("[\\\\/:*?\"<>|]", "");
     }
 }

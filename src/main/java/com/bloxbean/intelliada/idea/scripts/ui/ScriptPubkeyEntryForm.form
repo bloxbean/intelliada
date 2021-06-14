@@ -83,13 +83,13 @@
               <text value="Address"/>
             </properties>
           </component>
-          <component id="674cf" class="javax.swing.JRadioButton" binding="vkeyRB">
+          <component id="674cf" class="javax.swing.JRadioButton" binding="skeyRB">
             <constraints>
               <grid row="2" column="6" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
               <forms/>
             </constraints>
             <properties>
-              <text value="Verification Key"/>
+              <text value="Secret Key"/>
             </properties>
           </component>
           <component id="6d029" class="javax.swing.JRadioButton" binding="generateNewRB">
@@ -139,10 +139,10 @@
           <forms/>
         </constraints>
         <properties>
-          <text value="VKey(Cbor Hex)"/>
+          <text value="&lt;html&gt;Secret Key&lt;br/&gt;(Cbor Hex)&lt;/html&gt;"/>
         </properties>
       </component>
-      <component id="61473" class="javax.swing.JTextField" binding="vkeyTf">
+      <component id="61473" class="javax.swing.JTextField" binding="skeyTf">
         <constraints>
           <grid row="10" column="2" row-span="1" col-span="1" vsize-policy="0" hsize-policy="6" anchor="8" fill="1" indent="0" use-parent-layout="false">
             <preferred-size width="150" height="-1"/>

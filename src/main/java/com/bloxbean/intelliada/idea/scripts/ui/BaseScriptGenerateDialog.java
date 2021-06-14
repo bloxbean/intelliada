@@ -1,16 +1,18 @@
 package com.bloxbean.intelliada.idea.scripts.ui;
 
-import com.bloxbean.intelliada.idea.scripts.ScriptExportUtil;
+import com.bloxbean.intelliada.idea.scripts.util.ScriptExportUtil;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
+import com.intellij.openapi.ui.ValidationInfo;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.event.ActionEvent;
+import java.util.List;
 
 public abstract class BaseScriptGenerateDialog extends DialogWrapper {
     private Action generateScriptAction;
@@ -34,6 +36,23 @@ public abstract class BaseScriptGenerateDialog extends DialogWrapper {
                 exportAction
         };
     }
+
+    @Override
+    protected @Nullable ValidationInfo doValidate() {
+        ValidationInfo validationInfo = doCustomValidation();
+        if(validationInfo == null) {
+            generateScriptAction.setEnabled(true);
+            exportAction.setEnabled(true);
+            return null;
+        } else {
+            generateScriptAction.setEnabled(false);
+            exportAction.setEnabled(false);
+
+            return validationInfo;
+        }
+    }
+
+    protected abstract ValidationInfo doCustomValidation();
 
     public void exportScriptInfo() {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
@@ -59,6 +78,14 @@ public abstract class BaseScriptGenerateDialog extends DialogWrapper {
 
         @Override
         protected void doAction(ActionEvent e) {
+            List<ValidationInfo> infoList = doValidateAll();
+            if (!infoList.isEmpty()) {
+                ValidationInfo info = infoList.get(0);
+
+                startTrackingValidation();
+                if(infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
+            }
+
             generateScriptPubkey();
         }
     }
@@ -71,6 +98,13 @@ public abstract class BaseScriptGenerateDialog extends DialogWrapper {
 
         @Override
         protected void doAction(ActionEvent e) {
+            List<ValidationInfo> infoList = doValidateAll();
+            if (!infoList.isEmpty()) {
+                ValidationInfo info = infoList.get(0);
+
+                startTrackingValidation();
+                if(infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
+            }
             exportScriptInfo();
         }
     }

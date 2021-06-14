@@ -1,8 +1,10 @@
 package com.bloxbean.intelliada.idea.util;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.intellij.openapi.util.text.StringUtil;
 
 import java.util.Collection;
 
@@ -28,5 +30,16 @@ public class JsonUtil {
         } catch (Exception e) {
             return jsonStr;
         }
+    }
+
+    public static JsonNode parseToJsonNode(String jsonStr) throws JsonProcessingException {
+        if(StringUtil.isEmpty(jsonStr))
+            return null;
+
+        return mapper.readTree(jsonStr);
+    }
+
+    public static <T> T parseToObject(String jsonStr, Class<T> clazz) throws JsonProcessingException {
+        return mapper.readValue(jsonStr, clazz);
     }
 }

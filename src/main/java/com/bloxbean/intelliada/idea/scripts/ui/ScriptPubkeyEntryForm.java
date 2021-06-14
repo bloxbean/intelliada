@@ -2,6 +2,8 @@ package com.bloxbean.intelliada.idea.scripts.ui;
 
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.common.model.Networks;
+import com.bloxbean.cardano.client.crypto.KeyGenCborUtil;
+import com.bloxbean.cardano.client.crypto.SecretKey;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountChooser;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
@@ -11,6 +13,7 @@ import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptService;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
 
 import javax.swing.*;
@@ -22,10 +25,10 @@ public class ScriptPubkeyEntryForm {
     private JTextField addressTf;
     private JButton accountChooserBtn;
     private JRadioButton addressRB;
-    private JRadioButton vkeyRB;
+    private JRadioButton skeyRB;
     private JRadioButton generateNewRB;
     private JTextField nameTf;
-    private JTextField vkeyTf;
+    private JTextField skeyTf;
     private JPasswordField mnemonicTf;
     private ButtonGroup buttonGroup;
     private CardanoConsole console;
@@ -39,7 +42,7 @@ public class ScriptPubkeyEntryForm {
         buttonGroup = new ButtonGroup();
         buttonGroup.add(generateNewRB);
         buttonGroup.add(addressRB);
-        buttonGroup.add(vkeyRB);
+        buttonGroup.add(skeyRB);
         generateNewRB.setSelected(true);
         generateFromTypesSelected();
     }
@@ -56,7 +59,7 @@ public class ScriptPubkeyEntryForm {
         addressRB.addActionListener(e -> {
             generateFromTypesSelected();
         });
-        vkeyRB.addActionListener(e -> {
+        skeyRB.addActionListener(e -> {
             generateFromTypesSelected();
         });
 
@@ -113,8 +116,8 @@ public class ScriptPubkeyEntryForm {
         return addressRB.isSelected();
     }
 
-    public boolean isGenerateFromVkey() {
-        return vkeyRB.isSelected();
+    public boolean isGenerateFromSKey() {
+        return skeyRB.isSelected();
     }
 
     public Account getAccount() {
@@ -142,8 +145,8 @@ public class ScriptPubkeyEntryForm {
         }
     }
 
-    public String getVkey() {
-        return vkeyTf.getText();
+    public String getSKey() {
+        return skeyTf.getText();
     }
 
     public ScriptInfo generateScriptPubkey() {
@@ -154,11 +157,14 @@ public class ScriptPubkeyEntryForm {
                 return scriptGeneratorService.generateScriptPubkeyFromAddress(name, getAccount());
             } else if(isGenerateNew()) {
                 //If Generate New. Then don't create if scriptInfo is already generated
-                if(scriptInfo != null)
+                if(scriptInfo != null) {
+                    scriptInfo.setName(name);
                     return scriptInfo;
-                return scriptGeneratorService.generateNewScriptPubkey(name);
-            } else if(isGenerateFromVkey()) {
-                return scriptGeneratorService.generateScriptPubkeyFromVkey(name, getVkey());
+                }
+                scriptInfo = scriptGeneratorService.generateNewScriptPubkey(name);
+                return scriptInfo;
+            } else if(isGenerateFromSKey()) {
+                return scriptGeneratorService.generateScriptPubkeyFromSecretKey(name, getSKey());
             } else {
                 return null;
             }
@@ -178,19 +184,19 @@ public class ScriptPubkeyEntryForm {
             addressTf.setEnabled(false);
             mnemonicTf.setEnabled(false);
             accountChooserBtn.setEnabled(false);
-            vkeyTf.setEnabled(false);
+            skeyTf.setEnabled(false);
         } else if(addressRB.isSelected()) {
             clearAllInput();
             addressTf.setEnabled(true);
             mnemonicTf.setEnabled(true);
             accountChooserBtn.setEnabled(true);
-            vkeyTf.setEnabled(false);
-        } else if(vkeyRB.isSelected()) {
+            skeyTf.setEnabled(false);
+        } else if(skeyRB.isSelected()) {
             clearAllInput();
             addressTf.setEnabled(false);
             mnemonicTf.setEnabled(false);
             accountChooserBtn.setEnabled(false);
-            vkeyTf.setEnabled(true);
+            skeyTf.setEnabled(true);
         }
 
         if(scriptGenListener != null)
@@ -206,8 +212,8 @@ public class ScriptPubkeyEntryForm {
             addressTf.setText("");
             mnemonicTf.setText("");
         }
-        if(!vkeyRB.isSelected()) {
-            vkeyTf.setText("");
+        if(!skeyRB.isSelected()) {
+            skeyTf.setText("");
         }
 
         invalidateScriptInfo();
@@ -219,6 +225,25 @@ public class ScriptPubkeyEntryForm {
 
     private void createUIComponents() {
         // TODO: place custom component creation code here
+    }
+
+    public ValidationInfo doValidate() {
+        if(StringUtil.isEmpty(nameTf.getText())) {
+            return new ValidationInfo("Please provide a name", nameTf);
+        }
+        if(isGenerateFromAddress()) {
+            if(getAccount() == null)
+                return new ValidationInfo("Please select a valid address or provide a valid mnemonic phrase", addressTf);
+        } else if(isGenerateFromSKey()) {
+            if(StringUtil.isEmpty(getSKey()))
+                return new ValidationInfo("Please provide a valid secret key", skeyTf);
+            try {
+                SecretKey sk = SecretKey.create(KeyGenCborUtil.cborToBytes(getSKey()));
+            } catch (Exception e) {
+                return new ValidationInfo("Invalid secret key", skeyTf);
+            }
+        }
+        return null;
     }
 
     interface ScriptGenListener {

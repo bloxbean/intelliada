@@ -6,6 +6,8 @@ import com.bloxbean.intelliada.idea.configuration.model.CLIProvider;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.messaging.CLIProvidersChangeNotifier;
 import com.bloxbean.intelliada.idea.core.messaging.RemoteNodeChangeNotifier;
+import com.bloxbean.intelliada.idea.nativetoken.action.TokenMintingTransactionAction;
+import com.bloxbean.intelliada.idea.scripts.action.CreateCompositeScriptAction;
 import com.bloxbean.intelliada.idea.scripts.action.CreateScriptPubkeyAction;
 import com.bloxbean.intelliada.idea.scripts.action.ListScriptsAction;
 import com.bloxbean.intelliada.idea.toolwindow.CLIProviderDescriptor;
@@ -185,19 +187,11 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
         group.add(new CreateRemoteNodeAction());
         group.add(new AccountListAction());
         group.add(new PaymentTransactionAction());
+        group.add(new TokenMintingTransactionAction());
 
         group.add(new CreateScriptPubkeyAction());
+        group.add(new CreateCompositeScriptAction());
         group.add(new ListScriptsAction());
-//        group.add(new RemoveAction());
-//        group.add(new RunAction());
-//        group.add(new ShowAllTargetsAction());
-//        AnAction action = CommonActionsManager.getInstance().createExpandAllAction(myTreeExpander, this);
-//        action.getTemplatePresentation().setDescription(AntBundle.messagePointer("ant.explorer.expand.all.nodes.action.description"));
-//        group.add(action);
-//        action = CommonActionsManager.getInstance().createCollapseAllAction(myTreeExpander, this);
-//        action.getTemplatePresentation().setDescription(AntBundle.messagePointer("ant.explorer.collapse.all.nodes.action.description"));
-//        group.add(action);
-//        group.add(myAntBuildFilePropertiesAction);
 
         final ActionToolbar actionToolBar = ActionManager.getInstance().createActionToolbar(ActionPlaces.ANT_EXPLORER_TOOLBAR, group, true);
         return JBUI.Panels.simplePanel(actionToolBar.getComponent());

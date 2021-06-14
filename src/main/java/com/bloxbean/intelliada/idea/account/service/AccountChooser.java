@@ -31,9 +31,6 @@ import java.util.List;
 public class AccountChooser {
 
     public static CardanoAccount getSelectedAccount(Project project, boolean showBalance) {
-        AccountService accountService = AccountService.getAccountService();
-        List<CardanoAccount> accounts = accountService.getAccounts();
-
         ListAccountDialog listAccountDialog = new ListAccountDialog(project, true, showBalance);
         try {
             boolean result = listAccountDialog.showAndGet();
