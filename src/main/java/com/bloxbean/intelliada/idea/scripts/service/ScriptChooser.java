@@ -6,7 +6,11 @@ import com.intellij.openapi.project.Project;
 public class ScriptChooser {
 
     public static ScriptInfo selectScript(Project project) {
-        ScriptChooserDialog dialog = new ScriptChooserDialog(project);
+        return selectScript(project, false);
+    }
+
+    public static ScriptInfo selectScript(Project project, boolean showSigScriptOnly) {
+        ScriptChooserDialog dialog = new ScriptChooserDialog(project, showSigScriptOnly);
         boolean ok = dialog.showAndGet();
         if(!ok)
             return null;

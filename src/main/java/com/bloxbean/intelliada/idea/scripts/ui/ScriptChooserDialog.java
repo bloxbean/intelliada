@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.scripts.ui;
 
+import com.bloxbean.cardano.client.transaction.spec.script.ScriptPubkey;
 import com.bloxbean.intelliada.idea.scripts.util.ScriptExportUtil;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptService;
@@ -26,6 +27,7 @@ import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static java.awt.event.MouseEvent.BUTTON1;
 
@@ -37,11 +39,13 @@ public class ScriptChooserDialog extends DialogWrapper {
     private Project project;
     private CardanoConsole console;
     private ScriptService scriptService;
+    private boolean showSigScriptOnly;
 
-    public ScriptChooserDialog(@Nullable Project project) {
+    public ScriptChooserDialog(@Nullable Project project, boolean showSigScriptOnly) {
         super(project, true);
         setTitle("Scripts");
         this.project = project;
+        this.showSigScriptOnly = showSigScriptOnly;
         this.console = CardanoConsole.getConsole(project);
         this.scriptService = new ScriptService();
         initialize();
@@ -107,6 +111,14 @@ public class ScriptChooserDialog extends DialogWrapper {
                     progressIndicator.setText("Fetching scripts ....");
                     try {
                         List<ScriptInfo> scriptInfos = scriptService.getScripts();
+                        if(showSigScriptOnly) { //Filter composite scripts
+                            scriptInfos = scriptInfos.stream().filter(scriptInfo -> {
+                                if (scriptInfo.getScript() != null && scriptInfo.getScript() instanceof ScriptPubkey)
+                                    return true;
+                                else
+                                    return false;
+                            }).collect(Collectors.toList());
+                        }
                         tableModel.setElements(scriptInfos);
 
                         progressIndicator.setFraction(1.0);

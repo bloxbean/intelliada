@@ -19,7 +19,7 @@ public class ListScriptsAction extends AnAction {
         if(project == null)
             return;
 
-        ScriptChooserDialog dialog = new ScriptChooserDialog(project);
+        ScriptChooserDialog dialog = new ScriptChooserDialog(project, false);
         boolean ok = dialog.showAndGet();
         if(!ok)
             return;

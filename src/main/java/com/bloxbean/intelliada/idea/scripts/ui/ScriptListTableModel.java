@@ -22,6 +22,7 @@
 
 package com.bloxbean.intelliada.idea.scripts.ui;
 
+import com.bloxbean.cardano.client.transaction.spec.script.ScriptPubkey;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.intellij.openapi.util.text.StringUtil;
 
@@ -32,7 +33,7 @@ import java.util.List;
 
 public class ScriptListTableModel extends AbstractTableModel {
     private List<ScriptInfo> scriptInfos;
-    protected String[] columnNames = new String[] {"Name", "Type", "Vkey", "Address"};
+    protected String[] columnNames = new String[] {"Name", "Type", "KeyHash", "Address"};
     protected Class[] columnClasses = new Class[] {String.class, String.class, String.class, String.class};
 
     public ScriptListTableModel() {
@@ -71,8 +72,9 @@ public class ScriptListTableModel extends AbstractTableModel {
         else if(columnIndex == 1) {
             return scriptInfo.getType();
         } else if(columnIndex == 2) {
-            if(scriptInfo.getVKey() != null) {
-                return scriptInfo.getVKey().getCborHex();
+            if((scriptInfo.getScript() instanceof ScriptPubkey) &&
+                    ((ScriptPubkey) scriptInfo.getScript()).getKeyHash() != null) {
+                return ((ScriptPubkey) scriptInfo.getScript()).getKeyHash();
             } else
                 return "";
         } else if(columnIndex == 3) {

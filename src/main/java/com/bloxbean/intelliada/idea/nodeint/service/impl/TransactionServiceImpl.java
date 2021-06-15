@@ -4,6 +4,7 @@ import com.bloxbean.cardano.client.backend.api.helper.model.TransactionResult;
 import com.bloxbean.cardano.client.backend.model.Block;
 import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.cardano.client.metadata.Metadata;
+import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.cardano.client.transaction.spec.Transaction;
@@ -101,6 +102,58 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
         }
     }
 
+    @Override
+    public String mintToken(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException {
+        logListener.info("Starting Token Mint transaction ...");
+        //Calculate ttl
+        if(detailsParams.getTtl() == 0) { //Get ttl
+            logListener.info("Calculate Time to Live (ttl) = current slot + 1000");
+            Long calculatedTtl = calculateTtl();
+            logListener.info("Time to Live (ttl) : " + calculatedTtl);
+            if(calculatedTtl == null)
+                throw new ApiCallException("Ttl calculation failed");
+            detailsParams.setTtl(calculatedTtl);
+        }
+
+        try {
+            int count = 1;
+            logListener.info("Calculate fee ...");
+            BigInteger fee = null;
+            fee = backendService.getFeeCalculationService().calculateFee(mintTransaction, detailsParams, metadata);
+            logListener.info("Estimated fee for transaction " + count++ + " : "
+                    + AdaConversionUtil.lovelaceToAdaFormatted(fee) + " " + ADA_SYMBOL );
+            mintTransaction.setFee(fee);
+        } catch (Exception e) {
+            throw new ApiCallException("Fee calculation failed", e);
+        }
+
+        try {
+            printTokenMintRequest(mintTransaction);
+
+            Result<TransactionResult> result = backendService.getTransactionHelperService().mintToken(mintTransaction, detailsParams, metadata);
+            try {
+                byte[] txnCborBytes = result.getValue().getSignedTxn();
+                Transaction transaction = Transaction.deserialize(txnCborBytes);
+                logListener.info("Transaction Request: " + JsonUtil.getPrettyJson(transaction));
+            } catch (Exception e) {
+
+            }
+            if (result.isSuccessful()) {
+                logListener.info("Transaction submitted successfully");
+                logListener.info("Transaction id: " + result.getValue().getTransactionId());
+
+                waitForTransaction(result.getValue().getTransactionId());
+                return result.getValue().getTransactionId();
+            } else {
+                logListener.error("Transaction failed");
+                logListener.error(result.toString());
+                throw new ApiCallException("Transaction failed. " + result.getResponse());
+            }
+        } catch (Exception e) {
+            throw new ApiCallException("Transaction failed", e);
+        }
+    }
+
     private void printTransactionRequests(List<PaymentTransaction> transactions) {
         int count = 1;
         for(PaymentTransaction transaction: transactions) {
@@ -111,6 +164,12 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
             logListener.info("Amount   : " + transaction.getAmount());
             logListener.info("-------------------------------------------\n");
         }
+    }
+
+    private void printTokenMintRequest(MintTransaction mintTransaction) {
+        logListener.info("Creator   : " + mintTransaction.getSender());
+        logListener.info("Receiver : " + mintTransaction.getReceiver());
+        logListener.info("-------------------------------------------\n");
     }
 
     @NotNull

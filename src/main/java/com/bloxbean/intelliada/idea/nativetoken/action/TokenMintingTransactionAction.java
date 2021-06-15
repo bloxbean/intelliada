@@ -1,18 +1,14 @@
 package com.bloxbean.intelliada.idea.nativetoken.action;
 
-import com.bloxbean.cardano.client.backend.model.Utxo;
-import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
+import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.intelliada.idea.nativetoken.ui.TokenMintingDialog;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionService;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.TransactionServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
-import com.bloxbean.intelliada.idea.transaction.ui.PaymentTransactionDialog;
 import com.bloxbean.intelliada.idea.transaction.ui.TransactionDtlEntryForm;
-import com.bloxbean.intelliada.idea.transaction.ui.TransactionEntryForm;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
-import com.bloxbean.intelliada.idea.utxos.ui.UtxoSelectEntryForm;
 import com.intellij.icons.AllIcons;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
@@ -25,8 +21,6 @@ import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigInteger;
-import java.util.Arrays;
-import java.util.List;
 
 public class TokenMintingTransactionAction extends AnAction {
 
@@ -51,45 +45,36 @@ public class TokenMintingTransactionAction extends AnAction {
             return;
         }
 
-//        TransactionEntryForm txnEntryForm = dialog.getTxnEntryForm();
-//
-//        TransactionDtlEntryForm transactionDtlEntryForm = dialog.getTransactionDetlEntryForm();
-//        BigInteger ttl = transactionDtlEntryForm.getTtl();
-//
-//        PaymentTransaction paymentTransaction = txnEntryForm.buildTransaction();
-//
-//        UtxoSelectEntryForm utxoSelectEntryForm = dialog.getUtxoSelectEntryForm();
-//        List<Utxo> selectedUtxos = utxoSelectEntryForm.getUtxos();
-//        if(selectedUtxos != null && selectedUtxos.size() > 0) {
-//            paymentTransaction.setUtxosToInclude(selectedUtxos);
-//        }
-//
-//        TransactionDetailsParams detailsParams = new TransactionDetailsParams();
-//        if(ttl != null)
-//            detailsParams.setTtl(ttl.longValue());
-//
-//        List<PaymentTransaction> paymentTransactions = Arrays.asList(paymentTransaction);
-//
-//        CardanoConsole console = CardanoConsole.getConsole(project);
-//        LogListenerAdapter logListenerAdapter = new LogListenerAdapter(console);
-//        console.clearAndshow();
+        TransactionDtlEntryForm transactionDtlEntryForm = dialog.getTransactionDtlEntryForm();
+        BigInteger ttl = transactionDtlEntryForm.getTtl();
+
+        MintTransaction mintTransaction = dialog.getMintTransactionRequest();
+        //TODO Utxo selection.
+
+        TransactionDetailsParams detailsParams = new TransactionDetailsParams();
+        if(ttl != null)
+            detailsParams.setTtl(ttl.longValue());
+
+        CardanoConsole console = CardanoConsole.getConsole(project);
+        LogListenerAdapter logListenerAdapter = new LogListenerAdapter(console);
+        console.clearAndshow();
 
         Task.Backgroundable task = new Task.Backgroundable(project, "Mint Token Transaction") {
 
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
-//                console.showInfoMessage(String.format("Payment transaction starts ...\n"));
-//
-//                try {
-//                    TransactionService transactionService = new TransactionServiceImpl(project, logListenerAdapter);
-//
-//                    String txnId = transactionService.transfer(paymentTransactions, detailsParams, null);
-//                    console.showSuccessMessage("Transaction executed successfully with id : " + txnId);
-//                    IdeaUtil.showNotification(project, getTitle(),
-//                            String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
-//                }catch (Exception exception) {
-//                    console.showErrorMessage(String.format("%s failed", getTxnCommand()), exception);
-//                }
+                console.showInfoMessage(String.format("Token Minting starts ...\n"));
+
+                try {
+                    TransactionService transactionService = new TransactionServiceImpl(project, logListenerAdapter);
+
+                    String txnId = transactionService.mintToken(mintTransaction, detailsParams, null);
+                    console.showSuccessMessage("Transaction executed successfully with id : " + txnId);
+                    IdeaUtil.showNotification(project, getTitle(),
+                            String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
+                }catch (Exception exception) {
+                    console.showErrorMessage(String.format("%s failed", getTxnCommand()), exception);
+                }
             }
         };
 

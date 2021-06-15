@@ -3,7 +3,6 @@ package com.bloxbean.intelliada.idea.scripts.service;
 import co.nstant.in.cbor.CborDecoder;
 import co.nstant.in.cbor.model.Array;
 import co.nstant.in.cbor.model.DataItem;
-import com.bloxbean.cardano.client.crypto.Keys;
 import com.bloxbean.cardano.client.crypto.SecretKey;
 import com.bloxbean.cardano.client.crypto.VerificationKey;
 import com.bloxbean.cardano.client.exception.CborSerializationException;

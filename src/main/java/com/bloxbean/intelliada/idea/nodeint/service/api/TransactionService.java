@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.nodeint.service.api;
 
 import com.bloxbean.cardano.client.metadata.Metadata;
+import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
@@ -15,5 +16,9 @@ public interface TransactionService {
 
     public String transfer(List<PaymentTransaction> transactions,
                                    TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
+
+
+    public String mintToken(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
+        throws ApiCallException;
 
 }
