@@ -1,6 +1,6 @@
 ![IntelliAda](https://user-images.githubusercontent.com/35016438/121795762-5d4c7180-cc46-11eb-8d67-412fda27bea4.png)
 
-### IntelliAda (Under Development)
+### IntelliAda (WIP)
 
 IntelliJ Plugin for Cardano Blockchain
 
