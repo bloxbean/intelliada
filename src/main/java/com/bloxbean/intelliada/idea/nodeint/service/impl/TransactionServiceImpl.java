@@ -7,7 +7,11 @@ import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
+import com.bloxbean.cardano.client.transaction.spec.Asset;
+import com.bloxbean.cardano.client.transaction.spec.MultiAsset;
 import com.bloxbean.cardano.client.transaction.spec.Transaction;
+import com.bloxbean.cardano.client.util.AssetUtil;
+import com.bloxbean.cardano.client.util.HexUtil;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
@@ -18,6 +22,7 @@ import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static com.bloxbean.intelliada.idea.util.AdaConversionUtil.ADA_SYMBOL;
@@ -168,7 +173,28 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
 
     private void printTokenMintRequest(MintTransaction mintTransaction) {
         logListener.info("Creator   : " + mintTransaction.getSender());
-        logListener.info("Receiver : " + mintTransaction.getReceiver());
+        logListener.info("Receiver  : " + mintTransaction.getReceiver());
+        if(mintTransaction.getMintAssets() != null) {
+            for(MultiAsset ma: mintTransaction.getMintAssets()) {
+                logListener.info("Policy Id  : " + ma.getPolicyId());
+                for(Asset asset: ma.getAssets()) {
+                    logListener.info("AssetName  : " + asset.getName());
+                    logListener.info("Quantity   : " + asset.getValue());
+
+                    String assetNameHex = null;
+                    if(asset.getName() != null)
+                        assetNameHex = HexUtil.encodeHexString(asset.getName().getBytes(StandardCharsets.UTF_8));
+                    else
+                        assetNameHex = HexUtil.encodeHexString("".getBytes(StandardCharsets.UTF_8));
+
+                    try {
+                        logListener.info("Fingerprint: " +
+                                AssetUtil.calculateFingerPrint(ma.getPolicyId(), assetNameHex));
+                    } catch (Exception e) {}
+                    logListener.info("\n");
+                }
+            }
+        }
         logListener.info("-------------------------------------------\n");
     }
 

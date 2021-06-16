@@ -22,6 +22,7 @@ public class UtxoSelectEntryForm {
     private JList utxosJList;
     private JButton addButton;
     private JButton deleteButton;
+    private JCheckBox utoxProvideCB;
     private DefaultListModel<UtxoWrapper> utxoListModel;
     private String address;
 
@@ -32,6 +33,22 @@ public class UtxoSelectEntryForm {
     public void initialize(Project project) {
         utxosJList.setModel(utxoListModel);
         utxosJList.setSelectionMode(DefaultListSelectionModel.SINGLE_SELECTION);
+
+        utxosJList.setEnabled(false);
+        addButton.setEnabled(false);
+        deleteButton.setEnabled(false);
+        utxosJList.setEnabled(false);
+        utoxProvideCB.addActionListener(e -> {
+            if(utoxProvideCB.isSelected()) {
+                utxosJList.setEnabled(true);
+                addButton.setEnabled(true);
+                deleteButton.setEnabled(true);
+            } else {
+                utxosJList.setEnabled(false);
+                addButton.setEnabled(false);
+                deleteButton.setEnabled(false);
+            }
+        });
 
         addButton.addActionListener(e -> {
             if(StringUtil.isEmpty(address)) {

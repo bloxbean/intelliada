@@ -2,7 +2,6 @@ package com.bloxbean.intelliada.idea.nodeint.service.api.model;
 
 import com.bloxbean.cardano.client.util.AssetUtil;
 import com.bloxbean.cardano.client.util.Tuple;
-import com.bloxbean.intelliada.idea.core.util.AssetHelper;
 import com.bloxbean.intelliada.idea.util.AdaConversionUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import lombok.AllArgsConstructor;
@@ -31,7 +30,7 @@ public class AssetBalance {
                 return unit;
 
             Tuple<String, String> pidAssetName = AssetUtil.getPolicyIdAndAssetName(unit);
-            fingerPrint = AssetHelper.calculateFingerPrint(pidAssetName._1, pidAssetName._2);
+            fingerPrint = AssetUtil.calculateFingerPrint(pidAssetName._1, pidAssetName._2);
             return fingerPrint;
         }
     }

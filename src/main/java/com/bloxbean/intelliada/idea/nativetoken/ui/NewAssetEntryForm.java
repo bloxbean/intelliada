@@ -15,6 +15,7 @@ import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.MessageUtil;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 
@@ -253,5 +254,17 @@ public class NewAssetEntryForm {
 
     public NativeScript getPolicyScript() {
         return policyScript;
+    }
+
+    public ValidationInfo doValidation() {
+        if(getPolicyScript() == null || StringUtil.isEmpty(getPolicyId())) {
+            return new ValidationInfo("Please select a valid policy script", policyScriptTf);
+        }
+
+        if(assetListModel.isEmpty()) {
+            return new ValidationInfo("Please provide asset name and quantity", assetList);
+        }
+
+        return null;
     }
 }

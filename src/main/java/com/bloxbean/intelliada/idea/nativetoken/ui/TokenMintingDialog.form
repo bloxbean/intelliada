@@ -45,6 +45,10 @@
           <grid id="9e9e" layout-manager="FormLayout">
             <rowspec value="center:max(d;4px):noGrow"/>
             <rowspec value="top:3dlu:noGrow"/>
+            <rowspec value="center:max(d;4px):noGrow"/>
+            <rowspec value="top:3dlu:noGrow"/>
+            <rowspec value="center:max(d;4px):noGrow"/>
+            <rowspec value="top:3dlu:noGrow"/>
             <rowspec value="center:d:grow"/>
             <colspec value="fill:d:grow"/>
             <constraints>
@@ -53,23 +57,51 @@
             <properties/>
             <border type="none"/>
             <children>
-              <grid id="4c2a3" layout-manager="FormLayout">
+              <component id="6f6c5" class="javax.swing.JLabel">
+                <constraints>
+                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
+                  <forms/>
+                </constraints>
+                <properties>
+                  <text value=""/>
+                </properties>
+              </component>
+              <grid id="80846" layout-manager="FormLayout">
                 <rowspec value="center:d:grow"/>
                 <colspec value="fill:d:grow"/>
                 <constraints>
                   <grid row="2" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
+                  <forms defaultalign-vert="false"/>
+                </constraints>
+                <properties/>
+                <border type="none" title="Txn Details"/>
+                <children>
+                  <nested-form id="9b36a" form-file="com/bloxbean/intelliada/idea/transaction/ui/TransactionDtlEntryForm.form" binding="txnDtlEntryForm">
+                    <constraints>
+                      <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
+                      <forms defaultalign-vert="false"/>
+                    </constraints>
+                  </nested-form>
+                </children>
+              </grid>
+              <grid id="36dc9" layout-manager="FormLayout">
+                <rowspec value="center:d:grow"/>
+                <colspec value="fill:d:grow"/>
+                <constraints>
+                  <grid row="4" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
                   <forms/>
                 </constraints>
                 <properties/>
-                <border type="none"/>
-                <children/>
+                <border type="none" title="Utxo Selector"/>
+                <children>
+                  <nested-form id="c0083" form-file="com/bloxbean/intelliada/idea/utxos/ui/UtxoSelectEntryForm.form" binding="utxoSelectEntryForm">
+                    <constraints>
+                      <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="0" indent="0" use-parent-layout="false"/>
+                      <forms/>
+                    </constraints>
+                  </nested-form>
+                </children>
               </grid>
-              <nested-form id="9b36a" form-file="com/bloxbean/intelliada/idea/transaction/ui/TransactionDtlEntryForm.form" binding="txnDtlEntryForm">
-                <constraints>
-                  <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
-                  <forms top="5" left="0" bottom="0" right="0" defaultalign-vert="false"/>
-                </constraints>
-              </nested-form>
             </children>
           </grid>
         </children>

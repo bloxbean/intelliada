@@ -8,7 +8,9 @@ import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
+import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
 
 import javax.swing.*;
@@ -24,6 +26,7 @@ public class TokenMintAddressEntryForm {
     private JButton receiverAddressBtn;
     private CardanoConsole console;
     private boolean isMainnet = false;
+    private TransactionEntryListener transactionEntryListener;
 
     public TokenMintAddressEntryForm() {
 
@@ -74,7 +77,7 @@ public class TokenMintAddressEntryForm {
                         console.showErrorMessage("Target Cardano node is not configured. Please select a default node first.");
                     }
                 } catch (Exception ex) {
-                    creatorTf.setText("");
+                    setAddresss("");
                 }
             }
         });
@@ -89,10 +92,9 @@ public class TokenMintAddressEntryForm {
 
     private void setAddresss(String address) {
         creatorTf.setText(address);
+        transactionEntryListener.senderAddressChanged(address);
 
-        if(StringUtil.isEmpty(getReceiver())) {
-            setReceiver(address);
-        }
+        setReceiver(address);
     }
 
     public Account getCreatorAccount() {
@@ -118,6 +120,22 @@ public class TokenMintAddressEntryForm {
             console.showErrorMessage(e.getMessage(), e);
             return null;
         }
+    }
+
+    public void addTransactionEntryListener(TransactionEntryListener transactionEntryListener) {
+        this.transactionEntryListener = transactionEntryListener;
+    }
+
+    public ValidationInfo doValidate() {
+        if(getCreatorAccount() == null) {
+            return new ValidationInfo("Please select a valid creator account or enter a valid mnemonic phrase", creatorTf);
+        }
+
+        if(StringUtil.isEmpty(getReceiver())) {
+            return new ValidationInfo("Please enter a valid receiver address", receiverTf);
+        }
+
+        return null;
     }
 
     private void setReceiver(String address) {

@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.transaction.action;
 
+import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.backend.model.Utxo;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
@@ -54,6 +55,7 @@ public class PaymentTransactionAction extends AnAction {
 
         TransactionDtlEntryForm transactionDtlEntryForm = dialog.getTransactionDetlEntryForm();
         BigInteger ttl = transactionDtlEntryForm.getTtl();
+        List<Account> additionalWitnessAccounts = transactionDtlEntryForm.getAdditionalWitnessAccounts();
 
         PaymentTransaction paymentTransaction = txnEntryForm.buildTransaction();
 
@@ -62,6 +64,8 @@ public class PaymentTransactionAction extends AnAction {
         if(selectedUtxos != null && selectedUtxos.size() > 0) {
             paymentTransaction.setUtxosToInclude(selectedUtxos);
         }
+        if(additionalWitnessAccounts != null)
+            paymentTransaction.setAdditionalWitnessAccounts(additionalWitnessAccounts);
 
         TransactionDetailsParams detailsParams = new TransactionDetailsParams();
         if(ttl != null)
