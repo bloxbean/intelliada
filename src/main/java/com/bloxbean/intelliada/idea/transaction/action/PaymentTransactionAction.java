@@ -2,8 +2,11 @@ package com.bloxbean.intelliada.idea.transaction.action;
 
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
+import com.bloxbean.intelliada.idea.metadata.exception.InvalidMetadataException;
+import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionService;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.TransactionServiceImpl;
@@ -71,11 +74,20 @@ public class PaymentTransactionAction extends AnAction {
         if(ttl != null)
             detailsParams.setTtl(ttl.longValue());
 
-        List<PaymentTransaction> paymentTransactions = Arrays.asList(paymentTransaction);
-
         CardanoConsole console = CardanoConsole.getConsole(project);
         LogListenerAdapter logListenerAdapter = new LogListenerAdapter(console);
         console.clearAndshow();
+
+        MetadataEntryForm metadataEntryForm = dialog.getMetadataEntryForm();
+        final Metadata metadata;
+        try {
+            metadata = metadataEntryForm.getMetadata();
+        } catch (InvalidMetadataException invalidMetadataException) {
+            console.showErrorMessage("Invalid metadata", invalidMetadataException);
+            return;
+        }
+
+        List<PaymentTransaction> paymentTransactions = Arrays.asList(paymentTransaction);
 
         Task.Backgroundable task = new Task.Backgroundable(project, "Payment Transaction") {
 
@@ -86,7 +98,7 @@ public class PaymentTransactionAction extends AnAction {
                 try {
                     TransactionService transactionService = new TransactionServiceImpl(project, logListenerAdapter);
 
-                    String txnId = transactionService.transfer(paymentTransactions, detailsParams, null);
+                    String txnId = transactionService.transfer(paymentTransactions, detailsParams, metadata);
                     console.showSuccessMessage("Transaction executed successfully with id : " + txnId);
                     IdeaUtil.showNotification(project, getTitle(),
                             String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);

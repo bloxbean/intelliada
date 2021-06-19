@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.transaction.ui;
 
+import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
 import com.bloxbean.intelliada.idea.utxos.ui.UtxoSelectEntryForm;
 import com.intellij.openapi.project.Project;
@@ -15,6 +16,7 @@ public class PaymentTransactionDialog extends DialogWrapper {
     private JTabbedPane tabbedPane1;
     private TransactionDtlEntryForm txnDtlForm;
     private UtxoSelectEntryForm utxoSelectEntryForm;
+    private MetadataEntryForm metadataEntryForm;
 
     public PaymentTransactionDialog(@Nullable Project project) {
         super(project, true);
@@ -24,6 +26,7 @@ public class PaymentTransactionDialog extends DialogWrapper {
         txnEntryForm.initializeData(project);
         txnDtlForm.initializeData(project);
         utxoSelectEntryForm.initialize(project);
+        metadataEntryForm.initialize(project);
         attachTransactionEntryListener();
     }
 
@@ -53,6 +56,10 @@ public class PaymentTransactionDialog extends DialogWrapper {
 
     public UtxoSelectEntryForm getUtxoSelectEntryForm() {
         return utxoSelectEntryForm;
+    }
+
+    public MetadataEntryForm getMetadataEntryForm() {
+        return metadataEntryForm;
     }
 
     @Override

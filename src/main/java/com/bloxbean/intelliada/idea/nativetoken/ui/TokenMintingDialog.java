@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.nativetoken.ui;
 
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
+import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
 import com.bloxbean.intelliada.idea.transaction.ui.TransactionDtlEntryForm;
@@ -20,6 +21,7 @@ public class TokenMintingDialog extends DialogWrapper {
     private NewAssetEntryForm assetEntryForm;
     private TransactionDtlEntryForm txnDtlEntryForm;
     private UtxoSelectEntryForm utxoSelectEntryForm;
+    private MetadataEntryForm metadataEntryForm;
     private Project project;
     private CardanoConsole console;
 
@@ -37,6 +39,7 @@ public class TokenMintingDialog extends DialogWrapper {
         assetEntryForm.initialize(project, console);
         txnDtlEntryForm.initializeData(project);
         utxoSelectEntryForm.initialize(project);
+        metadataEntryForm.initialize(project);
 
         attachTransactionEntryListener();
     }
@@ -58,6 +61,10 @@ public class TokenMintingDialog extends DialogWrapper {
 
     public UtxoSelectEntryForm getUtxoSelectEntryForm() {
         return utxoSelectEntryForm;
+    }
+
+    public MetadataEntryForm getMetadataEntryForm() {
+        return metadataEntryForm;
     }
 
     private void attachTransactionEntryListener() {
@@ -87,6 +94,10 @@ public class TokenMintingDialog extends DialogWrapper {
             return validationInfo;
 
         validationInfo = txnDtlEntryForm.doValidate();
+        if(validationInfo != null)
+            return validationInfo;
+
+        validationInfo = metadataEntryForm.doValidate();
         if(validationInfo != null)
             return validationInfo;
 

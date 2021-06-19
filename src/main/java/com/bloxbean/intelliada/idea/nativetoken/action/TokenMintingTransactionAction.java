@@ -2,8 +2,11 @@ package com.bloxbean.intelliada.idea.nativetoken.action;
 
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
+import com.bloxbean.intelliada.idea.metadata.exception.InvalidMetadataException;
+import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.nativetoken.ui.TokenMintingDialog;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionService;
@@ -71,6 +74,15 @@ public class TokenMintingTransactionAction extends AnAction {
         LogListenerAdapter logListenerAdapter = new LogListenerAdapter(console);
         console.clearAndshow();
 
+        MetadataEntryForm metadataEntryForm = dialog.getMetadataEntryForm();
+        final Metadata metadata;
+        try {
+            metadata = metadataEntryForm.getMetadata();
+        } catch (InvalidMetadataException invalidMetadataException) {
+            console.showErrorMessage("Invalid metadata", invalidMetadataException);
+            return;
+        }
+
         Task.Backgroundable task = new Task.Backgroundable(project, "Mint Token Transaction") {
 
             @Override
@@ -80,7 +92,7 @@ public class TokenMintingTransactionAction extends AnAction {
                 try {
                     TransactionService transactionService = new TransactionServiceImpl(project, logListenerAdapter);
 
-                    String txnId = transactionService.mintToken(mintTransaction, detailsParams, null);
+                    String txnId = transactionService.mintToken(mintTransaction, detailsParams, metadata);
                     console.showSuccessMessage("Transaction executed successfully with id : " + txnId);
                     IdeaUtil.showNotification(project, getTitle(),
                             String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);

@@ -54,6 +54,7 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
             throws ApiCallException {
 
         logListener.info("Starting payment transaction ...");
+        printRemoteNodeDetails();
         //Calculate ttl
         if(detailsParams.getTtl() == 0) { //Get ttl
             logListener.info("Calculate Time to Live (ttl) = current slot + 1000");
@@ -110,6 +111,7 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
     @Override
     public String mintToken(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException {
         logListener.info("Starting Token Mint transaction ...");
+        printRemoteNodeDetails();
         //Calculate ttl
         if(detailsParams.getTtl() == 0) { //Get ttl
             logListener.info("Calculate Time to Live (ttl) = current slot + 1000");

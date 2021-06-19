@@ -19,6 +19,7 @@ public class NodeBaseService {
 
     protected LogListener logListener;
     protected BackendService backendService;
+    private RemoteNode remoteNode;
 
     public NodeBaseService(Project project) throws TargetNodeNotConfigured {
         this(project, new LogListener() {
@@ -56,6 +57,7 @@ public class NodeBaseService {
         }
 
         this.logListener = logListener;
+        this.remoteNode = remoteNode;
         backendService = NodeServiceFactory.getInstance().getBackendService(remoteNode);
     }
 
@@ -65,6 +67,13 @@ public class NodeBaseService {
 
         this.logListener = logListener;
         backendService = NodeServiceFactory.getInstance().getBackendService(node);
+    }
+
+    protected void printRemoteNodeDetails() {
+        this.logListener.info("Connecting to " + remoteNode.getApiEndpoint());
+        this.logListener.info("Node Name : " + remoteNode.getName());
+        this.logListener.info("Node type : " + remoteNode.getNodeType());
+        this.logListener.info("\n");
     }
 
     protected void waitForTransaction(String txnId) throws ApiCallException {
