@@ -21,4 +21,8 @@ public class CreateRemoteNodeAction extends AnAction {
         ConfigurationHelperService.createOrUpdateRemoteNodeConfiguration(project, null);
     }
 
+    @Override
+    public boolean isDumbAware() {
+        return true;
+    }
 }

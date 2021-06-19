@@ -42,17 +42,9 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
     private StructureTreeModel myTreeModel;
     private CardanoExplorerTreeStructure myTreeStructure;
 
-//    private final TreeExpander myTreeExpander = new DefaultTreeExpander(() -> myTree) {
-//        @Override
-//        protected boolean isEnabled(@NotNull JTree tree) {
-//            return true;
-//        }
-//    };
-
     public CardanoExplorer(Project project) {
         super(true, true);
 
-//        setTransferHandler(new MyTransferHandler());
         myProject = project;
 
         myTreeStructure = new CardanoExplorerTreeStructure(project);
@@ -196,7 +188,6 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
         final ActionToolbar actionToolBar = ActionManager.getInstance().createActionToolbar(ActionPlaces.ANT_EXPLORER_TOOLBAR, group, true);
         return JBUI.Panels.simplePanel(actionToolBar.getComponent());
     }
-
 
     @Override
     public void dispose() {

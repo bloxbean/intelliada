@@ -23,7 +23,6 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
     private CardanoRoot root;
     private CardanoCLIRoot cliProviderRoot;
     private RemoteNodeRoot remoteNodeRoot;
-    private String deploymentNodeId;
 
     public CardanoExplorerTreeStructure(Project project) {
         this.project = project;
@@ -34,20 +33,6 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
     public void updateSelectedNodeInfos() {
         if(project == null)
             return;
-//        NodeInfo compilerNodeInfo = AlgoServerConfigurationHelper.getCompilerNodeInfo(project);
-//        if(compilerNodeInfo != null) {
-//            compilerNodeId = compilerNodeInfo.getId();
-//        }
-//        RemoteNode localSDK = AlgoServerConfigurationHelper.getCompilerLocalSDK(project);
-//        if(localSDK != null) {
-//            compilerNodeId = localSDK.getId();
-//        }
-
-//        NodeInfo deployNodeInfo = AlgoServerConfigurationHelper.getDeploymentNodeInfo(project);
-//        if(deployNodeInfo != null) {
-//            deploymentNodeId = deployNodeInfo.getId();
-//        }
-
     }
 
     @Override
@@ -67,7 +52,9 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
     @Override
     public @NotNull Object[] getChildElements(@NotNull Object element) {
         if(element instanceof CardanoRoot) {
-            return new Object[] {cliProviderRoot, remoteNodeRoot};
+            return new Object[] {remoteNodeRoot};
+            //TODO - Uncomment in future when CLI support is there
+//            return new Object[] {cliProviderRoot, remoteNodeRoot};
         } else if(element instanceof RemoteNodeRoot) { //Show Available Cardano Remote Nodes
             List<RemoteNode> sdks = RemoteNodeState.getInstance().getRemoteNodes();
             if(sdks != null && sdks.size() > 0)
@@ -155,7 +142,6 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
     }
 
     public final class RemoteNodesDescriptor extends NodeDescriptor {
-
         public RemoteNodesDescriptor(@Nullable Project project, @Nullable NodeDescriptor parentDescriptor) {
             super(project, parentDescriptor);
             myName = "Remote Nodes";
