@@ -17,7 +17,7 @@
         <properties/>
         <border type="none"/>
         <children>
-          <scrollpane id="aa762" binding="scrollPane" custom-create="true">
+          <scrollpane id="aa762" binding="scrollPane">
             <constraints>
               <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="7" hsize-policy="7" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
               <forms defaultalign-horz="false" defaultalign-vert="false"/>
@@ -54,7 +54,7 @@
           <grid row="0" column="5" row-span="1" col-span="1" vsize-policy="0" hsize-policy="2" anchor="4" fill="0" indent="0" use-parent-layout="false"/>
         </constraints>
         <properties>
-          <enabled value="false"/>
+          <enabled value="true"/>
         </properties>
       </component>
       <component id="fb7a2" class="javax.swing.JLabel">

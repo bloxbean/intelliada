@@ -6,6 +6,7 @@ import com.bloxbean.cardano.client.backend.model.AddressContent;
 import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.cardano.client.backend.model.TxContentOutputAmount;
 import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.model.LedgerAccount;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
@@ -115,7 +116,7 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
     }
 
     @Override
-    public List<Utxo> getUtxos(String address, int count, int page, OrderEnum order) {
+    public List<Utxo> getUtxos(String address, int count, int page, OrderEnum order) throws ApiCallException {
         try {
             Result<List<Utxo>> result = backendService.getUtxoService().getUtxos(address, count, page, order);
             if(result.isSuccessful()) {
@@ -128,7 +129,25 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
             }
         } catch (Exception e) {
             logListener.error("Error getting Utxos for the address: " + address, e);
-            return Collections.EMPTY_LIST;
+            throw new ApiCallException("Error getting Utxos for the address: " + address, e);
+        }
+    }
+
+    @Override
+    public List<String> getRecentTransactions(String address, int count, int page, OrderEnum order) throws ApiCallException {
+        try {
+            Result<List<String>> result = backendService.getAddressService().getTransactions(address, count, page, order);
+            if(result.isSuccessful()) {
+                logListener.info(JsonUtil.getPrettyJson(result.getValue()));
+                return result.getValue();
+            } else {
+                if(result != null)
+                    logListener.error(result.toString());
+                throw new ApiException("Unable to get recent transactions for the address");
+            }
+        } catch (Exception e) {
+            logListener.error("Error getting recent transactions for the address: " + address, e);
+            throw new ApiCallException("Error getting recent transaction for the address: " + address, e);
         }
     }
 }

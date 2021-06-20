@@ -25,6 +25,7 @@ package com.bloxbean.intelliada.idea.account.ui;
 import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountService;
+import com.bloxbean.intelliada.idea.account.ui.details.AccountDetailsDialog;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
@@ -255,7 +256,7 @@ public class ListAccountDialog extends DialogWrapper {
         if(account == null)
             return;
         if(column == 0) {
-            //showAccountDetails(account);
+            showAccountDetails(account);
         } else if(column == 1) {
             copyAddress(account);
         }
@@ -277,17 +278,21 @@ public class ListAccountDialog extends DialogWrapper {
                 group, dataContext, JBPopupFactory.ActionSelectionAid.MNEMONICS, true);
     }
 
+    private void showAccountDetails(CardanoAccount account) {
+        AccountDetailsDialog dialog = new AccountDetailsDialog(project, account);
+        boolean ok = dialog.showAndGet();
+
+        if(dialog.getAccountInfoUpdated()) {
+            //Update table.
+            poulateAccounts();
+        }
+    }
+
     private AnAction createShowAccountDetailsAction(CardanoAccount account) {
         return new AnAction("Show Details", "Show Details", AllIcons.General.InspectionsEye) {
             @Override
             public void actionPerformed(@NotNull AnActionEvent e) {
-//                AccountDetailsDialog dialog = new AccountDetailsDialog(project, account);
-//                boolean ok = dialog.showAndGet();
-//
-//                if(dialog.getAccountInfoUpdated()) {
-//                    //Update table.
-//                    poulateAccounts();
-//                }
+               showAccountDetails(account);
             }
 
             @Override
