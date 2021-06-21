@@ -12,7 +12,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateCompositeScriptAction extends AnAction {
 
     public CreateCompositeScriptAction() {
-        super(AllIcons.FileTypes.JavaScript);
+        super("Create script (Sigs & TimeLock)", "Create script (Sigs & TimeLock)", AllIcons.FileTypes.JavaScript);
     }
 
     @Override

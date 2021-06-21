@@ -4,6 +4,7 @@ import com.bloxbean.cardano.client.backend.common.OrderEnum;
 import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.backend.model.metadata.MetadataJSONContent;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
+import com.bloxbean.intelliada.idea.common.ui.JsonEditorTextField;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionInfoService;
@@ -17,6 +18,7 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.ui.EditorTextField;
 import com.intellij.ui.components.JBList;
 
 import javax.swing.*;
@@ -30,15 +32,18 @@ public class AccountTransactionsUI {
     private JPanel panel;
     private JList transactionList;
     private JTabbedPane metadataTf;
-    private JEditorPane metadataEditorTf;
-    private JEditorPane transactionContentTf;
-    private JScrollPane txnContentScrollPane;
+    private EditorTextField transactionContentTf;
+    private EditorTextField metadataEditorTf;
     private Project project;
     private CardanoConsole console;
     private CardanoAccount account;
     private DefaultListModel<String> txnListModel;
 
-    public void initialize(Project project, CardanoAccount account, CardanoConsole console) {
+    public AccountTransactionsUI(Project project) {
+        this.project = project;
+    }
+
+    public void initialize(CardanoAccount account, CardanoConsole console) {
         this.project = project;
         this.console = console;
         this.account = account;
@@ -187,6 +192,9 @@ public class AccountTransactionsUI {
 
     private void createUIComponents() {
         // TODO: place custom component creation code here
+        transactionContentTf = new JsonEditorTextField(project);
+        metadataEditorTf = new JsonEditorTextField(project);
+
         txnListModel = new DefaultListModel<>();
         transactionList = new JBList(txnListModel);
     }

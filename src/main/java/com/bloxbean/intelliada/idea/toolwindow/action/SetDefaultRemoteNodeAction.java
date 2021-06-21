@@ -27,4 +27,9 @@ public class SetDefaultRemoteNodeAction extends AnAction {
 
         ConfigurationHelperService.setDefaultRemoteNode(defaultNode);
     }
+
+    @Override
+    public boolean isDumbAware() {
+        return true;
+    }
 }

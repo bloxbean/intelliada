@@ -12,7 +12,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateScriptPubkeyAction extends AnAction {
 
     public CreateScriptPubkeyAction() {
-        super(AllIcons.FileTypes.Json);
+        super("Create Script (Single Sig)", "Create Script (Single Sig)", AllIcons.FileTypes.Json);
     }
 
     @Override

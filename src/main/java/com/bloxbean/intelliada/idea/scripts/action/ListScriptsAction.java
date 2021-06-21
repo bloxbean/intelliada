@@ -10,7 +10,7 @@ import org.jetbrains.annotations.NotNull;
 public class ListScriptsAction extends AnAction {
 
     public ListScriptsAction() {
-        super(AllIcons.FileTypes.Archive);
+        super("List scripts", "List scripts", AllIcons.FileTypes.Archive);
     }
 
     @Override

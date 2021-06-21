@@ -101,6 +101,10 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
 
     public void addRemoteNode(RemoteNode node) {
         remoteNodes.add(node);
+        if(remoteNodes.size() == 1) {
+            //Set this as default node also
+            setDefaultNode(node.getId());
+        }
     }
 
     public void updateRemoteNode(RemoteNode node) {

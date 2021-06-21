@@ -24,18 +24,12 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
             if(node.getId().equals(defaultNodeId)) {
                 myName += " (default)";
                 this.isDefaultNode = true;
+                myClosedIcon = CardanoIcons.CARDANO_ICON_16x16_DEFAULT;
             } else {
                 this.isDefaultNode = false;
             }
-//            if (sdk.getId().equals(compilerNodeId)){
-//                myClosedIcon = AlgoIcons.LOCALSDK_COMPILE;
-//                isCompilerTarget = true;
-//            } else {
-//                myClosedIcon = AlgoIcons.LOCALSDK;
-//            }
         } else {
-                this.isDefaultNode = false;
-//            myClosedIcon = AlgoIcons.LOCALSDK;
+            this.isDefaultNode = false;
         }
     }
 
@@ -52,10 +46,6 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
     public RemoteNode getNode() {
         return node;
     }
-
-//    public boolean isCompilerTarget() {
-//        return isCompilerTarget;
-//    }
 
     public boolean isDefaultNode() {
         return isDefaultNode;

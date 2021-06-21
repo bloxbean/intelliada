@@ -70,20 +70,13 @@
                 <properties/>
                 <border type="none"/>
                 <children>
-                  <scrollpane id="b7e1f" binding="txnContentScrollPane">
+                  <component id="424e0" class="com.intellij.ui.EditorTextField" binding="transactionContentTf" custom-create="true">
                     <constraints>
-                      <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="7" hsize-policy="7" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
-                      <forms defaultalign-horz="false" defaultalign-vert="false"/>
+                      <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
+                      <forms defaultalign-vert="false"/>
                     </constraints>
                     <properties/>
-                    <border type="none"/>
-                    <children>
-                      <component id="6ae79" class="javax.swing.JEditorPane" binding="transactionContentTf">
-                        <constraints/>
-                        <properties/>
-                      </component>
-                    </children>
-                  </scrollpane>
+                  </component>
                 </children>
               </grid>
               <grid id="108ed" layout-manager="FormLayout">
@@ -95,22 +88,13 @@
                 <properties/>
                 <border type="none"/>
                 <children>
-                  <scrollpane id="35f66">
+                  <component id="aac75" class="com.intellij.ui.EditorTextField" binding="metadataEditorTf" custom-create="true">
                     <constraints>
-                      <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="7" hsize-policy="7" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
-                      <forms defaultalign-horz="false" defaultalign-vert="false"/>
+                      <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
+                      <forms defaultalign-vert="false"/>
                     </constraints>
                     <properties/>
-                    <border type="none"/>
-                    <children>
-                      <component id="92080" class="javax.swing.JEditorPane" binding="metadataEditorTf">
-                        <constraints/>
-                        <properties>
-                          <editable value="false"/>
-                        </properties>
-                      </component>
-                    </children>
-                  </scrollpane>
+                  </component>
                 </children>
               </grid>
             </children>

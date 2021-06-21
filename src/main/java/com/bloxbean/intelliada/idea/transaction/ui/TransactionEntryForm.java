@@ -1,13 +1,14 @@
 package com.bloxbean.intelliada.idea.transaction.ui;
 
 import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.common.model.Networks;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountChooser;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
@@ -53,6 +54,7 @@ public class TransactionEntryForm {
     private Project project;
     private DefaultComboBoxModel<AssetBalance> availableBalanceComboBoxModel;
     private boolean isMainnet;
+    private Network network;
     private TransactionEntryListener transactionEntryListener;
 
     public TransactionEntryForm() {
@@ -65,8 +67,14 @@ public class TransactionEntryForm {
         if(node != null)
             isMainnet = NetworkUtil.isMainnet(node);
 
+        if(isMainnet) {
+            network = Networks.mainnet();
+        } else {
+            network = Networks.testnet();
+        }
+
         senderAccChooserBtn.addActionListener(e -> {
-            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccount(project, true);
+            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
             if(cardanoAccount != null) {
                 setSenderAddress(cardanoAccount.getAddress());
                 senderMnemonicTf.setText(cardanoAccount.getMnemonic());
@@ -90,7 +98,7 @@ public class TransactionEntryForm {
                 }
                 oldMnemonic = null; //reset old mnemonic
 
-                String mnemonic = senderMnemonicTf.getText();
+                String mnemonic = String.valueOf(senderMnemonicTf.getPassword());
                 try {
                     RemoteNode node = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
                     if(node != null) {
@@ -98,7 +106,7 @@ public class TransactionEntryForm {
                             Account account = new Account(mnemonic);
                             setSenderAddress(account.baseAddress());
                         } else {
-                            Account account = new Account(Networks.testnet(), mnemonic);
+                            Account account = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), mnemonic);
                             setSenderAddress(account.baseAddress());
                         }
                     } else {
@@ -106,7 +114,6 @@ public class TransactionEntryForm {
                     }
                 } catch (Exception ex) {
                     senderTf.setText("");
-                   // clearAssetRelatedData();
                 }
 
                 fetchSenderBalance();
@@ -114,7 +121,7 @@ public class TransactionEntryForm {
         });
 
         receiverAccChooserBtn.addActionListener(e -> {
-            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccount(project, true);
+            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
             if(cardanoAccount != null) {
                 receiverTf.setText(cardanoAccount.getAddress());
             }
@@ -235,7 +242,7 @@ public class TransactionEntryForm {
                 if(StringUtil.isEmpty(baseAddress))
                     return null;
             } else {
-                senderAcc = new Account(Networks.testnet(), senderMnenomic);
+                senderAcc = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
                 if(StringUtil.isEmpty(baseAddress))
                     return null;

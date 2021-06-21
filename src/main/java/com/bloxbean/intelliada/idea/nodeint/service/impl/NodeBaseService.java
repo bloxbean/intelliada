@@ -1,15 +1,18 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
 import com.bloxbean.cardano.client.backend.api.BackendService;
+import com.bloxbean.cardano.client.backend.factory.BackendFactory;
 import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.util.JsonUtil;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.service.NodeServiceFactory;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
+import com.bloxbean.intelliada.idea.nodeint.util.NetworkHelper;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
@@ -65,6 +68,7 @@ public class NodeBaseService {
         if(node == null)
             throw new TargetNodeNotConfigured("Target node cannot be null. Please select a valid remote node");
 
+        this.remoteNode = node;
         this.logListener = logListener;
         backendService = NodeServiceFactory.getInstance().getBackendService(node);
     }
@@ -92,6 +96,16 @@ public class NodeBaseService {
                         logListener.info("");
                         logListener.info("Txn content :");
                         logListener.info(JsonUtil.getPrettyJson(txnResult.getValue()));
+
+                        try {
+                            if(NetworkUtil.isMainnet(remoteNode)) {
+                                logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.MAINNET, txnId));
+                            } else {
+                                logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.TESTNET, txnId));
+                            }
+                        } catch (Exception e) {
+                            //Ignore
+                        }
                         return;
                     } else {
                         logListener.printWait(count  + " sec - " + " Waiting for transaction to be mined.");
@@ -109,5 +123,16 @@ public class NodeBaseService {
             logListener.error("Error getting transaction status", e);
             throw new ApiCallException("Error getting transaction status", e);
         }
+    }
+
+    protected RemoteNode getRemoteNode() {
+        return remoteNode;
+    }
+
+    /**
+     * Required only for test connection call.
+     */
+    protected void clearCachedBackendService() {
+        NodeServiceFactory.getInstance().nodeRemoved(remoteNode);
     }
 }

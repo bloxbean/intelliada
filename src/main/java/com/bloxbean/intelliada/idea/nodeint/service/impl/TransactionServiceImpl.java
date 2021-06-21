@@ -90,7 +90,7 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
                 Transaction transaction = Transaction.deserialize(txnCborBytes);
                 logListener.info("Transaction Request: " + JsonUtil.getPrettyJson(transaction));
             } catch (Exception e) {
-
+                logListener.warn("Transaction de-serialization error", e);
             }
             if (result.isSuccessful()) {
                 logListener.info("Transaction submitted successfully");
@@ -143,7 +143,7 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
                 Transaction transaction = Transaction.deserialize(txnCborBytes);
                 logListener.info("Transaction Request: " + JsonUtil.getPrettyJson(transaction));
             } catch (Exception e) {
-
+                logListener.warn("Transaction de-serialization error", e);
             }
             if (result.isSuccessful()) {
                 logListener.info("Transaction submitted successfully");

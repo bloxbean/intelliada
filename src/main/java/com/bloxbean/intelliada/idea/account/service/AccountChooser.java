@@ -24,6 +24,7 @@ package com.bloxbean.intelliada.idea.account.service;
 
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.ui.ListAccountDialog;
+import com.bloxbean.intelliada.idea.core.util.Network;
 import com.intellij.openapi.project.Project;
 
 import java.util.List;
@@ -31,7 +32,23 @@ import java.util.List;
 public class AccountChooser {
 
     public static CardanoAccount getSelectedAccount(Project project, boolean showBalance) {
-        ListAccountDialog listAccountDialog = new ListAccountDialog(project, true, showBalance);
+        ListAccountDialog listAccountDialog = new ListAccountDialog(project, null, showBalance);
+        try {
+            boolean result = listAccountDialog.showAndGet();
+
+            if (!result) {
+                return null;
+            }
+
+            CardanoAccount selectedAccount = listAccountDialog.getSelectAccount();
+            return selectedAccount;
+        } finally {
+            listAccountDialog.disposeIfNeeded();
+        }
+    }
+
+    public static CardanoAccount getSelectedAccountForNetwork(Project project, Network network, boolean showBalance) {
+        ListAccountDialog listAccountDialog = new ListAccountDialog(project, network, showBalance);
         try {
             boolean result = listAccountDialog.showAndGet();
 

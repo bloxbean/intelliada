@@ -1,16 +1,35 @@
 package com.bloxbean.intelliada.idea.configuration.ui;
 
+import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUrls;
 import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.core.util.NodeType;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
+import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
+import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
+import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
+import com.bloxbean.intelliada.idea.nodeint.service.api.NetworkInfoService;
+import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
+import com.bloxbean.intelliada.idea.nodeint.service.impl.NetworkServiceImpl;
+import com.bloxbean.intelliada.idea.util.IdeaUtil;
+import com.bloxbean.intelliada.idea.util.JsonUtil;
+import com.intellij.notification.NotificationType;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.progress.Task;
+import com.intellij.openapi.progress.impl.BackgroundableProcessIndicator;
 import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
+import java.awt.*;
+import java.util.UUID;
 
 public class RemoteNodeConfigPanel {
     private JPanel mainPanel;
@@ -23,6 +42,7 @@ public class RemoteNodeConfigPanel {
     private JTextField networkIdTf;
     private JTextField protocolMagicTf;
     private JTextField apiEndpointTf;
+    private JLabel connectionTestLabel;
     private boolean newConfig = true;
 
     public RemoteNodeConfigPanel() {
@@ -47,6 +67,10 @@ public class RemoteNodeConfigPanel {
 
     private void initialize() {
         handleNodeTypeSelection();
+
+        testConnectionBtn.addActionListener(e -> {
+            testNetworkConnection();
+        });
     }
 
     private void handleNodeTypeSelection() {
@@ -129,6 +153,64 @@ public class RemoteNodeConfigPanel {
 
     public String getProtocolMagic() {
         return protocolMagicTf.getText();
+    }
+
+    private void testNetworkConnection() {
+
+        Task.Backgroundable task = new Task.Backgroundable(null, "Network Info") {
+
+            @Override
+            public void run(@NotNull ProgressIndicator indicator) {
+                RemoteNode remoteNode = new RemoteNode();
+                remoteNode.setId(UUID.randomUUID().toString()); //Some random id
+                remoteNode.setName(getName());
+                remoteNode.setApiEndpoint(getApiEndpoint());
+                remoteNode.setAuthKey(getAuthKey());
+                remoteNode.setNodeType(getNodeType());
+                remoteNode.setProtocolMagic(getProtocolMagic());
+                remoteNode.setNetworkId(getNetworkId());
+
+                LogListener logListener = new LogListener() {
+                    @Override
+                    public void info(String msg) {
+
+                    }
+
+                    @Override
+                    public void error(String msg) {
+
+                    }
+
+                    @Override
+                    public void warn(String msg) {
+
+                    }
+                };
+
+                try {
+                    //First remove
+                    NetworkInfoService networkService = new NetworkServiceImpl(remoteNode, logListener);
+                    Result result = networkService.testAndGetNetworkInfo();
+
+                    if(result.isSuccessful()) {
+                        connectionTestLabel.setForeground(Color.black);
+                        connectionTestLabel.setText("Successfully connected !!!");
+                     } else {
+                        connectionTestLabel.setForeground(Color.red);
+                        String response = result.getResponse();
+                        if(response != null && response.length() > 30)
+                            response = response.substring(0, 27) + "...";
+
+                        connectionTestLabel.setText("Could not connect to node : " + response);
+                        connectionTestLabel.setToolTipText(result.getResponse());
+                    }
+                }catch (Exception exception) {
+                    connectionTestLabel.setText("Could not connect to node. Reason: " + exception.getMessage());
+                }
+            }
+        };
+
+        ProgressManager.getInstance().runProcessWithProgressAsynchronously(task, new BackgroundableProcessIndicator(task));
     }
 
     private void createUIComponents() {

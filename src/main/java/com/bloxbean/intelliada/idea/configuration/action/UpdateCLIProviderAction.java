@@ -23,4 +23,9 @@ public class UpdateCLIProviderAction extends AnAction {
         if(provider != null)
             ConfigurationHelperService.createOrUpdateLocalSDKConfiguration(project, provider);
     }
+
+    @Override
+    public boolean isDumbAware() {
+        return true;
+    }
 }

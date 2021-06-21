@@ -32,7 +32,7 @@ import java.util.List;
 public class TokenMintingTransactionAction extends AnAction {
 
     public TokenMintingTransactionAction() {
-        super(AllIcons.Actions.AddFile);
+        super("Mint Token", "Mint Token", AllIcons.Actions.AddFile);
     }
 
     @Override

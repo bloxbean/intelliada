@@ -26,4 +26,9 @@ public class UpdateRemoteNodeAction extends AnAction {
             NodeServiceFactory.getInstance().nodeRemoved(node);
         }
     }
+
+    @Override
+    public boolean isDumbAware() {
+        return true;
+    }
 }

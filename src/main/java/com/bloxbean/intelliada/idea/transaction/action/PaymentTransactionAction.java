@@ -34,7 +34,7 @@ import java.util.List;
 public class PaymentTransactionAction extends AnAction {
 
     public PaymentTransactionAction() {
-        super(AllIcons.Actions.Execute);
+        super("Transfer Transaction", "Transfer Transaction", AllIcons.Actions.Execute);
     }
 
     @Override

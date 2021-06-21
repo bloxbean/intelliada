@@ -1,11 +1,12 @@
 package com.bloxbean.intelliada.idea.transaction.ui;
 
 import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.common.model.Networks;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountChooser;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.NetworkInfoService;
@@ -36,6 +37,7 @@ public class TransactionDtlEntryForm {
     private Project project;
     private DefaultListModel<Account> addlAccountListModel;
     private boolean isMainnet;
+    private Network network;
 
     public TransactionDtlEntryForm() {
 
@@ -49,16 +51,14 @@ public class TransactionDtlEntryForm {
         addlWitnessAccountList.setModel(addlAccountListModel);
         this.addlWitnessAccountList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
 
-        RemoteNode node = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
-        if(node != null)
-            isMainnet = NetworkUtil.isMainnet(node);
+        initializeNetwork(project);
 
         fetchDefaultsButton.addActionListener(e -> {
             fetchTtl(this.project);
         });
 
         addAccBtn.addActionListener(e -> {
-            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccount(project, true);
+            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
             if(cardanoAccount != null) {
                 Account account = deriveAccount(cardanoAccount);
                 if(account != null) {
@@ -74,6 +74,17 @@ public class TransactionDtlEntryForm {
 
             addlAccountListModel.remove(index);
         });
+    }
+
+    private void initializeNetwork(Project project) {
+        RemoteNode node = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
+        if(node != null)
+            isMainnet = NetworkUtil.isMainnet(node);
+
+        if(isMainnet)
+            network = Networks.mainnet();
+        else
+            network = Networks.testnet();
     }
 
     private void fetchTtl(Project project) {
@@ -119,7 +130,7 @@ public class TransactionDtlEntryForm {
                 if(StringUtil.isEmpty(baseAddress))
                     return null;
             } else {
-                senderAcc = new Account(Networks.testnet(), senderMnenomic);
+                senderAcc = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
                 if(StringUtil.isEmpty(baseAddress))
                     return null;

@@ -2,11 +2,9 @@ package com.bloxbean.intelliada.idea.metadata.ui;
 
 import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.metadata.helper.JsonNoSchemaToMetadataConverter;
+import com.bloxbean.intelliada.idea.common.ui.JsonEditorTextField;
 import com.bloxbean.intelliada.idea.metadata.exception.InvalidMetadataException;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.intellij.lang.Language;
-import com.intellij.openapi.editor.EditorFactory;
-import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.util.text.StringUtil;
@@ -21,7 +19,6 @@ import static com.bloxbean.intelliada.idea.metadata.ui.MetadataTemplateHelper.SI
 public class RawJsonEntryForm {
     private JPanel mainPanel;
     private EditorTextField editorPane;
-    private JScrollPane scrollPane;
     private JComboBox copyTemplateCB;
     private Project project;
     public String[] templateItems = {"", SIMPLE_KEY_VALUE_TEMPLATE, NFT_TEMPLATE};
@@ -51,10 +48,7 @@ public class RawJsonEntryForm {
 
     private void createUIComponents() {
         // TODO: place custom component creation code here
-        Language language = Language.findLanguageByID("JSON");
-        FileType fileType = language != null ? language.getAssociatedFileType() : null;
-        editorPane = new EditorTextField(EditorFactory.getInstance().createDocument(""), project, fileType, false, false);
-
+        editorPane = new JsonEditorTextField(project);
         copyTemplateCB = new ComboBox(templateItems);
     }
 

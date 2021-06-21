@@ -30,4 +30,9 @@ public class DeleteCLIProviderAction extends AnAction {
         if(node != null)
             ConfigurationHelperService.deleteCLIProviderConfiguration(node);
     }
+
+    @Override
+    public boolean isDumbAware() {
+        return true;
+    }
 }

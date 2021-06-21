@@ -67,4 +67,11 @@ public class NetworkServiceImpl extends NodeBaseService implements NetworkInfoSe
             throw new ApiCallException("Could not get block information from the network : \n" + result.toString());
         }
     }
+
+    @Override
+    public Result<Genesis> testAndGetNetworkInfo() throws ApiCallException {
+        Result<Genesis> genesisResult = getNetworkInfo();
+        clearCachedBackendService();
+        return genesisResult;
+    }
 }

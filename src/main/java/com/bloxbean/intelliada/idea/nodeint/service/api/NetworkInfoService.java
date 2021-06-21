@@ -8,4 +8,5 @@ public interface NetworkInfoService {
     Result<Genesis> getNetworkInfo() throws ApiCallException;
     Long getTtl() throws ApiCallException;
     Long getCurrentSlot() throws ApiCallException;
+    Result<Genesis> testAndGetNetworkInfo() throws ApiCallException;
 }

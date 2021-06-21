@@ -26,8 +26,11 @@ import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountService;
 import com.bloxbean.intelliada.idea.account.ui.details.AccountDetailsDialog;
+import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.core.util.Networks;
+import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
@@ -65,6 +68,7 @@ import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static java.awt.event.MouseEvent.BUTTON1;
 
@@ -77,24 +81,25 @@ public class ListAccountDialog extends DialogWrapper {
     private JButton newAcctBtn;
     private Project project;
     private AccountListTableModel tableModel;
-    private boolean isRemote;
     private boolean showBalance;
     private AccountService accountService;
     private CardanoConsole console;
+    private final Network network;
+    private boolean isRemote = true;
 
-    public ListAccountDialog(Project project, boolean isRemote) {
-        this(project, isRemote, true);
+    public ListAccountDialog(Project project) {
+        this(project, null, true);
         this.console = CardanoConsole.getConsole(project);
     }
 
-    public ListAccountDialog(Project project, boolean isRemote, boolean showBalance) {
+    public ListAccountDialog(Project project, Network network, boolean showBalance) {
         super(project, true);
         init();
         setTitle("Accounts");
 
         this.accountService = AccountService.getAccountService();
         this.project = project;
-        this.isRemote = isRemote;
+        this.network = network;
         this.showBalance = showBalance;
 
         initialize();
@@ -375,6 +380,13 @@ public class ListAccountDialog extends DialogWrapper {
     public void fetchBalance(boolean isRemote) {
         if (tableModel.getAccounts() == null) return;
 
+        final boolean isMainnet;
+        RemoteNode node = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
+        if (node != null)
+            isMainnet = NetworkUtil.isMainnet(node);
+        else
+            isMainnet = false;
+
         if(isRemote) {
             CardanoConsole console = CardanoConsole.getConsole(project);
             console.show();
@@ -398,6 +410,15 @@ public class ListAccountDialog extends DialogWrapper {
 
                         for (CardanoAccount account : tableModel.getAccounts()) {
                             //TODO fetch balance
+                            if(isMainnet) { //Ignore testnet account
+                                if(account.getAddress().startsWith("addr_test"))
+                                    continue;
+                            } else { //Ignore mainnet accounts
+                                if(!account.getAddress().startsWith("addr_test")) {
+                                    continue;
+                                }
+                            }
+
                             try {
                                 Result<Long> result = cardanoAccountService.getAdaBalance(account.getAddress());
 
@@ -447,20 +468,6 @@ public class ListAccountDialog extends DialogWrapper {
         }
     }
 
-   /* public void updateAccount(List<AlgoAccount> accs) {
-        if(accs == null) return;
-
-        if(this.accounts == null)
-            this.accounts = new ArrayList<>();
-
-        this.accounts.clear();
-        for(AlgoAccount account: accs) {
-            this.accounts.add(account);
-        }
-
-        tableModel.fireTableDataChanged();
-    }*/
-
     private void initialize() {
         tableModel = new AccountListTableModel(showBalance);
         accListTable.setModel(tableModel);
@@ -473,6 +480,14 @@ public class ListAccountDialog extends DialogWrapper {
         ApplicationManager.getApplication().invokeLater(() -> {
             try {
                 List<CardanoAccount> accs = accountService.getAccounts();
+                if(network == null) { //Show all networks
+                    //do nothing. show all accounts
+                } else if(network != null && network.equals(Networks.mainnet())) {
+                    accs = accs.stream().filter(acc -> !acc.getAddress().startsWith("addr_test")).collect(Collectors.toList());
+                } else { //Network not null but not mainnet
+                    accs = accs.stream().filter(acc -> acc.getAddress().startsWith("addr_test")).collect(Collectors.toList());
+                }
+
                 tableModel.setElements(accs);
                 messageLabel.setText("");
             } catch(Exception e) {

@@ -178,12 +178,17 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
         final DefaultActionGroup group = new DefaultActionGroup();
         group.add(new CreateRemoteNodeAction());
         group.add(new AccountListAction());
+        group.add(new Separator());
         group.add(new PaymentTransactionAction());
         group.add(new TokenMintingTransactionAction());
+        group.add(new Separator());
 
-        group.add(new CreateScriptPubkeyAction());
-        group.add(new CreateCompositeScriptAction());
-        group.add(new ListScriptsAction());
+        final DefaultActionGroup scriptGroup = new DefaultActionGroup();
+        scriptGroup.add(new CreateScriptPubkeyAction());
+        scriptGroup.add(new CreateCompositeScriptAction());
+        scriptGroup.add(new ListScriptsAction());
+
+        group.add(scriptGroup);
 
         final ActionToolbar actionToolBar = ActionManager.getInstance().createActionToolbar(ActionPlaces.ANT_EXPLORER_TOOLBAR, group, true);
         return JBUI.Panels.simplePanel(actionToolBar.getComponent());

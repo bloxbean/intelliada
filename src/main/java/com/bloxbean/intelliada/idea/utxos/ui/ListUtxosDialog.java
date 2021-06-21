@@ -15,16 +15,24 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.ui.components.JBList;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
+import java.awt.*;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
+
+import static java.awt.event.MouseEvent.BUTTON1;
 
 public class ListUtxosDialog extends DialogWrapper {
     private JPanel mainPanel;
@@ -99,6 +107,32 @@ public class ListUtxosDialog extends DialogWrapper {
                 amountsListModel.clear();
             }
         });
+        attachTableListener();
+    }
+
+    private void attachTableListener() {
+        utxosTable.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent me) {
+                if (me.getClickCount() == 2 && me.getButton() == BUTTON1) {     // to detect doble click events
+                    copyTxnHash();
+                }
+            }
+        });
+    }
+
+    private void copyTxnHash() {
+        int index = utxosTable.getSelectedRow();
+        if(index == -1) return;
+        int selectedRowsCount = utxosTable.getSelectedRowCount();
+        if(selectedRowsCount == 1) {
+            Utxo utxo = tableModel.getUtxos().get(index);
+            if(utxo == null)
+                return;
+            StringSelection stringSelection = new StringSelection(utxo.getTxHash());
+            Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+            clipboard.setContents(stringSelection, null);
+            Messages.showInfoMessage("Transaction hash copied to the clipboard", "Copy Transaction Hash");
+        }
     }
 
     public List<Utxo> getSelectedUtxos() {

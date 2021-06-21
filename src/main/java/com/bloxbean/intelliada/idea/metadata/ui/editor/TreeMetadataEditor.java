@@ -7,6 +7,7 @@ import com.bloxbean.cardano.client.metadata.cbor.CBORMetadataMap;
 import com.bloxbean.cardano.client.metadata.helper.JsonNoSchemaToMetadataConverter;
 import com.bloxbean.cardano.client.metadata.helper.MetadataToJsonNoSchemaConverter;
 import com.bloxbean.cardano.client.util.HexUtil;
+import com.bloxbean.intelliada.idea.common.ui.JsonEditorTextField;
 import com.bloxbean.intelliada.idea.metadata.exception.InvalidMetadataException;
 import com.bloxbean.intelliada.idea.metadata.util.editor.CBORMetadataEx;
 import com.bloxbean.intelliada.idea.metadata.util.editor.CBORMetadataListEx;
@@ -39,7 +40,6 @@ public class TreeMetadataEditor {
     private JPanel mainPanel;
     private Tree tree;
     private EditorTextField editorTf;
-    private JScrollPane editorScrollPane;
     private Project project;
     private ObjectMapper mapper;
     private DefaultTreeModel treeModel;
@@ -468,10 +468,7 @@ public class TreeMetadataEditor {
         tree = new Tree(treeModel);
         tree.setShowsRootHandles(true);
 
-        Language language = Language.findLanguageByID("JSON");
-        FileType fileType = language != null ? language.getAssociatedFileType() : null;
-        editorTf = new EditorTextField(EditorFactory.getInstance().createDocument(""), project, fileType, false, false);
-        editorScrollPane = new JBScrollPane(editorTf);
+        editorTf = new JsonEditorTextField(project);
     }
 
     public static class RootNode extends DefaultMutableTreeNode {
@@ -479,8 +476,8 @@ public class TreeMetadataEditor {
             super(metadata);
         }
 
-        public CBORMetadataEx getCBORMetadata() {
-            return (CBORMetadataEx) getUserObject();
+        public CBORMetadata getCBORMetadata() {
+            return (CBORMetadata) getUserObject();
         }
 
         @Override

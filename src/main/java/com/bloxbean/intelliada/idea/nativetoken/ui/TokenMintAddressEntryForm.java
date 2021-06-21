@@ -1,11 +1,12 @@
 package com.bloxbean.intelliada.idea.nativetoken.ui;
 
 import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.common.model.Networks;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountChooser;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
+import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
@@ -26,6 +27,7 @@ public class TokenMintAddressEntryForm {
     private JButton receiverAddressBtn;
     private CardanoConsole console;
     private boolean isMainnet = false;
+    private Network network;
     private TransactionEntryListener transactionEntryListener;
 
     public TokenMintAddressEntryForm() {
@@ -38,8 +40,13 @@ public class TokenMintAddressEntryForm {
         if (node != null)
             isMainnet = NetworkUtil.isMainnet(node);
 
+        if(isMainnet)
+            network = Networks.mainnet();
+        else
+            network = Networks.testnet(); //all networks except mainnet are testnets
+
         creatorAddressBtn.addActionListener(e -> {
-            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccount(project, true);
+            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
             if (cardanoAccount != null) {
                 setAddresss(cardanoAccount.getAddress());
                 mnemonicTf.setText(cardanoAccount.getMnemonic());
@@ -70,7 +77,7 @@ public class TokenMintAddressEntryForm {
                             Account account = new Account(mnemonic);
                             setAddresss(account.baseAddress());
                         } else {
-                            Account account = new Account(Networks.testnet(), mnemonic);
+                            Account account = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), mnemonic);
                             setAddresss(account.baseAddress());
                         }
                     } else {
@@ -83,7 +90,7 @@ public class TokenMintAddressEntryForm {
         });
 
         receiverAddressBtn.addActionListener(e -> {
-            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccount(project, true);
+            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project,  network, true);
             if (cardanoAccount != null) {
                 setReceiver(cardanoAccount.getAddress());
             }
@@ -110,7 +117,7 @@ public class TokenMintAddressEntryForm {
                 if(StringUtil.isEmpty(baseAddress))
                     return null;
             } else {
-                creatorAccount = new Account(Networks.testnet(), creatorMnemonic);
+                creatorAccount = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), creatorMnemonic);
                 String baseAddress = creatorAccount.baseAddress(); //Check if baseAddress can be derived
                 if(StringUtil.isEmpty(baseAddress))
                     return null;

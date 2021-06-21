@@ -21,4 +21,8 @@ public class CreateCLIProviderAction extends AnAction {
         ConfigurationHelperService.createOrUpdateLocalSDKConfiguration(project, null);
     }
 
+    @Override
+    public boolean isDumbAware() {
+        return true;
+    }
 }
