@@ -1,11 +1,11 @@
 <idea-plugin>
     <id>com.bloxbean.intelliada</id>
-    <name>IntelliAda Cadano Integration</name>
+    <name>IntelliAda Cardano Integration</name>
     <vendor email="info@bloxbean.com" url="https://github.com/bloxbean/intelliada/">BloxBean IntelliAda Project
     </vendor>
 
     <description><![CDATA[
-    Intellij IDEA plugin for Cardano blockchain
+    IntelliJ IDEA plugin for Cardano blockchain. Interact with Cardano blockchain directly from IntelliJ IDE.
     ]]></description>
 
     <idea-version since-build="211"/>

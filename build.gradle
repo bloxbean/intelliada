@@ -28,7 +28,7 @@ plugins {
 }
 
 group 'com.bloxbean'
-version '0.0.1'
+version '0.1.0-beta'
 
 sourceCompatibility = 11
 targetCompatibility = 11
