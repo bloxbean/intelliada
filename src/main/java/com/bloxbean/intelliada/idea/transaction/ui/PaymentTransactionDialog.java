@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.transaction.ui;
 
+import com.bloxbean.intelliada.idea.core.ui.BaseTransactionDialog;
 import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
 import com.bloxbean.intelliada.idea.utxos.ui.UtxoSelectEntryForm;
@@ -10,7 +11,7 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 
-public class PaymentTransactionDialog extends DialogWrapper {
+public class PaymentTransactionDialog extends BaseTransactionDialog {
     private JPanel mainPanel;
     private TransactionEntryForm txnEntryForm;
     private JTabbedPane tabbedPane1;
@@ -62,8 +63,8 @@ public class PaymentTransactionDialog extends DialogWrapper {
         return metadataEntryForm;
     }
 
-    @Override
-    protected @Nullable ValidationInfo doValidate() {
+//    @Override
+    protected @Nullable ValidationInfo _doValidate() {
         ValidationInfo validationInfo = txnEntryForm.doValidate();
         if(validationInfo != null)
             return validationInfo;
@@ -77,6 +78,11 @@ public class PaymentTransactionDialog extends DialogWrapper {
             return validationInfo;
 
         return null;
+    }
+
+    @Override
+    protected ValidationInfo doInputValidation() {
+        return _doValidate();
     }
 
     @Override

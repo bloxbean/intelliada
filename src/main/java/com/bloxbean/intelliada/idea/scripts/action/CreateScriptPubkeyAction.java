@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.scripts.action;
 
+import com.bloxbean.intelliada.idea.common.CardanoIcons;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptService;
 import com.bloxbean.intelliada.idea.scripts.ui.ScriptPubKeyGenerateDialog;
@@ -12,7 +13,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateScriptPubkeyAction extends AnAction {
 
     public CreateScriptPubkeyAction() {
-        super("Create Script (Single Sig)", "Create Script (Single Sig)", AllIcons.FileTypes.Json);
+        super("Create Script (Single Sig)", "Create Script (Single Sig)", CardanoIcons.SCRIPT_ICON);
     }
 
     @Override

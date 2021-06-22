@@ -1,9 +1,9 @@
 package com.bloxbean.intelliada.idea.scripts.action;
 
+import com.bloxbean.intelliada.idea.common.CardanoIcons;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptInfo;
 import com.bloxbean.intelliada.idea.scripts.service.ScriptService;
 import com.bloxbean.intelliada.idea.scripts.ui.CompositeScriptGenerateDialog;
-import com.intellij.icons.AllIcons;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.project.Project;
@@ -12,7 +12,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateCompositeScriptAction extends AnAction {
 
     public CreateCompositeScriptAction() {
-        super("Create script (Sigs & TimeLock)", "Create script (Sigs & TimeLock)", AllIcons.FileTypes.JavaScript);
+        super("Create script (Sigs & TimeLock)", "Create script (Sigs & TimeLock)", CardanoIcons.MULTI_SCRIPT_ICON);
     }
 
     @Override

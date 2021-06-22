@@ -17,8 +17,14 @@ public interface TransactionService {
     public String transfer(List<PaymentTransaction> transactions,
                                    TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
 
+    public String exportSignedTransaction(List<PaymentTransaction> transactions,
+                           TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
+
 
     public String mintToken(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
         throws ApiCallException;
+
+    public String exportMintTokenTransaction(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
+            throws ApiCallException;
 
 }

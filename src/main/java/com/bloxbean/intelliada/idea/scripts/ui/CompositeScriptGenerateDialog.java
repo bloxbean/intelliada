@@ -14,7 +14,7 @@ public class CompositeScriptGenerateDialog extends BaseScriptGenerateDialog {
 
     public CompositeScriptGenerateDialog(@Nullable Project project) {
         super(project, true);
-        setTitle("Composite Script - Create");
+        setTitle("Multi-sig Script (Script Sigs & Time Lock) - Create");
         initialization(project);
         init();
     }

@@ -5,11 +5,13 @@ import com.bloxbean.intelliada.idea.util.JsonUtil;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.vfs.LocalFileSystem;
 import com.twelvemonkeys.lang.StringUtil;
 
 import javax.swing.*;
 import java.io.File;
-import java.io.FileWriter;
+import java.io.IOException;
 
 public class ScriptExportUtil {
 
@@ -27,7 +29,7 @@ public class ScriptExportUtil {
             fc.setCurrentDirectory(new File(baseDir));
 
         fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        fc.showDialog(parent, "Select");
+        fc.showOpenDialog(parent);
         File destination = fc.getSelectedFile();
         if (destination == null || !destination.exists()) {
             Messages.showErrorDialog("Invalid folder: " + destination, "Script Export Error");
@@ -51,10 +53,16 @@ public class ScriptExportUtil {
                 }
 
                 if(ret == Messages.YES) {
-                    FileWriter fileWriter = new FileWriter(finalFile);
-                    fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getScript()));
+                    writeFile(finalFile, JsonUtil.getPrettyJson(scriptInfo.getScript()));
+//                    FileWriter fileWriter = new FileWriter(finalFile);
+//                    fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getScript()));
                     createdFileNames.append(scriptFileName);
                 }
+            } else {
+                writeFile(finalFile, JsonUtil.getPrettyJson(scriptInfo.getScript()));
+//                FileWriter fileWriter = new FileWriter(finalFile);
+//                fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getScript()));
+                createdFileNames.append(scriptFileName);
             }
 
         } else {
@@ -91,30 +99,40 @@ public class ScriptExportUtil {
             }
 
             //Write script file
-            FileWriter fileWriter = new FileWriter(scriptFile);
-            fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getScript()));
-            fileWriter.flush();
+//            FileWriter fileWriter = new FileWriter(scriptFile);
+//            fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getScript()));
+//            fileWriter.flush();
+            writeFile(scriptFile, JsonUtil.getPrettyJson(scriptInfo.getScript()));
             createdFileNames.append(scriptFileName);
 
             //Write skey file
             if(scriptInfo.getSkey() != null) {
-                fileWriter = new FileWriter(skeyFile);
-                fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getSkey()));
-                fileWriter.flush();
+//                fileWriter = new FileWriter(skeyFile);
+//                fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getSkey()));
+//                fileWriter.flush();
+                writeFile(skeyFile, JsonUtil.getPrettyJson(scriptInfo.getSkey()));
                 createdFileNames.append("\n" + skeyFileName);
             }
 
             //Write vkey file
             if(scriptInfo.getVKey() != null) {
-                fileWriter = new FileWriter(vkeyFile);
-                fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getVKey()));
-                fileWriter.flush();
+//                fileWriter = new FileWriter(vkeyFile);
+//                fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getVKey()));
+//                fileWriter.flush();
+                writeFile(vkeyFile, JsonUtil.getPrettyJson(scriptInfo.getVKey()));
                 createdFileNames.append("\n" + vkeyFileName);
             }
         }
 
         Messages.showInfoMessage(String.format("Script Export was successful. The following files have been created. \n %s",
                 createdFileNames.toString()), "Script Export");
+    }
+
+    private static void writeFile(File file, String content) throws IOException {
+        FileUtil.writeToFile(file, content);
+        try {
+            LocalFileSystem.getInstance().refreshAndFindFileByPath(file.getAbsolutePath().replace('\\', '/'));
+        } catch (Exception e) {}
     }
 
     public static String normalizeFileName(String name) {

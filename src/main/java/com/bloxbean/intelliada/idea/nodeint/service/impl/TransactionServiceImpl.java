@@ -19,6 +19,7 @@ import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionService;
 import com.bloxbean.intelliada.idea.util.AdaConversionUtil;
 import com.bloxbean.intelliada.idea.util.JsonUtil;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.text.StringUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigInteger;
@@ -109,6 +110,49 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
     }
 
     @Override
+    public String exportSignedTransaction(List<PaymentTransaction> transactions, TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException {
+        logListener.info("Creating transaction ...");
+        printRemoteNodeDetails();
+        //Calculate ttl
+        if(detailsParams.getTtl() == 0) { //Get ttl
+            logListener.info("Calculate Time to Live (ttl) = current slot + 1000");
+            Long calculatedTtl = calculateTtl();
+            logListener.info("Time to Live (ttl) : " + calculatedTtl);
+            if(calculatedTtl == null)
+                throw new ApiCallException("Ttl calculation failed");
+            detailsParams.setTtl(calculatedTtl);
+        }
+
+        try {
+            int count = 1;
+            for (PaymentTransaction paymentTransaction : transactions) {
+                if (paymentTransaction.getFee() == null || paymentTransaction.getFee().equals(BigInteger.ZERO)) { //Calculate fee
+                    logListener.info("Calculate fee ...");
+                    BigInteger fee = null;
+                    fee = backendService.getFeeCalculationService().calculateFee(paymentTransaction, detailsParams, metadata);
+                    logListener.info("Estimated fee for transaction " + count++ + " : "
+                            + AdaConversionUtil.lovelaceToAdaFormatted(fee) + " " + ADA_SYMBOL );
+                    paymentTransaction.setFee(fee);
+                }
+            }
+        } catch (Exception e) {
+            throw new ApiCallException("Fee calculation failed", e);
+        }
+
+        try {
+            printTransactionRequests(transactions);
+
+            String signedCborHex = backendService.getTransactionHelperService().createSignedTransaction(transactions, detailsParams, metadata);
+            if(StringUtil.isEmpty(signedCborHex))
+                throw new ApiCallException("Export transaction failed.");
+            else
+                return signedCborHex;
+        } catch (Exception e) {
+            throw new ApiCallException("Export Transaction failed", e);
+        }
+    }
+
+    @Override
     public String mintToken(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException {
         logListener.info("Starting Token Mint transaction ...");
         printRemoteNodeDetails();
@@ -158,6 +202,45 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
             }
         } catch (Exception e) {
             throw new ApiCallException("Transaction failed", e);
+        }
+    }
+
+    @Override
+    public String exportMintTokenTransaction(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException {
+        logListener.info("Creating Token Mint transaction ...");
+        printRemoteNodeDetails();
+        //Calculate ttl
+        if(detailsParams.getTtl() == 0) { //Get ttl
+            logListener.info("Calculate Time to Live (ttl) = current slot + 1000");
+            Long calculatedTtl = calculateTtl();
+            logListener.info("Time to Live (ttl) : " + calculatedTtl);
+            if(calculatedTtl == null)
+                throw new ApiCallException("Ttl calculation failed");
+            detailsParams.setTtl(calculatedTtl);
+        }
+
+        try {
+            int count = 1;
+            logListener.info("Calculate fee ...");
+            BigInteger fee = null;
+            fee = backendService.getFeeCalculationService().calculateFee(mintTransaction, detailsParams, metadata);
+            logListener.info("Estimated fee for transaction " + count++ + " : "
+                    + AdaConversionUtil.lovelaceToAdaFormatted(fee) + " " + ADA_SYMBOL );
+            mintTransaction.setFee(fee);
+        } catch (Exception e) {
+            throw new ApiCallException("Fee calculation failed", e);
+        }
+
+        try {
+            printTokenMintRequest(mintTransaction);
+
+            String signedCborHex  = backendService.getTransactionHelperService().createSignedMintTransaction(mintTransaction, detailsParams, metadata);
+            if(StringUtil.isEmpty(signedCborHex))
+                throw new ApiCallException("Export transaction failed.");
+            else
+                return signedCborHex;
+        } catch (Exception e) {
+            throw new ApiCallException("Export transaction failed", e);
         }
     }
 

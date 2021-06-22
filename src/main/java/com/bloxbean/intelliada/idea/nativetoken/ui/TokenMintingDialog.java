@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.nativetoken.ui;
 
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
+import com.bloxbean.intelliada.idea.core.ui.BaseTransactionDialog;
 import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
@@ -14,7 +15,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.util.Arrays;
 
-public class TokenMintingDialog extends DialogWrapper {
+public class TokenMintingDialog extends BaseTransactionDialog {
     private JPanel mainPanel;
     private JTabbedPane tabbedPane1;
     private TokenMintAddressEntryForm tokenMintAddressEntryForm;
@@ -84,7 +85,7 @@ public class TokenMintingDialog extends DialogWrapper {
     }
 
     @Override
-    protected @Nullable ValidationInfo doValidate() {
+    protected @Nullable ValidationInfo doInputValidation() {
         ValidationInfo validationInfo = tokenMintAddressEntryForm.doValidate();
         if(validationInfo != null)
             return validationInfo;

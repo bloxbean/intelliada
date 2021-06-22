@@ -5,6 +5,8 @@ import com.bloxbean.cardano.client.backend.model.Utxo;
 import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
+import com.bloxbean.intelliada.idea.common.CardanoIcons;
+import com.bloxbean.intelliada.idea.core.RequestMode;
 import com.bloxbean.intelliada.idea.metadata.exception.InvalidMetadataException;
 import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.nativetoken.ui.TokenMintingDialog;
@@ -12,12 +14,13 @@ import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionService;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.TransactionServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
+import com.bloxbean.intelliada.idea.core.action.BaseTxnAction;
+import com.bloxbean.intelliada.idea.transaction.model.SerializedTransaction;
 import com.bloxbean.intelliada.idea.transaction.ui.TransactionDtlEntryForm;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
+import com.bloxbean.intelliada.idea.util.JsonUtil;
 import com.bloxbean.intelliada.idea.utxos.ui.UtxoSelectEntryForm;
-import com.intellij.icons.AllIcons;
 import com.intellij.notification.NotificationType;
-import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
@@ -29,10 +32,10 @@ import org.jetbrains.annotations.NotNull;
 import java.math.BigInteger;
 import java.util.List;
 
-public class TokenMintingTransactionAction extends AnAction {
+public class TokenMintingTransactionAction extends BaseTxnAction {
 
     public TokenMintingTransactionAction() {
-        super("Mint Token", "Mint Token", AllIcons.Actions.AddFile);
+        super("Mint Token", "Mint Token", CardanoIcons.MINT_ICON);
     }
 
     @Override
@@ -83,6 +86,16 @@ public class TokenMintingTransactionAction extends AnAction {
             return;
         }
 
+        RequestMode requestMode = dialog.getRequestMode();
+        if(requestMode == null || requestMode.equals(RequestMode.TRANSACTION)) {
+            executeMintToken(project, mintTransaction, detailsParams, console, logListenerAdapter, metadata);
+        } else if(requestMode.equals(RequestMode.EXPORT_SIGNED)) {
+            String exportFile = getExportFileLocation(project, dialog.getContentPanel());
+            exportMintTokenTransaction(project, mintTransaction, detailsParams, console, logListenerAdapter, metadata, exportFile);
+        }
+    }
+
+    private void executeMintToken(Project project, MintTransaction mintTransaction, TransactionDetailsParams detailsParams, CardanoConsole console, LogListenerAdapter logListenerAdapter, Metadata metadata) {
         Task.Backgroundable task = new Task.Backgroundable(project, "Mint Token Transaction") {
 
             @Override
@@ -98,6 +111,35 @@ public class TokenMintingTransactionAction extends AnAction {
                             String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
                 }catch (Exception exception) {
                     console.showErrorMessage(String.format("%s failed", getTxnCommand()), exception);
+                }
+            }
+        };
+
+        ProgressManager.getInstance().runProcessWithProgressAsynchronously(task, new BackgroundableProcessIndicator(task));
+    }
+
+    private void exportMintTokenTransaction(Project project, MintTransaction mintTransaction, TransactionDetailsParams detailsParams, CardanoConsole console, LogListenerAdapter logListenerAdapter, Metadata metadata, String exportFile) {
+        Task.Backgroundable task = new Task.Backgroundable(project, "Export Mint Token Transaction") {
+
+            @Override
+            public void run(@NotNull ProgressIndicator indicator) {
+                console.showInfoMessage(String.format("Export Token Minting Transaction starts ...\n"));
+
+                try {
+                    TransactionService transactionService = new TransactionServiceImpl(project, logListenerAdapter);
+
+                    String signedTxnCbor = transactionService.exportMintTokenTransaction(mintTransaction, detailsParams, metadata);
+                    SerializedTransaction serializedTransaction = SerializedTransaction.builder()
+                            .type(SerializedTransaction.TX_MARY_ERA)
+                            .description("")
+                            .cborHex(signedTxnCbor).build();
+
+                    exportTransaction(serializedTransaction, exportFile, logListenerAdapter);
+                    console.showInfoMessage("Cbor hex of signed transaction : " + JsonUtil.getPrettyJson(serializedTransaction));
+                    IdeaUtil.showNotification(project, getTitle(),
+                            "Token Mint transaction exported successfully", NotificationType.INFORMATION, null);
+                }catch (Exception exception) {
+                    console.showErrorMessage("Export token mint transaction failed", exception);
                 }
             }
         };
