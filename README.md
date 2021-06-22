@@ -1,4 +1,4 @@
-![Java CI with Gradle](https://github.com/bloxbean/intelliada/workflows/Java%20CI%20with%20Gradle/badge.svg?branch=master)
+[![Java CI with Gradle](https://github.com/bloxbean/intelliada/actions/workflows/gradle.yml/badge.svg)](https://github.com/bloxbean/intelliada/actions/workflows/gradle.yml)
 
 ![IntelliAda](https://user-images.githubusercontent.com/35016438/121795762-5d4c7180-cc46-11eb-8d67-412fda27bea4.png)
 
