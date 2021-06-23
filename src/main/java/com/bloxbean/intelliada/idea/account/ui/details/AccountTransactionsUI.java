@@ -90,6 +90,7 @@ public class AccountTransactionsUI {
                 @Override
                 public void run() {
                     ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
+                    progressIndicator.setIndeterminate(false);
 
                     if(account == null)
                         return;
@@ -126,6 +127,7 @@ public class AccountTransactionsUI {
                 @Override
                 public void run() {
                     ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
+                    progressIndicator.setIndeterminate(false);
 
                     if(account == null)
                         return;

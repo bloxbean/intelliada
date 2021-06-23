@@ -111,6 +111,7 @@ public class AccountBasicDetailsForm {
                 @Override
                 public void run() {
                     ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
+                    progressIndicator.setIndeterminate(false);
 
                     String address = addressTf.getText();
                     if(StringUtil.isEmpty(address))
