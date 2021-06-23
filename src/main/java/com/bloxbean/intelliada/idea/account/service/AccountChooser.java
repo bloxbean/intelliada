@@ -25,6 +25,7 @@ package com.bloxbean.intelliada.idea.account.service;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.ui.ListAccountDialog;
 import com.bloxbean.intelliada.idea.core.util.Network;
+import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.intellij.openapi.project.Project;
 
 import java.util.List;
@@ -42,6 +43,9 @@ public class AccountChooser {
 
             CardanoAccount selectedAccount = listAccountDialog.getSelectAccount();
             return selectedAccount;
+        } catch (Exception e) {
+//            printError(project, e);
+            return null;
         } finally {
             listAccountDialog.disposeIfNeeded();
         }
@@ -58,8 +62,20 @@ public class AccountChooser {
 
             CardanoAccount selectedAccount = listAccountDialog.getSelectAccount();
             return selectedAccount;
+        } catch (Exception e) {
+//            printError(project, e);
+            return null;
         } finally {
             listAccountDialog.disposeIfNeeded();
+        }
+    }
+
+    //Just a workaround to capture error in console instead of ide error
+    private static void printError(Project project, Exception e) {
+        try {
+            CardanoConsole console = CardanoConsole.getConsole(project);
+            console.showErrorMessage("Error", e);
+        } catch (Exception ex) {
         }
     }
 
