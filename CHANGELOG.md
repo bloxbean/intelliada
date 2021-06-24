@@ -1,4 +1,4 @@
-### 0.1.3
+### 0.1.4
 - Initial release of the plugin
 - Account Management
   - Create a new testnet/mainnet account 
