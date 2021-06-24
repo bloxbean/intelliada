@@ -2,7 +2,7 @@
 
 ![IntelliAda](https://user-images.githubusercontent.com/35016438/121795762-5d4c7180-cc46-11eb-8d67-412fda27bea4.png)
 
-IntelliJ plugin for Cardano blockchain. Using this plugin developers can interact with Cardano directly from their IDE. In the current version of this plugin, developers can mint native tokens, transfer Ada / Native tokens from one address to another inside their IDE. The plugin provides integration with [Blockfrost API](https://blockfrost.io), so the developers do not need to install cardano-node or cardano-cli on their local machine to interact with Cardano network.
+IntelliJ plugin for Cardano blockchain. Using this plugin developers can interact with Cardano network directly from their IDE. In the current version of this plugin, developers can mint native tokens, transfer Ada / Native tokens from one address to another inside their IDE. The plugin provides integration with [Blockfrost API](https://blockfrost.io), so the developers do not need to install cardano-node or cardano-cli on their local machine to interact with Cardano network.
 
 [Documentation](https://intelliada.bloxbean.com/)
 
