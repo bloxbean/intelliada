@@ -37,7 +37,6 @@ import java.util.List;
 import static com.bloxbean.intelliada.idea.util.AdaConversionUtil.*;
 
 public class TransactionEntryForm {
-    private JPanel mainPanel;
     private JTextField senderTf;
     private JButton senderAccChooserBtn;
     private JTextField receiverTf;
@@ -50,6 +49,7 @@ public class TransactionEntryForm {
     private JComboBox amtUnitTypeCB;
     private JButton calculateFeeBtn;
     private JLabel feeLabel;
+    private JPanel mainPanel;
     private CardanoConsole console;
     private Project project;
     private DefaultComboBoxModel<AssetBalance> availableBalanceComboBoxModel;
