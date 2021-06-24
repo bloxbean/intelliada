@@ -5,7 +5,9 @@
     </vendor>
 
     <description><![CDATA[
-    IntelliJ IDEA plugin for Cardano blockchain. Interact with Cardano blockchain directly from IntelliJ IDE.
+    <p>Adds support for <a href="https://cardano.org/">Cardano</a>, a proof-of-stake blockchain platform.</p>
+    <p>The plugin provides features like transaction submission, token minting, account management.</p>
+    <p><a href="https://intelliada.bloxbean.com">Documentation</a>
     ]]></description>
 
     <idea-version since-build="211"/>

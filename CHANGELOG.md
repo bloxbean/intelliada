@@ -1,9 +1,22 @@
-### 0.1.2
-- Account Management (Create, Import)
-- Transfer transaction (Ada, Native Tokens)
+### 0.1.3
+- Initial release of the plugin
+- Account Management
+  - Create a new testnet/mainnet account 
+  - Import an account by providing 24w mnemonic phrase
+- Transfer transaction 
+  - Transfer Ada or any native tokens
 - Native Token Minting
 - Script Management
-- Metadata support (Json Editor, Metadata Editor)
-- View transactions
-- Utxo explorer to view and select specific utxos for a transaction
-- Blockfrost integration 
+  - Create script (sig, all, any, atLeast, after, before)
+  - Use policy scripts while minting new native tokens
+- Metadata support
+  - Add metdata to the transaction
+  - Supports RawJson
+  - Metadata editor to build metadata
+  - Metadata tempates  
+- View transactions 
+- Utxo explorer 
+  - View utxos of a specific address
+  - Select utxos during transaction submission
+- Blockfrost integration
+  - Integrates with Blockfrost Cardano Api
