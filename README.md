@@ -6,7 +6,7 @@ IntelliJ plugin for Cardano blockchain. Using this plugin developers can interac
 
 [Documentation](https://intelliada.bloxbean.com/)
 
-**Features** 
+### Features
 
 * Account Management
   * Create new testnet/mainnet accounts
@@ -29,7 +29,7 @@ IntelliJ plugin for Cardano blockchain. Using this plugin developers can interac
 * Blockfrost integration
   * Integrates with Blockfrost Cardano Api
 
-**Supported IntelliJ version  \(2021.1 and above\)**
+### Supported IntelliJ version  \(2021.1 and above\)
 
 * IntelliJ IDEA
 * PyCharm
