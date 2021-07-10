@@ -28,13 +28,15 @@ public class ConfigurationHelperService {
                 node.setId(remoteNode.getId());
             }
 
-            node.setName(nodeConfigDialog.getRemoteNodeConfigPanel().getName());
-            node.setNodeType(nodeConfigDialog.getRemoteNodeConfigPanel().getNodeType());
-            node.setApiEndpoint(nodeConfigDialog.getRemoteNodeConfigPanel().getApiEndpoint());
-            node.setAuthKey(nodeConfigDialog.getRemoteNodeConfigPanel().getAuthKey());
-            node.setNetwork(nodeConfigDialog.getRemoteNodeConfigPanel().getNetwork());
-            node.setNetworkId(nodeConfigDialog.getRemoteNodeConfigPanel().getNetworkId());
-            node.setProtocolMagic(nodeConfigDialog.getRemoteNodeConfigPanel().getProtocolMagic());
+            node.setName(nodeConfigDialog.getNodeConfigurator().getName());
+            node.setNodeType(nodeConfigDialog.getNodeConfigurator().getNodeType());
+            node.setApiEndpoint(nodeConfigDialog.getNodeConfigurator().getApiEndpoint());
+            node.setAuthKey(nodeConfigDialog.getNodeConfigurator().getAuthKey());
+            node.setNetwork(nodeConfigDialog.getNodeConfigurator().getNetwork());
+            node.setNetworkId(nodeConfigDialog.getNodeConfigurator().getNetworkId());
+            node.setProtocolMagic(nodeConfigDialog.getNodeConfigurator().getProtocolMagic());
+            node.setHeaders(nodeConfigDialog.getNodeConfigurator().getHeaders());
+            node.setTimeout(nodeConfigDialog.getNodeConfigurator().getTimeout());
 
             if (remoteNode == null) {
                 stateService.addRemoteNode(node);

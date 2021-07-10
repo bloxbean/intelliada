@@ -3,9 +3,11 @@ package com.bloxbean.intelliada.idea.core.util;
 import java.util.HashMap;
 import java.util.Map;
 
+//This node type is actually stored in the configuration
 public enum NodeType {
     EMPTY(""),
     CARDANO_WALLET("Cardano Wallet"),
+    CARDANO_GRAPHQL("Cardano GraphQL"),
     BLOCKFROST_TESTNET("Blockfrost Testnet"),
     BLOCKFROST_MAINNET("Blockfrost Mainnet");
 

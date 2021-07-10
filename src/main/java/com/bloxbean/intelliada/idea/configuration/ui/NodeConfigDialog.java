@@ -10,25 +10,25 @@ import javax.swing.*;
 
 public class NodeConfigDialog extends DialogWrapper {
 
-    private RemoteNodeConfigPanel remoteNodeConfigPanel;
+    private CardanoNodeConfigDialog cardanoNodeConfigDialog;
     public NodeConfigDialog(@Nullable Project project, RemoteNode remoteNode) {
         super(project, true);
         setTitle("Cardano Remote Node Configuration");
-        remoteNodeConfigPanel = new RemoteNodeConfigPanel(remoteNode);
+        cardanoNodeConfigDialog = new CardanoNodeConfigDialog(project, remoteNode);
         init();
     }
 
     @Override
     protected @Nullable ValidationInfo doValidate() {
-        return remoteNodeConfigPanel.doValidate();
+        return cardanoNodeConfigDialog.doValidate();
     }
 
-    public RemoteNodeConfigPanel getRemoteNodeConfigPanel() {
-        return remoteNodeConfigPanel;
+    public NodeConfigurator getNodeConfigurator() {
+        return cardanoNodeConfigDialog.getNodeConfigurator();
     }
 
     @Override
     protected @Nullable JComponent createCenterPanel() {
-        return remoteNodeConfigPanel.getMainPanel();
+        return cardanoNodeConfigDialog.getMainPanel();
     }
 }

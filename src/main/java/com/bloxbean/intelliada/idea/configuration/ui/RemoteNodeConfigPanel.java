@@ -1,22 +1,14 @@
 package com.bloxbean.intelliada.idea.configuration.ui;
 
 import com.bloxbean.cardano.client.backend.model.Result;
-import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
+import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUrls;
 import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.core.util.NodeType;
-import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
-import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
-import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
-import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.NetworkInfoService;
-import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.NetworkServiceImpl;
-import com.bloxbean.intelliada.idea.util.IdeaUtil;
-import com.bloxbean.intelliada.idea.util.JsonUtil;
-import com.intellij.notification.NotificationType;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
@@ -29,9 +21,11 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.Map;
 import java.util.UUID;
 
-public class RemoteNodeConfigPanel {
+//Config panel for Blockfrost api
+public class RemoteNodeConfigPanel implements NodeConfigurator{
     private JPanel mainPanel;
     private JTextField nameTf;
     private JButton testConnectionBtn;
@@ -53,6 +47,18 @@ public class RemoteNodeConfigPanel {
         super();
 
         initialize();
+    }
+
+    private void initialize() {
+        handleNodeTypeSelection();
+
+        testConnectionBtn.addActionListener(e -> {
+            testNetworkConnection();
+        });
+    }
+
+    @Override
+    public void setNodeData(RemoteNode node) {
         if(node != null) {
             newConfig = false;
             nameTf.setText(node.getName());
@@ -63,14 +69,6 @@ public class RemoteNodeConfigPanel {
             networkIdTf.setText(node.getNetworkId());
             protocolMagicTf.setText(node.getProtocolMagic());
         }
-    }
-
-    private void initialize() {
-        handleNodeTypeSelection();
-
-        testConnectionBtn.addActionListener(e -> {
-            testNetworkConnection();
-        });
     }
 
     private void handleNodeTypeSelection() {
@@ -153,6 +151,16 @@ public class RemoteNodeConfigPanel {
 
     public String getProtocolMagic() {
         return protocolMagicTf.getText();
+    }
+
+    @Override
+    public Map<String, String> getHeaders() {
+        return null;
+    }
+
+    @Override
+    public int getTimeout() {
+        return 120; //Not used for Blockfrost
     }
 
     private void testNetworkConnection() {

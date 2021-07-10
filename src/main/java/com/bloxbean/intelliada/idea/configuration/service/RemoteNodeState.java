@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.configuration.service;
 
+import com.bloxbean.intelliada.idea.configuration.common.HeaderParserUtil;
 import com.bloxbean.intelliada.idea.core.util.NodeType;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.intellij.openapi.components.PersistentStateComponent;
@@ -14,6 +15,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @State(
         name = "com.bloxbean.intelliada.RemoteNodeState",
@@ -52,7 +54,18 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             entry.setAttribute("networkId", StringUtil.notNullize(node.getNetworkId()));
             entry.setAttribute("protocolMagic", StringUtil.notNullize(node.getProtocolMagic()));
 
-//            entry.setAttribute("version", StringUtil.notNullize(node.getVersion()));
+            try {
+                entry.setAttribute("headers",
+                        StringUtil.notNullize(HeaderParserUtil.encodeHeaders(node.getHeaders())));
+            } catch (Exception e) {
+
+            }
+
+            try {
+                entry.setAttribute("timeout", StringUtil.notNullize(String.valueOf(node.getTimeout())));
+            } catch (Exception e) {
+
+            }
 
             state.addContent(entry);
         }
@@ -79,6 +92,21 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             String networkId = child.getAttributeValue("networkId");
             String protocolMagic = child.getAttributeValue("protocolMagic");
 
+            String headers = child.getAttributeValue("headers");
+            Map headersMap = null;
+            try {
+                headersMap = HeaderParserUtil.parseHeaders(headers);
+            } catch (Exception e) {
+
+            }
+
+            int timeout = 0;
+            try {
+                timeout = Integer.parseInt(child.getAttributeValue("timeout"));
+            } catch (Exception e) {
+
+            }
+
             NodeType nodeType = null;
             if(!StringUtil.isEmpty(nodeTypeStr))
                 nodeType = NodeType.lookupByName(nodeTypeStr);
@@ -88,6 +116,8 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             node.setNetwork(network);
             node.setNetworkId(networkId);
             node.setProtocolMagic(protocolMagic);
+            node.setHeaders(headersMap);
+            node.setTimeout(timeout);
 
             list.add(node);
         }

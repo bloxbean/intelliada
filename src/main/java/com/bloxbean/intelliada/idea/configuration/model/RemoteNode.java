@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.configuration.model;
 
 import com.bloxbean.intelliada.idea.core.util.NodeType;
 
+import java.util.Map;
 import java.util.Objects;
 
 public class RemoteNode {
@@ -13,6 +14,8 @@ public class RemoteNode {
     private String network;
     private String networkId;
     private String protocolMagic;
+    private Map<String, String> headers;
+    private int timeout;
 
     public RemoteNode() {
 
@@ -89,6 +92,22 @@ public class RemoteNode {
         this.protocolMagic = protocolMagic;
     }
 
+    public Map<String, String> getHeaders() {
+        return headers;
+    }
+
+    public void setHeaders(Map<String, String> headers) {
+        this.headers = headers;
+    }
+
+    public int getTimeout() {
+        return timeout;
+    }
+
+    public void setTimeout(int timeout) {
+        this.timeout = timeout;
+    }
+
     public void updateValues(RemoteNode node) { //Update everything except id
         if(node == null) return;
 
@@ -99,6 +118,8 @@ public class RemoteNode {
         this.setNetwork(node.getNetwork());
         this.setNetworkId(node.getNetworkId());
         this.setProtocolMagic(node.getProtocolMagic());
+        this.setHeaders(node.getHeaders());
+        this.setTimeout(node.getTimeout());
     }
 
     @Override
