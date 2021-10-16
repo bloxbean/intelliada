@@ -101,7 +101,7 @@ public class AccountTransactionsUI {
 
                     try {
                         CardanoAccountService accountService = new AccountServiceImpl(project, new LogListenerAdapter(console));
-                        List<String> txnList = accountService.getRecentTransactions(address, 100, 0, OrderEnum.desc);
+                        List<String> txnList = accountService.getRecentTransactions(address, 100, 1, OrderEnum.desc);
                         txnListModel.addAll(txnList);
                     } catch (Exception e) {
                         console.showErrorMessage("Error getting recent transactions", e);
