@@ -1,6 +1,7 @@
 ### 0.1.5
 - Support for Cardano-graphql 
 - Support Dandelion GraphQL api endpoint
+- Updated cardano-client-lib dependencies
 ### 0.1.4
 - Initial release of the plugin
 - Account Management
