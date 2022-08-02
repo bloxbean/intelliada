@@ -3,13 +3,10 @@ package com.bloxbean.intelliada.idea.configuration.ui;
 import com.bloxbean.intelliada.idea.configuration.model.CLIProvider;
 import com.bloxbean.intelliada.idea.core.util.CLIProviderUtil;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
-import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.text.StringUtil;
 
 import javax.swing.*;
-import javax.swing.filechooser.FileFilter;
 import java.awt.*;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
@@ -35,7 +32,7 @@ public class CLIProviderPanel {
     public CLIProviderPanel(CLIProvider cliProvider) {
         super();
 
-        if(cliProvider != null) {
+        if (cliProvider != null) {
             nameTf.setText(cliProvider.getName());
             homeTf.setText(cliProvider.getHome());
             versionTf.setText(cliProvider.getVersion());
@@ -92,7 +89,7 @@ public class CLIProviderPanel {
         errorMsgLabel.setText(""); //reset error msg
         versionTf.setText("");
 
-        if(!new File(homeTf.getText() + File.separator + getCardanoCLICommand()).exists()) {
+        if (!new File(homeTf.getText() + File.separator + getCardanoCLICommand()).exists()) {
             versionTf.setText("");
             printError("<html>\'cardano-cli\' was not found. Please make sure \'cardano-cli\' file is available under the selected folder.</html>");
             return;
@@ -106,7 +103,7 @@ public class CLIProviderPanel {
             printError(exception.getMessage());
             return;
         }
-        if(StringUtil.isEmpty(version)) {
+        if (StringUtil.isEmpty(version)) {
             versionTf.setText("");
             //Invalid version
             printError("<html>Invalid Cardano bin folder. Version could not be determined. " +

@@ -109,7 +109,7 @@ public class RemoteNode {
     }
 
     public void updateValues(RemoteNode node) { //Update everything except id
-        if(node == null) return;
+        if (node == null) return;
 
         this.setName(node.getName());
         this.setApiEndpoint(node.getApiEndpoint());

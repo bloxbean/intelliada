@@ -23,7 +23,7 @@ public class IdeaUtil {
                         title, content,
                         notificationType);
 
-                if(actionId != null) {
+                if (actionId != null) {
                     ActionManager am = ActionManager.getInstance();
                     AnAction action = am.getAction(actionId);
                     notification.addAction(action);
@@ -41,7 +41,7 @@ public class IdeaUtil {
                         title, content,
                         notificationType);
 
-                if(actionId != null) {
+                if (actionId != null) {
                     ActionManager am = ActionManager.getInstance();
                     AnAction action = am.getAction(actionId);
                     notification.addAction(action);

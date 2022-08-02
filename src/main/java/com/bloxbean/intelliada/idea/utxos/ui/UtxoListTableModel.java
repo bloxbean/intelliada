@@ -22,14 +22,11 @@
 
 package com.bloxbean.intelliada.idea.utxos.ui;
 
-import com.bloxbean.cardano.client.backend.model.Amount;
-import com.bloxbean.cardano.client.backend.model.Utxo;
-import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
+import com.bloxbean.cardano.client.api.model.Amount;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.intelliada.idea.util.AdaConversionUtil;
 
-import javax.swing.*;
 import javax.swing.table.AbstractTableModel;
-import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -39,8 +36,8 @@ import static com.bloxbean.cardano.client.common.CardanoConstants.LOVELACE;
 
 public class UtxoListTableModel extends AbstractTableModel {
     private List<Utxo> utxos;
-    protected String[] columnNames = new String[] {"#", "Txn Index", "Txn Hash", "Amount (Ada)"};
-    protected Class[] columnClasses = new Class[] {String.class, String.class, String.class, String.class};
+    protected String[] columnNames = new String[]{"#", "Txn Index", "Txn Hash", "Amount (Ada)"};
+    protected Class[] columnClasses = new Class[]{String.class, String.class, String.class, String.class};
 
     public UtxoListTableModel() {
         this.utxos = new ArrayList<>();
@@ -68,21 +65,21 @@ public class UtxoListTableModel extends AbstractTableModel {
 
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
-        if(utxos == null || utxos.size() == 0 || utxos.size()-1 < rowIndex)
+        if (utxos == null || utxos.size() == 0 || utxos.size() - 1 < rowIndex)
             return null;
 
         Utxo utxo = utxos.get(rowIndex);
-        if(columnIndex == 0)
+        if (columnIndex == 0)
             return rowIndex + 1;
-        else if(columnIndex == 1)
+        else if (columnIndex == 1)
             return utxo.getOutputIndex();
-        else if(columnIndex == 2)
+        else if (columnIndex == 2)
             return utxo.getTxHash();
-        else if(columnIndex == 3) {
+        else if (columnIndex == 3) {
             List<Amount> amts = utxo.getAmount();
-            if(amts != null && amts.size() > 0) {
+            if (amts != null && amts.size() > 0) {
                 Optional<Amount> loveLaceAmt = amts.stream().filter(amount -> LOVELACE.equals(amount.getUnit())).findFirst();
-                if(loveLaceAmt.isPresent()) {
+                if (loveLaceAmt.isPresent()) {
                     String adaValue = AdaConversionUtil.lovelaceToAdaFormatted(loveLaceAmt.get().getQuantity());
                     return adaValue + " Ada";
                 } else {
@@ -117,25 +114,25 @@ public class UtxoListTableModel extends AbstractTableModel {
 
     public void addElement(Utxo utxo) {
         utxos.add(utxo);
-        fireTableRowsUpdated(utxos.size()-1, utxos.size()-1);
+        fireTableRowsUpdated(utxos.size() - 1, utxos.size() - 1);
     }
 
     public void setElements(List<Utxo> utxoList) {
         int size = this.utxos.size();
         this.utxos.clear();
 
-        if(size == 0)
+        if (size == 0)
             size = 1;
-        if(size > 0) { //Refresh based on old size
+        if (size > 0) { //Refresh based on old size
             fireTableRowsDeleted(0, size - 1);
         }
 
         this.utxos.addAll(utxoList);
-        fireTableRowsUpdated(0, this.utxos.size()-1);
+        fireTableRowsUpdated(0, this.utxos.size() - 1);
     }
 
     public List<Utxo> getUtxos() {
-        if(this.utxos == null)
+        if (this.utxos == null)
             return Collections.emptyList();
 
         return this.utxos;

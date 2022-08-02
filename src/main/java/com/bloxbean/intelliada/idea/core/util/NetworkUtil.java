@@ -7,7 +7,7 @@ public class NetworkUtil {
 
     public static Network convertToCLNetwork(com.bloxbean.intelliada.idea.core.util.Network network) {
         com.bloxbean.cardano.client.common.model.Network clNetwork = null;
-        if(Networks.mainnet().equals(network))
+        if (Networks.mainnet().equals(network))
             clNetwork = com.bloxbean.cardano.client.common.model.Networks.mainnet();
         else
             clNetwork = com.bloxbean.cardano.client.common.model.Networks.testnet();
@@ -16,7 +16,7 @@ public class NetworkUtil {
     }
 
     public static boolean isMainnet(RemoteNode node) {
-        if(String.valueOf(com.bloxbean.cardano.client.common.model.Networks.mainnet().protocol_magic).equals(node.getProtocolMagic()))
+        if (String.valueOf(com.bloxbean.cardano.client.common.model.Networks.mainnet().getProtocolMagic()).equals(node.getProtocolMagic()))
             return true;
         else
             return false;

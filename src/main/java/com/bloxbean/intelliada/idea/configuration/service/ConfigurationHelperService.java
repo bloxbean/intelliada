@@ -70,15 +70,15 @@ public class ConfigurationHelperService {
     }
 
     public static void setServerId(Project project, String serverId) {
-        if(project == null || StringUtil.isEmpty(serverId))
+        if (project == null || StringUtil.isEmpty(serverId))
             return;
 
         CardanoProjectState state = CardanoProjectState.getInstance(project);
 
-        if(state != null) {
+        if (state != null) {
             state.getState().setServiceId(serverId);
 
-           // notifyProjectNodeConfigChange(project);
+            // notifyProjectNodeConfigChange(project);
         }
     }
 
@@ -121,7 +121,7 @@ public class ConfigurationHelperService {
     public static void deleteCLIProviderConfiguration(CLIProvider sdk) {
         CLIProvidersState stateService = CLIProvidersState.getInstance();
 
-        if(stateService == null)
+        if (stateService == null)
             return;
 
         stateService.removeCLIProvider(sdk);
@@ -132,12 +132,12 @@ public class ConfigurationHelperService {
     }
 
     public static void setDefaultCLIProvider(String defaultProviderId) {
-        if(StringUtil.isEmpty(defaultProviderId))
+        if (StringUtil.isEmpty(defaultProviderId))
             return;
 
         CLIProvidersState state = CLIProvidersState.getInstance();
 
-        if(state != null) {
+        if (state != null) {
             state.setDefaultProvider(defaultProviderId);
 
             CLIProvidersChangeNotifier providersChangeNotifier = ApplicationManager.getApplication().getMessageBus().syncPublisher(CLIProvidersChangeNotifier.CHANGE_CLI_PROVIDERS_TOPIC);
@@ -146,12 +146,12 @@ public class ConfigurationHelperService {
     }
 
     public static void setDefaultRemoteNode(String defaultNodeId) {
-        if(StringUtil.isEmpty(defaultNodeId))
+        if (StringUtil.isEmpty(defaultNodeId))
             return;
 
         RemoteNodeState state = RemoteNodeState.getInstance();
 
-        if(state != null) {
+        if (state != null) {
             state.setDefaultNode(defaultNodeId);
 
             RemoteNodeChangeNotifier nodeChangeNotifier = ApplicationManager.getApplication().getMessageBus().syncPublisher(RemoteNodeChangeNotifier.CHANGE_CARDANO_REMOTE_NODE_TOPIC);

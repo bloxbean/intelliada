@@ -1,7 +1,6 @@
 package com.bloxbean.intelliada.idea.core.util;
 
 import com.intellij.execution.ExecutionException;
-import com.intellij.execution.Platform;
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfo;
@@ -31,7 +30,7 @@ public class CLIProviderUtil {
                 LOG.debug(result);
                 return result;
             } catch (Exception e) {
-                if(LOG.isDebugEnabled()) {
+                if (LOG.isDebugEnabled()) {
                     LOG.error(e);
                 }
                 throw e;
@@ -42,7 +41,7 @@ public class CLIProviderUtil {
 
     public static String getCardanoCLICommand() {
         String cardanoCLICmd = "cardano-cli";
-        if(SystemInfo.isWindows)
+        if (SystemInfo.isWindows)
             cardanoCLICmd = "cardano-cli.exe";
 
         return cardanoCLICmd;
@@ -63,9 +62,9 @@ public class CLIProviderUtil {
             String version = null;
             while ((line = reader.readLine()) != null) {
                 output.append(line + "\n");
-                if(lineCount == 1) {
+                if (lineCount == 1) {
                     String[] tokens = line.split(" ");
-                    if(tokens.length > 1)
+                    if (tokens.length > 1)
                         version = tokens[1];
                     else
                         version = line;
@@ -83,7 +82,7 @@ public class CLIProviderUtil {
             }
 
         } catch (Exception e) {
-            if(LOG.isDebugEnabled()) {
+            if (LOG.isDebugEnabled()) {
                 LOG.error(e);
             }
             throw e;
@@ -93,13 +92,13 @@ public class CLIProviderUtil {
     }
 
     public static String getSuggestedCLIFolder(String home) {
-        if(StringUtil.isEmpty(home))
+        if (StringUtil.isEmpty(home))
             return home;
 
-        if(SystemInfo.isMac) {
-            if(isMacDaedalusHome(home)) {
+        if (SystemInfo.isMac) {
+            if (isMacDaedalusHome(home)) {
                 String suggestedPath = home + ".app" + File.separator + "Contents/MacOS";
-                if(cardanoCLIExists(suggestedPath))
+                if (cardanoCLIExists(suggestedPath))
                     return suggestedPath;
                 else
                     return home;
@@ -111,9 +110,9 @@ public class CLIProviderUtil {
     }
 
     public static boolean isMacDaedalusHome(String home) {
-        if(home == null)
+        if (home == null)
             return false;
-        if(home.matches("/Applications/Daedalus [a-zA-Z0-9]*[/]?")) {
+        if (home.matches("/Applications/Daedalus [a-zA-Z0-9]*[/]?")) {
             return true;
         } else
             return false;

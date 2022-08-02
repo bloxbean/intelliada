@@ -40,7 +40,7 @@ public class TokenMintAddressEntryForm {
         if (node != null)
             isMainnet = NetworkUtil.isMainnet(node);
 
-        if(isMainnet)
+        if (isMainnet)
             network = Networks.mainnet();
         else
             network = Networks.testnet(); //all networks except mainnet are testnets
@@ -90,7 +90,7 @@ public class TokenMintAddressEntryForm {
         });
 
         receiverAddressBtn.addActionListener(e -> {
-            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project,  network, true);
+            CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
             if (cardanoAccount != null) {
                 setReceiver(cardanoAccount.getAddress());
             }
@@ -106,20 +106,20 @@ public class TokenMintAddressEntryForm {
 
     public Account getCreatorAccount() {
         String creatorMnemonic = new String(mnemonicTf.getPassword());
-        if(StringUtil.isEmpty(creatorMnemonic))
+        if (StringUtil.isEmpty(creatorMnemonic))
             return null;
 
         try {
             Account creatorAccount = null;
-            if(isMainnet) {
+            if (isMainnet) {
                 creatorAccount = new Account(creatorMnemonic);
                 String baseAddress = creatorAccount.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             } else {
                 creatorAccount = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), creatorMnemonic);
                 String baseAddress = creatorAccount.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             }
             return creatorAccount;
@@ -134,11 +134,11 @@ public class TokenMintAddressEntryForm {
     }
 
     public ValidationInfo doValidate() {
-        if(getCreatorAccount() == null) {
+        if (getCreatorAccount() == null) {
             return new ValidationInfo("Please select a valid creator account or enter a valid mnemonic phrase", creatorTf);
         }
 
-        if(StringUtil.isEmpty(getReceiver())) {
+        if (StringUtil.isEmpty(getReceiver())) {
             return new ValidationInfo("Please enter a valid receiver address", receiverTf);
         }
 

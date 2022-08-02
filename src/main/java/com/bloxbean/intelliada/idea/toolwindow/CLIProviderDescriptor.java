@@ -20,8 +20,8 @@ public class CLIProviderDescriptor extends NodeDescriptor {
         myColor = JBColor.GREEN;
         myClosedIcon = CardanoIcons.CARDANO_ICON_16x16;
 
-        if(provider.getId() != null) {
-            if(provider.getId().equals(defaultId)) {
+        if (provider.getId() != null) {
+            if (provider.getId().equals(defaultId)) {
                 myName += " (default)";
                 this.isDefaultProvider = true;
             } else {

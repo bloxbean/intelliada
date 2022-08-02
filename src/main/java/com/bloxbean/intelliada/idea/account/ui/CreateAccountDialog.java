@@ -23,7 +23,7 @@ public class CreateAccountDialog extends DialogWrapper {
 
     @Override
     protected @Nullable ValidationInfo doValidate() {
-        if(StringUtil.isEmpty(getAccountName())) {
+        if (StringUtil.isEmpty(getAccountName())) {
             return new ValidationInfo("Please provide a valid account name", accountNameTf);
         }
         return null;

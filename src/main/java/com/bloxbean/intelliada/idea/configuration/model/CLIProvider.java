@@ -53,7 +53,7 @@ public class CLIProvider {
     }
 
     public void updateValues(CLIProvider provider) { //Update everything except id
-        if(provider == null) return;
+        if (provider == null) return;
 
         this.setName(provider.getName());
         this.setHome(provider.getHome());

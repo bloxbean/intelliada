@@ -122,20 +122,20 @@ public class ScriptPubkeyEntryForm {
 
     public Account getAccount() {
         String senderMnenomic = new String(mnemonicTf.getPassword());
-        if(StringUtil.isEmpty(senderMnenomic))
+        if (StringUtil.isEmpty(senderMnenomic))
             return null;
 
         try {
             Account senderAcc = null;
-            if(isMainnet) {
+            if (isMainnet) {
                 senderAcc = new Account(senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             } else {
                 senderAcc = new Account(Networks.testnet(), senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             }
             return senderAcc;
@@ -155,15 +155,15 @@ public class ScriptPubkeyEntryForm {
             String name = nameTf.getText();
             if (isGenerateFromAddress()) {
                 return scriptGeneratorService.generateScriptPubkeyFromAddress(name, getAccount());
-            } else if(isGenerateNew()) {
+            } else if (isGenerateNew()) {
                 //If Generate New. Then don't create if scriptInfo is already generated
-                if(scriptInfo != null) {
+                if (scriptInfo != null) {
                     scriptInfo.setName(name);
                     return scriptInfo;
                 }
                 scriptInfo = scriptGeneratorService.generateNewScriptPubkey(name);
                 return scriptInfo;
-            } else if(isGenerateFromSKey()) {
+            } else if (isGenerateFromSKey()) {
                 return scriptGeneratorService.generateScriptPubkeyFromSecretKey(name, getSKey());
             } else {
                 return null;
@@ -179,19 +179,19 @@ public class ScriptPubkeyEntryForm {
     }
 
     private void generateFromTypesSelected() {
-        if(generateNewRB.isSelected()) {
+        if (generateNewRB.isSelected()) {
             clearAllInput();
             addressTf.setEnabled(false);
             mnemonicTf.setEnabled(false);
             accountChooserBtn.setEnabled(false);
             skeyTf.setEnabled(false);
-        } else if(addressRB.isSelected()) {
+        } else if (addressRB.isSelected()) {
             clearAllInput();
             addressTf.setEnabled(true);
             mnemonicTf.setEnabled(true);
             accountChooserBtn.setEnabled(true);
             skeyTf.setEnabled(false);
-        } else if(skeyRB.isSelected()) {
+        } else if (skeyRB.isSelected()) {
             clearAllInput();
             addressTf.setEnabled(false);
             mnemonicTf.setEnabled(false);
@@ -199,7 +199,7 @@ public class ScriptPubkeyEntryForm {
             skeyTf.setEnabled(true);
         }
 
-        if(scriptGenListener != null)
+        if (scriptGenListener != null)
             scriptGenListener.generateFromTypeChanged();
     }
 
@@ -208,11 +208,11 @@ public class ScriptPubkeyEntryForm {
     }
 
     private void clearAllInput() {
-        if(!addressRB.isSelected()) {
+        if (!addressRB.isSelected()) {
             addressTf.setText("");
             mnemonicTf.setText("");
         }
-        if(!skeyRB.isSelected()) {
+        if (!skeyRB.isSelected()) {
             skeyTf.setText("");
         }
 
@@ -228,14 +228,14 @@ public class ScriptPubkeyEntryForm {
     }
 
     public ValidationInfo doValidate() {
-        if(StringUtil.isEmpty(nameTf.getText())) {
+        if (StringUtil.isEmpty(nameTf.getText())) {
             return new ValidationInfo("Please provide a name", nameTf);
         }
-        if(isGenerateFromAddress()) {
-            if(getAccount() == null)
+        if (isGenerateFromAddress()) {
+            if (getAccount() == null)
                 return new ValidationInfo("Please select a valid address or provide a valid mnemonic phrase", addressTf);
-        } else if(isGenerateFromSKey()) {
-            if(StringUtil.isEmpty(getSKey()))
+        } else if (isGenerateFromSKey()) {
+            if (StringUtil.isEmpty(getSKey()))
                 return new ValidationInfo("Please provide a valid secret key", skeyTf);
             try {
                 SecretKey sk = SecretKey.create(KeyGenCborUtil.cborToBytes(getSKey()));

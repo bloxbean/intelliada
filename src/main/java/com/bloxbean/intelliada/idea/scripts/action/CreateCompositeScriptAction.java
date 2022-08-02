@@ -18,12 +18,12 @@ public class CreateCompositeScriptAction extends AnAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
-        if(project == null)
+        if (project == null)
             return;
 
         CompositeScriptGenerateDialog dialog = new CompositeScriptGenerateDialog(project);
         boolean ok = dialog.showAndGet();
-        if(!ok)
+        if (!ok)
             return;
 
         ScriptInfo scriptInfo = dialog.generateScriptPubkey();

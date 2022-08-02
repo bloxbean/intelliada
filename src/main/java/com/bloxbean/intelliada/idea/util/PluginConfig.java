@@ -17,11 +17,12 @@ public class PluginConfig {
 
     /**
      * Get encryption key. If there is no encryption key, create one and store.
+     *
      * @return
      */
     public static String getEncryptionKey() {
         String encryptionKey = getPropertyValue(ENCRYPTION_KEY);
-        if(encryptionKey == null || encryptionKey.isEmpty()) {
+        if (encryptionKey == null || encryptionKey.isEmpty()) {
             //Generate a new encryption key
             try {
                 encryptionKey = AESEncryptionHelper.generateKey();
@@ -38,7 +39,7 @@ public class PluginConfig {
     private static void updateProperty(String propertyName, String value) {
         Properties props = readResults(targetFolder);
 
-        if(props == null)
+        if (props == null)
             props = new Properties();
 
         props.setProperty(propertyName, value);
@@ -49,7 +50,7 @@ public class PluginConfig {
     private static String getPropertyValue(String propertyName) {
         Properties props = readResults(targetFolder);
 
-        if(props == null)
+        if (props == null)
             props = new Properties();
 
         return props.getProperty(propertyName);
@@ -66,8 +67,8 @@ public class PluginConfig {
             props.store(output, null);
 
         } catch (Exception io) {
-           if(log.isDebugEnabled())
-               log.warn(io);
+            if (log.isDebugEnabled())
+                log.warn(io);
         } finally {
             if (output != null) {
                 try {
@@ -82,7 +83,7 @@ public class PluginConfig {
     private static Properties readResults(String targetFolder) {
         InputStream input = null;
 
-        if(log.isDebugEnabled()) {
+        if (log.isDebugEnabled()) {
             log.debug("Plugin config is stored at folder >> " + targetFolder);
         }
 
@@ -90,7 +91,7 @@ public class PluginConfig {
 
             File deployResultFile = new File(targetFolder, CONFIG_FILE);
 
-            if(!deployResultFile.exists())
+            if (!deployResultFile.exists())
                 return new Properties();
 
             input = new FileInputStream(new File(targetFolder, CONFIG_FILE));
@@ -101,7 +102,7 @@ public class PluginConfig {
             return properties;
 
         } catch (Exception io) {
-            if(log.isDebugEnabled())
+            if (log.isDebugEnabled())
                 log.warn(io);
             return new Properties();
         } finally {

@@ -1,9 +1,11 @@
 package com.bloxbean.intelliada.idea.configuration.ui;
 
+import com.bloxbean.cardano.client.api.model.Result;
+import com.bloxbean.cardano.client.backend.koios.Constants;
 import com.bloxbean.cardano.client.backend.model.Genesis;
-import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.intelliada.idea.configuration.common.HeaderParserUtil;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.core.util.NodeType;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
@@ -15,6 +17,7 @@ import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.progress.impl.BackgroundableProcessIndicator;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.TextFieldWithAutoCompletion;
@@ -30,7 +33,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
 
-public class GraphQLNodeConfigPanel implements NodeConfigurator {
+public class KoiosNodeConfigPanel implements NodeConfigurator {
     private JPanel mainPanel;
     private JTextField nameTf;
     private JTextField headersTf;
@@ -42,15 +45,17 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
     private TextFieldWithAutoCompletion gqlEndpointTf;
     private JCheckBox ignoreFetchNetworkInfoCB;
     private JTextField timeoutTf;
+    private JComboBox nodeTypesCB;
     private Project project;
 
-    public GraphQLNodeConfigPanel(Project project) {
+    public KoiosNodeConfigPanel(Project project) {
         this.project = project;
         testConnBtn.addActionListener(e -> {
             testNetworkConnection();
         });
 
         attachApiEndpointChangeHandler();
+        handleNodeTypeSelection();
         timeoutTf.setText("120");
         timeoutTf.setToolTipText("Connection timeout");
     }
@@ -58,6 +63,7 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
     private void attachApiEndpointChangeHandler() {
         gqlEndpointTf.addFocusListener(new FocusListener() {
             String oldUrl;
+
             @Override
             public void focusGained(FocusEvent e) {
                 oldUrl = gqlEndpointTf.getText();
@@ -65,7 +71,7 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
 
             @Override
             public void focusLost(FocusEvent e) {
-                if(oldUrl != null && oldUrl.equals(gqlEndpointTf.getText())) {
+                if (oldUrl != null && oldUrl.equals(gqlEndpointTf.getText())) {
                     oldUrl = null;
                     return;
                 }
@@ -80,8 +86,9 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
 
     @Override
     public void setNodeData(RemoteNode node) {
-        if(node != null) {
+        if (node != null) {
             nameTf.setText(node.getName());
+            nodeTypesCB.setSelectedItem(node.getNodeType());
             gqlEndpointTf.setText(node.getApiEndpoint());
             headersTf.setText(HeaderParserUtil.encodeHeaders(node.getHeaders()));
             networkTf.setText(node.getNetwork());
@@ -89,6 +96,34 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
             protocolMagicTf.setText(node.getProtocolMagic());
             timeoutTf.setText(String.valueOf(node.getTimeout()));
             timeoutTf.setEditable(true);
+        }
+    }
+
+    private void handleNodeTypeSelection() {
+        nodeTypesCB.addActionListener(e -> {
+            if (NodeType.KOIOS_TESTNET.equals(nodeTypesCB.getSelectedItem())
+                    || NodeType.KOIOS_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
+                gqlEndpointTf.setEnabled(false);
+
+                if (NodeType.KOIOS_TESTNET.equals(nodeTypesCB.getSelectedItem())) {
+                    gqlEndpointTf.setText(Constants.KOIOS_TESTNET_URL);
+                    setNetwork(Networks.testnet());
+                } else if (NodeType.KOIOS_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
+                    gqlEndpointTf.setText(Constants.KOIOS_MAINNET_URL);
+                    setNetwork(Networks.mainnet());
+                }
+
+            } else {
+                gqlEndpointTf.setEnabled(true);
+            }
+        });
+    }
+
+    private void setNetwork(Network network) {
+        if (network != null) {
+            networkTf.setText(network.getName());
+            networkIdTf.setText(network.getNetworkId());
+            protocolMagicTf.setText(network.getProtocolMagic());
         }
     }
 
@@ -113,7 +148,7 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
 
     @Override
     public NodeType getNodeType() {
-        return NodeType.CARDANO_GRAPHQL;
+        return (NodeType) nodeTypesCB.getSelectedItem();
     }
 
     @Override
@@ -134,7 +169,7 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
     @Override
     public Map<String, String> getHeaders() {
         String headerStr = headersTf.getText();
-        if(StringUtil.isEmpty(headerStr.trim()))
+        if (StringUtil.isEmpty(headerStr.trim()))
             return null;
 
         return HeaderParserUtil.parseHeaders(headerStr);
@@ -148,12 +183,13 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
         }
     }
 
-    public @Nullable ValidationInfo doValidate() {
+    public @Nullable
+    ValidationInfo doValidate() {
         if (StringUtil.isEmpty(getName())) {
             return new ValidationInfo("Please enter a valid name", nameTf);
         }
 
-        if(StringUtil.isEmpty(getApiEndpoint())) {
+        if (StringUtil.isEmpty(getApiEndpoint())) {
             return new ValidationInfo("Please enter a valid api endpoint url", gqlEndpointTf);
         }
 
@@ -163,11 +199,11 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
             return new ValidationInfo("Invalid headers. Please provide headers in correct format", headersTf);
         }
 
-        if(getTimeout() == 0 && timeoutTf.isEditable()) {
+        if (getTimeout() == 0 && timeoutTf.isEditable()) {
             return new ValidationInfo("Timeout should be a positive integer", timeoutTf);
         }
 
-        if(!ignoreFetchNetworkInfoCB.isSelected()) {
+        if (!ignoreFetchNetworkInfoCB.isSelected()) {
             if (StringUtil.isEmpty(networkIdTf.getText())) {
                 return new ValidationInfo("Network Id is empty. Try to fetch it from network", networkIdTf);
             }
@@ -218,7 +254,7 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
                     NetworkInfoService networkService = new NetworkServiceImpl(remoteNode, logListener);
                     Result<Genesis> result = networkService.testAndGetNetworkInfo();
 
-                    if(result.isSuccessful()) {
+                    if (result.isSuccessful()) {
                         ApplicationManager.getApplication().invokeLater(() -> {
                             connectionTestLabel.setForeground(Color.black);
                             connectionTestLabel.setText("Successfully connected !!!");
@@ -252,7 +288,7 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
                             connectionTestLabel.setToolTipText(result.getResponse());
                         });
                     }
-                }catch (Exception exception) {
+                } catch (Exception exception) {
                     connectionTestLabel.setText("Could not connect to node. Reason: " + exception.getMessage());
                 }
             }
@@ -265,10 +301,11 @@ public class GraphQLNodeConfigPanel implements NodeConfigurator {
         // TODO: place custom component creation code here
         Collection<String> availableNodeOptions = new ArrayList<String>();
         availableNodeOptions.add("");
-        availableNodeOptions.add("http://localhost:3100/graphql");
-        availableNodeOptions.add("https://graphql-api.testnet.dandelion.link/");
-        availableNodeOptions.add("https://graphql-api.mainnet.dandelion.link/");
-        gqlEndpointTf =  TextFieldWithAutoCompletion.create(project, availableNodeOptions, true, "" );
+        availableNodeOptions.add(Constants.KOIOS_MAINNET_URL);
+        availableNodeOptions.add(Constants.KOIOS_TESTNET_URL);
+        availableNodeOptions.add(Constants.KOIOS_GUILDNET_URL);
+        gqlEndpointTf = TextFieldWithAutoCompletion.create(project, availableNodeOptions, true, "");
+        nodeTypesCB = new ComboBox(new NodeType[]{NodeType.EMPTY, NodeType.KOIOS_TESTNET, NodeType.KOIOS_MAINNET, NodeType.KOIOS_CUSTOM});
     }
 
 }

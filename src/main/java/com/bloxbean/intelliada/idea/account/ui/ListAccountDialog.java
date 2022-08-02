@@ -22,7 +22,7 @@
 
 package com.bloxbean.intelliada.idea.account.ui;
 
-import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.account.service.AccountService;
 import com.bloxbean.intelliada.idea.account.ui.details.AccountDetailsDialog;
@@ -104,7 +104,7 @@ public class ListAccountDialog extends DialogWrapper {
 
         initialize();
 
-        if(showBalance) {
+        if (showBalance) {
             try {
                 //Right align balance column
                 DefaultTableCellRenderer rightRenderer = new DefaultTableCellRenderer();
@@ -133,7 +133,7 @@ public class ListAccountDialog extends DialogWrapper {
         accListTable.getColumnModel().getColumn(0).setMinWidth(50);
         accListTable.getColumnModel().getColumn(0).setPreferredWidth(150);
 
-        if(showBalance) {
+        if (showBalance) {
             accListTable.getColumnModel().getColumn(2).setMaxWidth(250);
             accListTable.getColumnModel().getColumn(2).setMinWidth(50);
             accListTable.getColumnModel().getColumn(2).setPreferredWidth(200);
@@ -152,14 +152,14 @@ public class ListAccountDialog extends DialogWrapper {
 
             CreateAccountDialog dialog = new CreateAccountDialog();
             boolean ok = dialog.showAndGet();
-            if(!ok) return;
+            if (!ok) return;
 
             String accountName = dialog.getAccountName();
             Network network = dialog.getNetwork();
 
             com.bloxbean.cardano.client.common.model.Network clNetwork = NetworkUtil.convertToCLNetwork(network);
 
-            if(!StringUtil.isEmpty(accountName))
+            if (!StringUtil.isEmpty(accountName))
                 accountName = accountName.trim();
             else
                 return; //cancel
@@ -180,12 +180,12 @@ public class ListAccountDialog extends DialogWrapper {
         importAccBtn.addActionListener(e -> {
             ImportAccountDialog dialog = new ImportAccountDialog();
             boolean ok = dialog.showAndGet();
-            if(!ok)
+            if (!ok)
                 return;
 
             CardanoAccount account = dialog.getAccount();
 
-            if(account == null) {
+            if (account == null) {
                 Messages.showErrorDialog("Invalid account. Account could not be imported", "Import Account");
                 return;
             }
@@ -195,7 +195,7 @@ public class ListAccountDialog extends DialogWrapper {
                 boolean result = accountService.importAccount(account);
 
                 ApplicationManager.getApplication().invokeLater(() -> {
-                    if(result) {
+                    if (result) {
                         tableModel.addElement(account);
                         tableModel.fireTableRowsInserted(tableModel.getRowCount() - 1, tableModel.getRowCount() - 1);
                         Messages.showInfoMessage("Account imported successfully", "Import Account");
@@ -213,13 +213,13 @@ public class ListAccountDialog extends DialogWrapper {
         accListTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseReleased(MouseEvent e) {
-                if(e.getClickCount() == 1)
+                if (e.getClickCount() == 1)
                     tableRowPopupMenuHandler(e);
             }
 
             @Override
             public void mousePressed(MouseEvent e) {
-                if(e.getClickCount() == 1)
+                if (e.getClickCount() == 1)
                     tableRowPopupMenuHandler(e);
             }
 
@@ -243,7 +243,7 @@ public class ListAccountDialog extends DialogWrapper {
         int rowindex = accListTable.getSelectedRow();
         if (rowindex < 0)
             return;
-        if (e.isPopupTrigger() && e.getComponent() instanceof JTable ) {
+        if (e.isPopupTrigger() && e.getComponent() instanceof JTable) {
             CardanoAccount account = tableModel.getAccounts().get(rowindex);
             ListPopup popup = createPopup(account);
             RelativePoint relativePoint = new RelativePoint(e.getComponent(), new Point(e.getX(), e.getY()));
@@ -258,11 +258,11 @@ public class ListAccountDialog extends DialogWrapper {
 
         int column = accListTable.getSelectedColumn(); // select a column
         CardanoAccount account = tableModel.getAccounts().get(rowindex);
-        if(account == null)
+        if (account == null)
             return;
-        if(column == 0) {
+        if (column == 0) {
             showAccountDetails(account);
-        } else if(column == 1) {
+        } else if (column == 1) {
             copyAddress(account);
         }
     }
@@ -272,7 +272,7 @@ public class ListAccountDialog extends DialogWrapper {
         final DefaultActionGroup group = new DefaultActionGroup();
 
         group.add(createCopyAction(account));
-        if(!StringUtil.isEmpty(account.getMnemonic())) {
+        if (!StringUtil.isEmpty(account.getMnemonic())) {
             group.add(createCopyMnemonicAction(account));
         }
         group.add(createShowAccountDetailsAction(account));
@@ -287,7 +287,7 @@ public class ListAccountDialog extends DialogWrapper {
         AccountDetailsDialog dialog = new AccountDetailsDialog(project, account);
         boolean ok = dialog.showAndGet();
 
-        if(dialog.getAccountInfoUpdated()) {
+        if (dialog.getAccountInfoUpdated()) {
             //Update table.
             poulateAccounts();
         }
@@ -297,7 +297,7 @@ public class ListAccountDialog extends DialogWrapper {
         return new AnAction("Show Details", "Show Details", AllIcons.General.InspectionsEye) {
             @Override
             public void actionPerformed(@NotNull AnActionEvent e) {
-               showAccountDetails(account);
+                showAccountDetails(account);
             }
 
             @Override
@@ -387,7 +387,7 @@ public class ListAccountDialog extends DialogWrapper {
         else
             isMainnet = false;
 
-        if(isRemote) {
+        if (isRemote) {
             CardanoConsole console = CardanoConsole.getConsole(project);
             console.show();
 
@@ -410,11 +410,11 @@ public class ListAccountDialog extends DialogWrapper {
 
                         for (CardanoAccount account : tableModel.getAccounts()) {
                             //TODO fetch balance
-                            if(isMainnet) { //Ignore testnet account
-                                if(account.getAddress().startsWith("addr_test"))
+                            if (isMainnet) { //Ignore testnet account
+                                if (account.getAddress().startsWith("addr_test"))
                                     continue;
                             } else { //Ignore mainnet accounts
-                                if(!account.getAddress().startsWith("addr_test")) {
+                                if (!account.getAddress().startsWith("addr_test")) {
                                     continue;
                                 }
                             }
@@ -422,7 +422,7 @@ public class ListAccountDialog extends DialogWrapper {
                             try {
                                 Result<Long> result = cardanoAccountService.getAdaBalance(account.getAddress());
 
-                                if(result.isSuccessful()) {
+                                if (result.isSuccessful()) {
                                     progressIndicator.setFraction(counter++ / tableModel.getAccounts().size());
                                     if (progressIndicator.isCanceled()) {
                                         break;
@@ -480,9 +480,9 @@ public class ListAccountDialog extends DialogWrapper {
         ApplicationManager.getApplication().invokeLater(() -> {
             try {
                 List<CardanoAccount> accs = accountService.getAccounts();
-                if(network == null) { //Show all networks
+                if (network == null) { //Show all networks
                     //do nothing. show all accounts
-                } else if(network != null && network.equals(Networks.mainnet())) {
+                } else if (network != null && network.equals(Networks.mainnet())) {
                     accs = accs.stream().filter(acc -> !acc.getAddress().startsWith("addr_test")).collect(Collectors.toList());
                 } else { //Network not null but not mainnet
                     accs = accs.stream().filter(acc -> acc.getAddress().startsWith("addr_test")).collect(Collectors.toList());
@@ -490,7 +490,7 @@ public class ListAccountDialog extends DialogWrapper {
 
                 tableModel.setElements(accs);
                 messageLabel.setText("");
-            } catch(Exception e) {
+            } catch (Exception e) {
                 messageLabel.setText("Account loading failed !!!");
             }
 

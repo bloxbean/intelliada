@@ -1,7 +1,7 @@
 package com.bloxbean.intelliada.idea.nativetoken.action;
 
 import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
@@ -49,7 +49,7 @@ public class TokenMintingTransactionAction extends BaseTxnAction {
         TokenMintingDialog dialog = new TokenMintingDialog(project);
         boolean ok = dialog.showAndGet();
 
-        if(!ok) {
+        if (!ok) {
             IdeaUtil.showNotification(project, "Payment Transaction",
                     "Transaction was cancelled", NotificationType.WARNING, null);
             return;
@@ -63,14 +63,14 @@ public class TokenMintingTransactionAction extends BaseTxnAction {
         //TODO Utxo selection.
         UtxoSelectEntryForm utxoSelectEntryForm = dialog.getUtxoSelectEntryForm();
         List<Utxo> selectedUtxos = utxoSelectEntryForm.getUtxos();
-        if(selectedUtxos != null && selectedUtxos.size() > 0) {
+        if (selectedUtxos != null && selectedUtxos.size() > 0) {
             mintTransaction.setUtxosToInclude(selectedUtxos);
         }
-        if(additionalWitnessAccounts != null)
+        if (additionalWitnessAccounts != null)
             mintTransaction.setAdditionalWitnessAccounts(additionalWitnessAccounts);
 
         TransactionDetailsParams detailsParams = new TransactionDetailsParams();
-        if(ttl != null)
+        if (ttl != null)
             detailsParams.setTtl(ttl.longValue());
 
         CardanoConsole console = CardanoConsole.getConsole(project);
@@ -87,9 +87,9 @@ public class TokenMintingTransactionAction extends BaseTxnAction {
         }
 
         RequestMode requestMode = dialog.getRequestMode();
-        if(requestMode == null || requestMode.equals(RequestMode.TRANSACTION)) {
+        if (requestMode == null || requestMode.equals(RequestMode.TRANSACTION)) {
             executeMintToken(project, mintTransaction, detailsParams, console, logListenerAdapter, metadata);
-        } else if(requestMode.equals(RequestMode.EXPORT_SIGNED)) {
+        } else if (requestMode.equals(RequestMode.EXPORT_SIGNED)) {
             String exportFile = getExportFileLocation(project, dialog.getContentPanel());
             exportMintTokenTransaction(project, mintTransaction, detailsParams, console, logListenerAdapter, metadata, exportFile);
         }
@@ -109,7 +109,7 @@ public class TokenMintingTransactionAction extends BaseTxnAction {
                     console.showSuccessMessage("Transaction executed successfully with id : " + txnId);
                     IdeaUtil.showNotification(project, getTitle(),
                             String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
-                }catch (Exception exception) {
+                } catch (Exception exception) {
                     console.showErrorMessage(String.format("%s failed", getTxnCommand()), exception);
                 }
             }
@@ -138,7 +138,7 @@ public class TokenMintingTransactionAction extends BaseTxnAction {
                     console.showInfoMessage("Cbor hex of signed transaction : " + JsonUtil.getPrettyJson(serializedTransaction));
                     IdeaUtil.showNotification(project, getTitle(),
                             "Token Mint transaction exported successfully", NotificationType.INFORMATION, null);
-                }catch (Exception exception) {
+                } catch (Exception exception) {
                     console.showErrorMessage("Export token mint transaction failed", exception);
                 }
             }

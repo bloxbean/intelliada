@@ -18,14 +18,14 @@ public class ScriptExportUtil {
     public static void exportScriptInfo(ScriptInfo scriptInfo, Project project, JComponent parent) throws Exception {
 
         String baseDir = null;
-        if(project != null)
+        if (project != null)
             baseDir = project.getBasePath();
 
-        if(scriptInfo == null)
+        if (scriptInfo == null)
             return;
 
         JFileChooser fc = new JFileChooser();
-        if(baseDir != null)
+        if (baseDir != null)
             fc.setCurrentDirectory(new File(baseDir));
 
         fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
@@ -38,11 +38,11 @@ public class ScriptExportUtil {
 
         StringBuffer createdFileNames = new StringBuffer();
         String fileNamePrefix = normalizeFileName(scriptInfo.getName());
-        if(!StringUtil.isEmpty(scriptInfo.getAddress())) {
+        if (!StringUtil.isEmpty(scriptInfo.getAddress())) {
             //Write only script
             String scriptFileName = fileNamePrefix + ".script";
             File finalFile = new File(destination, scriptFileName);
-            if(finalFile.exists()) {
+            if (finalFile.exists()) {
                 int ret = 0;
                 try {
                     ret = Messages.showYesNoDialog(String.format("Already a file exists with file name %s. Do you want to overwrite?",
@@ -52,7 +52,7 @@ public class ScriptExportUtil {
                     ret = Messages.NO;
                 }
 
-                if(ret == Messages.YES) {
+                if (ret == Messages.YES) {
                     writeFile(finalFile, JsonUtil.getPrettyJson(scriptInfo.getScript()));
 //                    FileWriter fileWriter = new FileWriter(finalFile);
 //                    fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getScript()));
@@ -76,14 +76,14 @@ public class ScriptExportUtil {
             File vkeyFile = new File(destination, vkeyFileName);
 
             String fileExistsName = null;
-            if(scriptFile.exists())
+            if (scriptFile.exists())
                 fileExistsName = scriptFileName;
-            else if(skeyFile.exists())
+            else if (skeyFile.exists())
                 fileExistsName = skeyFileName;
-            else if(vkeyFile.exists())
+            else if (vkeyFile.exists())
                 fileExistsName = vkeyFileName;
 
-            if(fileExistsName != null) {
+            if (fileExistsName != null) {
                 int ret = 0;
                 try {
                     ret = Messages.showYesNoDialog(String.format("Already a file exists with file name %s. Do you want to overwrite?",
@@ -93,7 +93,7 @@ public class ScriptExportUtil {
                     ret = Messages.NO;
                 }
 
-                if(ret == Messages.NO) {
+                if (ret == Messages.NO) {
                     return; //skip
                 }
             }
@@ -106,7 +106,7 @@ public class ScriptExportUtil {
             createdFileNames.append(scriptFileName);
 
             //Write skey file
-            if(scriptInfo.getSkey() != null) {
+            if (scriptInfo.getSkey() != null) {
 //                fileWriter = new FileWriter(skeyFile);
 //                fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getSkey()));
 //                fileWriter.flush();
@@ -115,7 +115,7 @@ public class ScriptExportUtil {
             }
 
             //Write vkey file
-            if(scriptInfo.getVKey() != null) {
+            if (scriptInfo.getVKey() != null) {
 //                fileWriter = new FileWriter(vkeyFile);
 //                fileWriter.write(JsonUtil.getPrettyJson(scriptInfo.getVKey()));
 //                fileWriter.flush();
@@ -132,11 +132,12 @@ public class ScriptExportUtil {
         FileUtil.writeToFile(file, content);
         try {
             LocalFileSystem.getInstance().refreshAndFindFileByPath(file.getAbsolutePath().replace('\\', '/'));
-        } catch (Exception e) {}
+        } catch (Exception e) {
+        }
     }
 
     public static String normalizeFileName(String name) {
-        if(name == null)
+        if (name == null)
             return null;
         return name.replaceAll("[\\\\/:*?\"<>|]", "");
     }

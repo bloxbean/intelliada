@@ -47,7 +47,7 @@ public class NewAssetEntryForm {
     private CardanoConsole console;
     private Project project;
     private DefaultListModel<SecretKeyModel> policyKeysListModel;
-    private DefaultListModel<AssetModel>  assetListModel;
+    private DefaultListModel<AssetModel> assetListModel;
 
     private NativeScript policyScript;
 
@@ -94,15 +94,15 @@ public class NewAssetEntryForm {
     private void attachPolicyDetailsListener(Project project, CardanoConsole console) {
         internalScriptBrowseBtn.addActionListener(e -> {
             ScriptInfo scriptInfo = ScriptChooser.selectScript(project);
-            if(scriptInfo == null)
+            if (scriptInfo == null)
                 return;
             clearPolicyScript();
             setPolicyScript(scriptInfo.getScript(), scriptInfo.toString());
 
             //Set policy keys if possible (only for sig)
-            if(scriptInfo.getScript() != null) {
+            if (scriptInfo.getScript() != null) {
                 if (StringUtil.isEmpty(scriptInfo.getAddress())
-                        && (scriptInfo.getScript() instanceof ScriptPubkey) ) {
+                        && (scriptInfo.getScript() instanceof ScriptPubkey)) {
                     SecretKey sk = scriptInfo.getSkey();
                     if (sk != null && policyKeysListModel.isEmpty()) {
                         policyKeysListModel.addElement(new SecretKeyModel(sk));
@@ -114,7 +114,7 @@ public class NewAssetEntryForm {
         externalScriptBrowseBtn.addActionListener(e -> {
             JFileChooser fc = new JFileChooser();
             String baseDir = project.getBasePath();
-            if(baseDir != null)
+            if (baseDir != null)
                 fc.setCurrentDirectory(new File(baseDir));
 
             fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
@@ -141,12 +141,12 @@ public class NewAssetEntryForm {
 
         addPolicyKeyBtn.addActionListener(e -> {
             ScriptInfo scriptInfo = ScriptChooser.selectScript(project, true);
-            if(scriptInfo == null)
+            if (scriptInfo == null)
                 return;
 
             SecretKey skey = scriptInfo.getSkey();
-            if(skey != null) {
-                if(!policyKeysListModel.contains(skey)) {
+            if (skey != null) {
+                if (!policyKeysListModel.contains(skey)) {
                     policyKeysListModel.addElement(new SecretKeyModel(skey));
                 }
             }
@@ -154,7 +154,7 @@ public class NewAssetEntryForm {
 
         removePolicyKeyBtn.addActionListener(e -> {
             int index = policyKeysList.getSelectedIndex();
-            if(index == -1)
+            if (index == -1)
                 return;
 
             policyKeysListModel.remove(index);
@@ -183,7 +183,7 @@ public class NewAssetEntryForm {
 
         assetRemoveBtn.addActionListener(e -> {
             int index = assetList.getSelectedIndex();
-            if(index == -1)
+            if (index == -1)
                 return;
 
             assetListModel.remove(index);
@@ -191,16 +191,16 @@ public class NewAssetEntryForm {
     }
 
     private void setPolicyScript(NativeScript script, String path) {
-        if(script == null)
+        if (script == null)
             return;
 
         this.policyScript = script;
-        if(!StringUtil.isEmpty(path)) {
+        if (!StringUtil.isEmpty(path)) {
             policyScriptTf.setText(path);
         }
 
         policyIdTf.setText("");
-        if(policyScript != null) {
+        if (policyScript != null) {
             try {
                 policyIdTf.setText(policyScript.getPolicyId());
             } catch (CborSerializationException ex) {
@@ -231,7 +231,7 @@ public class NewAssetEntryForm {
         multiAsset.setAssets(new ArrayList<>());
 
         Iterator<AssetModel> assetsItr = getAssets();
-        while(assetsItr.hasNext()) {
+        while (assetsItr.hasNext()) {
             AssetModel assetModel = assetsItr.next();
 
             Asset asset = new Asset();
@@ -257,11 +257,11 @@ public class NewAssetEntryForm {
     }
 
     public ValidationInfo doValidation() {
-        if(getPolicyScript() == null || StringUtil.isEmpty(getPolicyId())) {
+        if (getPolicyScript() == null || StringUtil.isEmpty(getPolicyId())) {
             return new ValidationInfo("Please select a valid policy script", policyScriptTf);
         }
 
-        if(assetListModel.isEmpty()) {
+        if (assetListModel.isEmpty()) {
             return new ValidationInfo("Please provide asset name and quantity", assetList);
         }
 

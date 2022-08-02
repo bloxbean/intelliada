@@ -19,18 +19,18 @@ public abstract class BaseTxnAction extends AnAction {
 
     protected String getExportFileLocation(Project project, JComponent parent) {
         String baseDir = null;
-        if(project != null)
+        if (project != null)
             baseDir = project.getBasePath();
 
         JFileChooser fc = new JFileChooser();
-        if(baseDir != null)
+        if (baseDir != null)
             fc.setCurrentDirectory(new File(baseDir));
 
         fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
         fc.showSaveDialog(parent);
         File destination = fc.getSelectedFile();
 
-        if(destination.exists()) {
+        if (destination.exists()) {
             int ret = 0;
             try {
                 ret = Messages.showYesNoCancelDialog(String.format("Already a file exists with file name %s. Do you want to overwrite?",
@@ -42,12 +42,12 @@ public abstract class BaseTxnAction extends AnAction {
 
             String fileName = destination.getName();
             String outputFile = fileName;
-            if(ret == Messages.NO) {
+            if (ret == Messages.NO) {
                 int i = 0;
                 File parentFolder = destination.getParentFile();
-                while(new File(parentFolder, outputFile).exists())
+                while (new File(parentFolder, outputFile).exists())
                     outputFile = fileName + "-" + ++i;
-            } else if(ret == Messages.CANCEL) {
+            } else if (ret == Messages.CANCEL) {
 //                logListener.warn(command + " was cancelled");
                 return null;
             }

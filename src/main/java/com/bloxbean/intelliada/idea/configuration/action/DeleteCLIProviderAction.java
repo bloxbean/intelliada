@@ -20,14 +20,14 @@ public class DeleteCLIProviderAction extends AnAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
-        if(project == null) return;
+        if (project == null) return;
 
         int result = Messages.showYesNoDialog("Do you really want to delete this Cardano Installation configuration ?", "Cardano Node Configuration", AllIcons.General.QuestionDialog);
 
-        if(result == Messages.NO)
+        if (result == Messages.NO)
             return;
 
-        if(node != null)
+        if (node != null)
             ConfigurationHelperService.deleteCLIProviderConfiguration(node);
     }
 

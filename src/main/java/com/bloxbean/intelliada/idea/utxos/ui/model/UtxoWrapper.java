@@ -1,6 +1,6 @@
 package com.bloxbean.intelliada.idea.utxos.ui.model;
 
-import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.api.model.Utxo;
 
 /**
  * Wrapper class for UI only

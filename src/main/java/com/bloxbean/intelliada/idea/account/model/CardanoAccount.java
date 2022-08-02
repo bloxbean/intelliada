@@ -76,7 +76,7 @@ public class CardanoAccount {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         CardanoAccount that = (CardanoAccount) o;
-        if(address == null || that.address == null)
+        if (address == null || that.address == null)
             return false;
         return address.equals(that.address);
     }

@@ -17,17 +17,17 @@ public class ScriptParser {
 
     public static NativeScript parse(JsonNode node) {
         String type = node.get("type").asText();
-        if(ScriptType.sig.toString().equals(type)) {
+        if (ScriptType.sig.toString().equals(type)) {
             return deserializeScriptSig(node);
-        } else if(ScriptType.all.toString().equals(type)) {
+        } else if (ScriptType.all.toString().equals(type)) {
             return deserializeScriptAll(node);
-        } else if(ScriptType.any.toString().equals(type)) {
+        } else if (ScriptType.any.toString().equals(type)) {
             return deserializeScriptAny(node);
-        } else if(ScriptType.atLeast.toString().equals(type)) {
+        } else if (ScriptType.atLeast.toString().equals(type)) {
             return deserializeScriptAtLeast(node);
-        } else if(ScriptType.before.toString().equals(type)) {
+        } else if (ScriptType.before.toString().equals(type)) {
             return deserializeRequireTimeBefore(node);
-        } else if(ScriptType.after.toString().equals(type)) {
+        } else if (ScriptType.after.toString().equals(type)) {
             return deserializeRequireTimeAfter(node);
         } else {
             throw new JsonParsingException("Invalid type : " + type);
@@ -45,14 +45,14 @@ public class ScriptParser {
 
     public static ScriptAll deserializeScriptAll(JsonNode node) {
         JsonNode scriptsNode = node.get("scripts");
-        if(scriptsNode == null || !scriptsNode.isArray())
+        if (scriptsNode == null || !scriptsNode.isArray())
             throw new JsonParsingException("Json processing error");
 
         ScriptAll scriptAll = new ScriptAll();
         ArrayNode array = (ArrayNode) scriptsNode;
-        for(JsonNode nd: array) {
+        for (JsonNode nd : array) {
             NativeScript script = parse(nd);
-            if(script != null) {
+            if (script != null) {
                 scriptAll.getScripts().add(script);
             }
         }
@@ -62,14 +62,14 @@ public class ScriptParser {
 
     public static ScriptAny deserializeScriptAny(JsonNode node) {
         JsonNode scriptsNode = node.get("scripts");
-        if(scriptsNode == null || !scriptsNode.isArray())
+        if (scriptsNode == null || !scriptsNode.isArray())
             throw new JsonParsingException("Json processing error");
 
         ScriptAny scriptAny = new ScriptAny();
         ArrayNode array = (ArrayNode) scriptsNode;
-        for(JsonNode nd: array) {
+        for (JsonNode nd : array) {
             NativeScript script = parse(nd);
-            if(script != null) {
+            if (script != null) {
                 scriptAny.getScripts().add(script);
             }
         }
@@ -79,15 +79,15 @@ public class ScriptParser {
 
     public static ScriptAtLeast deserializeScriptAtLeast(JsonNode node) {
         JsonNode scriptsNode = node.get("scripts");
-        if(scriptsNode == null || !scriptsNode.isArray())
+        if (scriptsNode == null || !scriptsNode.isArray())
             throw new JsonParsingException("Json processing error");
 
         int required = node.get("required").asInt();
         ScriptAtLeast scriptAtLeast = new ScriptAtLeast(required);
         ArrayNode array = (ArrayNode) scriptsNode;
-        for(JsonNode nd: array) {
+        for (JsonNode nd : array) {
             NativeScript script = parse(nd);
-            if(script != null) {
+            if (script != null) {
                 scriptAtLeast.getScripts().add(script);
             }
         }

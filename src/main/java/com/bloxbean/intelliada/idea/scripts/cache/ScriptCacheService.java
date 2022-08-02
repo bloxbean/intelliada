@@ -15,14 +15,11 @@ public class ScriptCacheService {
     }
 
     public List<ScriptInfo> getScriptInfos() {
-//        if(!isContinue())
-//            return Collections.EMPTY_LIST;
-
         try {
             GlobalScriptCache globalCache = new GlobalScriptCache(getScriptInfoCacheFolder());
             ScriptCache scriptCache = globalCache.getScriptCache();
 
-            if(scriptCache != null) {
+            if (scriptCache != null) {
                 List<ScriptInfo> scriptInfos = scriptCache.getScriptInfos();
                 return scriptInfos;
             } else {
@@ -46,7 +43,7 @@ public class ScriptCacheService {
         GlobalScriptCache globalCache = new GlobalScriptCache(getScriptInfoCacheFolder());
         ScriptCache scriptCache = globalCache.getScriptCache();
 
-        if(scriptCache.deleteScriptInfo(scriptInfo)) {
+        if (scriptCache.deleteScriptInfo(scriptInfo)) {
             globalCache.setScriptCache(scriptCache);
             return true;
         }
@@ -65,12 +62,12 @@ public class ScriptCacheService {
 
         File cacheFolder = new File(home);
 
-        if(!cacheFolder.canWrite()) {
+        if (!cacheFolder.canWrite()) {
             //Let's find temp folder
             String temp = System.getProperty("java.io.tmpdir");
             File tempFolder = new File(temp);
 
-            if(!tempFolder.canWrite()) {
+            if (!tempFolder.canWrite()) {
                 log.warn("Unable to find a writable folder to keep script cache");
                 return null;
             } else {
@@ -79,7 +76,7 @@ public class ScriptCacheService {
         }
 
         File intelliAdaFolder = new File(cacheFolder, ".intelliada");
-        if(!intelliAdaFolder.exists()) {
+        if (!intelliAdaFolder.exists()) {
             intelliAdaFolder.mkdirs();
         }
 
@@ -91,7 +88,7 @@ public class ScriptCacheService {
         ScriptCache scriptCache = globalCache.getScriptCache();
 
         boolean successful = scriptCache.updateScriptName(uuid, scriptName);
-        if(successful) {
+        if (successful) {
             globalCache.setScriptCache(scriptCache);
         }
 

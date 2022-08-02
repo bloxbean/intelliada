@@ -13,7 +13,7 @@ import java.util.Map;
 public class MetadataTemplateHelper {
 
     public static String SIMPLE_KEY_VALUE_TEMPLATE = "Simple Key Value";
-//    public static String COMPLEX_KEY_VALUE_TEMPLATE = "Complex Key Value";
+    //    public static String COMPLEX_KEY_VALUE_TEMPLATE = "Complex Key Value";
     public static String NFT_TEMPLATE = "NFT";
 
     public String getTemplateJson(String template, Map<String, String> properties) {
@@ -22,7 +22,7 @@ public class MetadataTemplateHelper {
 
         if (SIMPLE_KEY_VALUE_TEMPLATE.equals(template)) {
             return createSimpleKeyValueTemplate();
-        } else if(NFT_TEMPLATE.equals(template)) {
+        } else if (NFT_TEMPLATE.equals(template)) {
             return createNFTTemplate(properties);
         } else {
             return "";
@@ -64,7 +64,7 @@ public class MetadataTemplateHelper {
     private long randomNumber() {
         long min = 200000L;
         long max = 900000000000L;
-        long random_int = (long)Math.floor(Math.random()*(max-min+1)+min);
+        long random_int = (long) Math.floor(Math.random() * (max - min + 1) + min);
         return random_int;
     }
 }

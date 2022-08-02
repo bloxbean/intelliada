@@ -22,7 +22,7 @@ public class CBORMetadataMapEx extends CBORMetadataMap {
         if (value instanceof String) {
             put(key, String.valueOf(value));
         } else if (value instanceof BigInteger) {
-            if(((BigInteger) value).compareTo(BigInteger.ZERO) == -1) {
+            if (((BigInteger) value).compareTo(BigInteger.ZERO) == -1) {
                 putNegative(key, (BigInteger) value);
             } else {
                 put(key, (BigInteger) value);
@@ -41,7 +41,7 @@ public class CBORMetadataMapEx extends CBORMetadataMap {
     }
 
     public void removeItem(BigInteger key) {
-        if(key.compareTo(BigInteger.ZERO) == -1) {
+        if (key.compareTo(BigInteger.ZERO) == -1) {
             this.map.remove(new NegativeInteger(key));
         } else {
             this.map.remove(new UnsignedInteger(key));
@@ -57,7 +57,7 @@ public class CBORMetadataMapEx extends CBORMetadataMap {
     }
 
     public Object getValue(BigInteger key) {
-        if(key.compareTo(BigInteger.ZERO) == -1) {
+        if (key.compareTo(BigInteger.ZERO) == -1) {
             return extractActualValue(this.map.get(new NegativeInteger(key)));
         } else {
             return extractActualValue(this.map.get(new UnsignedInteger(key)));

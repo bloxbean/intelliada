@@ -11,6 +11,7 @@ import javax.swing.*;
 public class NodeConfigDialog extends DialogWrapper {
 
     private CardanoNodeConfigDialog cardanoNodeConfigDialog;
+
     public NodeConfigDialog(@Nullable Project project, RemoteNode remoteNode) {
         super(project, true);
         setTitle("Cardano Remote Node Configuration");

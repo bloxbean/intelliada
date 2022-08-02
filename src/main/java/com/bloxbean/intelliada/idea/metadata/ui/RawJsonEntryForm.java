@@ -32,7 +32,7 @@ public class RawJsonEntryForm {
     public void initialize() {
         copyTemplateCB.addActionListener(e -> {
             String templateName = (String) copyTemplateCB.getSelectedItem();
-            if(StringUtil.isEmpty(templateName))
+            if (StringUtil.isEmpty(templateName))
                 return;
 
             MetadataTemplateHelper metadataTemplateHelper = new MetadataTemplateHelper();
@@ -54,7 +54,7 @@ public class RawJsonEntryForm {
 
     public Metadata getMetadata() throws InvalidMetadataException {
         String content = editorPane.getText();
-        if(StringUtil.isEmpty(content))
+        if (StringUtil.isEmpty(content))
             return null;
 
         try {

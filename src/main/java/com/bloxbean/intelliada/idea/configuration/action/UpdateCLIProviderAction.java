@@ -20,7 +20,7 @@ public class UpdateCLIProviderAction extends AnAction {
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
 
-        if(provider != null)
+        if (provider != null)
             ConfigurationHelperService.createOrUpdateLocalSDKConfiguration(project, provider);
     }
 

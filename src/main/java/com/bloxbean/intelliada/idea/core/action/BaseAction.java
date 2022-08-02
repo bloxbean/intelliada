@@ -23,7 +23,7 @@ public abstract class BaseAction extends AnAction {
 
     public void warnTargetNodeNotConfigured(Project project, String actionTitle) {
         IdeaUtil.showNotification(project, actionTitle, "Target Cardano node is not configured. Please select a default node.",
-                    NotificationType.ERROR, null);
+                NotificationType.ERROR, null);
 
     }
 }

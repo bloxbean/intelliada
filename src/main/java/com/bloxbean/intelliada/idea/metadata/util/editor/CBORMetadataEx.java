@@ -25,15 +25,15 @@ public class CBORMetadataEx extends CBORMetadata {
             }
         } else if (value instanceof byte[]) {
             put(key, (byte[]) value);
-        } else if(value instanceof CBORMetadataMap) {
+        } else if (value instanceof CBORMetadataMap) {
             put(key, (CBORMetadataMap) value);
-        } else if(value instanceof CBORMetadataList) {
+        } else if (value instanceof CBORMetadataList) {
             put(key, (CBORMetadataList) value);
         }
     }
 
     public void removeItem(BigInteger key) {
-        if(((BigInteger) key).compareTo(BigInteger.ZERO) == -1) {
+        if (((BigInteger) key).compareTo(BigInteger.ZERO) == -1) {
             this.getData().remove(new NegativeInteger(key));
         } else {
             this.getData().remove(new UnsignedInteger(key));
@@ -41,7 +41,7 @@ public class CBORMetadataEx extends CBORMetadata {
     }
 
     public Object getValue(BigInteger key) {
-        if(key.compareTo(BigInteger.ZERO) == -1) {
+        if (key.compareTo(BigInteger.ZERO) == -1) {
             return extractActualValue(getData().get(new NegativeInteger(key)));
         } else {
             return extractActualValue(getData().get(new UnsignedInteger(key)));

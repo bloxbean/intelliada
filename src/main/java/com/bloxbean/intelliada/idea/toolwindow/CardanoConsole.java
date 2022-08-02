@@ -43,11 +43,11 @@ public class CardanoConsole {
     private LoadingConsoleHelper loadingConsole;
 
     public static CardanoConsole getConsole(Project project) {
-        if(project == null)
+        if (project == null)
             return new CardanoConsole(project);
 
         CardanoConsole console = project.getService(CardanoConsole.class);
-        if(console == null)
+        if (console == null)
             return new CardanoConsole(project);
         else
             return console;
@@ -75,7 +75,7 @@ public class CardanoConsole {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
             @Override
             public void run() {
-                if(view != null)
+                if (view != null)
                     view.clear();
 
             }
@@ -83,38 +83,39 @@ public class CardanoConsole {
     }
 
     public void dispose() {
-        if(view != null) {
+        if (view != null) {
             try {
                 view.dispose();
                 view = null;
-            } catch (Exception e) {}
+            } catch (Exception e) {
+            }
         }
     }
 
-    public  ConsoleView getView() {
-        if(view == null) {
+    public ConsoleView getView() {
+        if (view == null) {
             view = createCardanoConsoleView(CONSOLE_VIEW);
         }
         return view;
     }
 
-    public  void clearAndshow() {
+    public void clearAndshow() {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
             @Override
             public void run() {
-                if(view != null) {
+                if (view != null) {
                     view.clear();
                 }
 
                 Project project = ProjectManager.getInstance().getDefaultProject();
-                if(project == null) return;
+                if (project == null) return;
                 ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow(CardanoLogToolWindowFactory.CARDANO_LOG_WINDOW_ID);
 
-                if(toolWindow != null && !toolWindow.isAvailable()) {
+                if (toolWindow != null && !toolWindow.isAvailable()) {
                     toolWindow.setAvailable(true);
                 }
 
-                if(toolWindow != null && !toolWindow.isVisible()) {
+                if (toolWindow != null && !toolWindow.isVisible()) {
                     toolWindow.show(null);
                 }
             }
@@ -122,19 +123,19 @@ public class CardanoConsole {
 
     }
 
-    public  void show() {
+    public void show() {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
             @Override
             public void run() {
                 Project project = ProjectManager.getInstance().getDefaultProject();
-                if(project == null) return;
+                if (project == null) return;
                 ToolWindow toolWindow = ToolWindowManager.getInstance(project).getToolWindow(CardanoLogToolWindowFactory.CARDANO_LOG_WINDOW_ID);
 
-                if(toolWindow != null && !toolWindow.isAvailable()) {
+                if (toolWindow != null && !toolWindow.isAvailable()) {
                     toolWindow.setAvailable(true);
                 }
 
-                if(toolWindow != null && !toolWindow.isVisible()) {
+                if (toolWindow != null && !toolWindow.isVisible()) {
                     toolWindow.show(null);
                 }
             }
@@ -143,15 +144,15 @@ public class CardanoConsole {
     }
 
     public void showInfoMessage(String message) {
-        showMessage(message , ConsoleViewContentType.NORMAL_OUTPUT);
+        showMessage(message, ConsoleViewContentType.NORMAL_OUTPUT);
     }
 
     public void showInfoMessage(String message, boolean noLineBreak) {
-        showMessage(message , ConsoleViewContentType.NORMAL_OUTPUT, noLineBreak);
+        showMessage(message, ConsoleViewContentType.NORMAL_OUTPUT, noLineBreak);
     }
 
     public void showSuccessMessage(String message) {
-        showMessage(message , ConsoleViewContentType.LOG_INFO_OUTPUT);
+        showMessage(message, ConsoleViewContentType.LOG_INFO_OUTPUT);
     }
 
     public void showErrorMessage(String message) {
@@ -163,7 +164,7 @@ public class CardanoConsole {
     }
 
     public void showErrorMessage(String message, Throwable t) {
-        if(t != null) {
+        if (t != null) {
             message += "\n Details: \n" + ExceptionUtil.getThrowableText(t);
         }
         showMessage(message, ConsoleViewContentType.ERROR_OUTPUT);
@@ -206,18 +207,18 @@ public class CardanoConsole {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
             @Override
             public void run() {
-                if(view == null) {
+                if (view == null) {
                     view = createCardanoConsoleView(CONSOLE_VIEW);
                 }
 
-                if(view == null) {
-                    if(LOG.isDebugEnabled()) {
+                if (view == null) {
+                    if (LOG.isDebugEnabled()) {
                         LOG.error("Console view could not be created.");
                     }
                     return;
                 }
 
-                if(linebreak) {
+                if (linebreak) {
                     view.print(message + "\n", type);
                 } else {
                     view.print(message, type);
@@ -230,18 +231,18 @@ public class CardanoConsole {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
             @Override
             public void run() {
-                if(view == null) {
+                if (view == null) {
                     view = createCardanoConsoleView(CONSOLE_VIEW);
                 }
 
-                if(view == null) {
-                    if(LOG.isDebugEnabled()) {
+                if (view == null) {
+                    if (LOG.isDebugEnabled()) {
                         LOG.error("Console view could not be created.");
                     }
                     return;
                 }
 
-                if(loadingConsole == null) {
+                if (loadingConsole == null) {
                     loadingConsole = new LoadingConsoleHelper(view);
                 }
 

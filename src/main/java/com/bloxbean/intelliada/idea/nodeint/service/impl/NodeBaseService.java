@@ -1,8 +1,7 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
+import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.cardano.client.backend.api.BackendService;
-import com.bloxbean.cardano.client.backend.factory.BackendFactory;
-import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.util.JsonUtil;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
@@ -55,7 +54,7 @@ public class NodeBaseService {
 
     public NodeBaseService(Project project, LogListener logListener) throws TargetNodeNotConfigured {
         RemoteNode remoteNode = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
-        if(remoteNode == null) {
+        if (remoteNode == null) {
             throw new TargetNodeNotConfigured("Please select a default node first");
         }
 
@@ -65,7 +64,7 @@ public class NodeBaseService {
     }
 
     public NodeBaseService(RemoteNode node, LogListener logListener) throws TargetNodeNotConfigured {
-        if(node == null)
+        if (node == null)
             throw new TargetNodeNotConfigured("Target node cannot be null. Please select a valid remote node");
 
         this.remoteNode = node;
@@ -81,43 +80,43 @@ public class NodeBaseService {
     }
 
     protected void waitForTransaction(String txnId) throws ApiCallException {
-        if(StringUtil.isEmpty(txnId)) {
+        if (StringUtil.isEmpty(txnId)) {
             logListener.error("Transaction id cannot be null");
-            throw new ApiCallException("Transaction id cannot be null" );
+            throw new ApiCallException("Transaction id cannot be null");
         }
 
         try {
-                //logListener.info("Waiting for transaction to be mined ....");
-                int count = 0;
-                while (count < 60) {
-                    Result<TransactionContent> txnResult = backendService.getTransactionService()
-                            .getTransaction(txnId);
-                    if (txnResult.isSuccessful()) {
-                        logListener.info("");
-                        logListener.info("Txn content :");
-                        logListener.info(JsonUtil.getPrettyJson(txnResult.getValue()));
+            //logListener.info("Waiting for transaction to be mined ....");
+            int count = 0;
+            while (count < 60) {
+                Result<TransactionContent> txnResult = backendService.getTransactionService()
+                        .getTransaction(txnId);
+                if (txnResult.isSuccessful()) {
+                    logListener.info("");
+                    logListener.info("Txn content :");
+                    logListener.info(JsonUtil.getPrettyJson(txnResult.getValue()));
 
-                        try {
-                            if(NetworkUtil.isMainnet(remoteNode)) {
-                                logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.MAINNET, txnId));
-                            } else {
-                                logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.TESTNET, txnId));
-                            }
-                        } catch (Exception e) {
-                            //Ignore
+                    try {
+                        if (NetworkUtil.isMainnet(remoteNode)) {
+                            logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.MAINNET, txnId));
+                        } else {
+                            logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.TESTNET, txnId));
                         }
-                        return;
-                    } else {
-                        logListener.printWait(count  + " sec - " + " Waiting for transaction to be mined.");
+                    } catch (Exception e) {
+                        //Ignore
                     }
-
-                    count++;
-                    Thread.currentThread().sleep(1000);
+                    return;
+                } else {
+                    logListener.printWait(count + " sec - " + " Waiting for transaction to be mined.");
                 }
-                logListener.info("");
-                logListener.warn("Taking too long to mine the transaction. " +
-                        "Please check transaction status in the Cardano explorer." +
-                        "\nTransaction Id : " + txnId);
+
+                count++;
+                Thread.currentThread().sleep(1000);
+            }
+            logListener.info("");
+            logListener.warn("Taking too long to mine the transaction. " +
+                    "Please check transaction status in the Cardano explorer." +
+                    "\nTransaction Id : " + txnId);
 
         } catch (Exception e) {
             logListener.error("Error getting transaction status", e);

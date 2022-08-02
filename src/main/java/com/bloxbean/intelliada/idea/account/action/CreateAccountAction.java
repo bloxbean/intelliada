@@ -43,7 +43,6 @@ import org.jetbrains.annotations.NotNull;
 import java.security.NoSuchAlgorithmException;
 
 /**
- *
  * @author Satya
  */
 
@@ -60,7 +59,7 @@ public class CreateAccountAction extends AnAction {
 
         CreateAccountDialog dialog = new CreateAccountDialog();
         boolean ok = dialog.showAndGet();
-        if(!ok) return;
+        if (!ok) return;
 
         String accountName = dialog.getAccountName();
         Network network = dialog.getNetwork();

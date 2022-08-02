@@ -23,7 +23,7 @@ public class SetDefaultProviderAction extends AnAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
-        if(project == null) return;
+        if (project == null) return;
 
         ConfigurationHelperService.setDefaultCLIProvider(defaultProvider);
     }

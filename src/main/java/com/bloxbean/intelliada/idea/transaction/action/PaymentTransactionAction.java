@@ -1,7 +1,7 @@
 package com.bloxbean.intelliada.idea.transaction.action;
 
 import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
@@ -52,7 +52,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
         PaymentTransactionDialog dialog = new PaymentTransactionDialog(project);
         boolean ok = dialog.showAndGet();
 
-        if(!ok) {
+        if (!ok) {
             IdeaUtil.showNotification(project, "Payment Transaction",
                     "Transaction was cancelled", NotificationType.WARNING, null);
             return;
@@ -68,14 +68,14 @@ public class PaymentTransactionAction extends BaseTxnAction {
 
         UtxoSelectEntryForm utxoSelectEntryForm = dialog.getUtxoSelectEntryForm();
         List<Utxo> selectedUtxos = utxoSelectEntryForm.getUtxos();
-        if(selectedUtxos != null && selectedUtxos.size() > 0) {
+        if (selectedUtxos != null && selectedUtxos.size() > 0) {
             paymentTransaction.setUtxosToInclude(selectedUtxos);
         }
-        if(additionalWitnessAccounts != null)
+        if (additionalWitnessAccounts != null)
             paymentTransaction.setAdditionalWitnessAccounts(additionalWitnessAccounts);
 
         TransactionDetailsParams detailsParams = new TransactionDetailsParams();
-        if(ttl != null)
+        if (ttl != null)
             detailsParams.setTtl(ttl.longValue());
 
         CardanoConsole console = CardanoConsole.getConsole(project);
@@ -94,9 +94,9 @@ public class PaymentTransactionAction extends BaseTxnAction {
         List<PaymentTransaction> paymentTransactions = Arrays.asList(paymentTransaction);
         RequestMode requestMode = dialog.getRequestMode();
 
-        if(requestMode == null || requestMode.equals(RequestMode.TRANSACTION)) {
+        if (requestMode == null || requestMode.equals(RequestMode.TRANSACTION)) {
             createAndExecuteTransferTransaction(project, detailsParams, console, logListenerAdapter, metadata, paymentTransactions);
-        } else if(requestMode.equals(RequestMode.EXPORT_SIGNED)) {
+        } else if (requestMode.equals(RequestMode.EXPORT_SIGNED)) {
             String exportFile = getExportFileLocation(project, dialog.getContentPanel());
             createAndExportSignedTransaction(project, exportFile, detailsParams, console, logListenerAdapter, metadata, paymentTransactions);
         }
@@ -116,7 +116,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
                     console.showSuccessMessage("Transaction executed successfully with id : " + txnId);
                     IdeaUtil.showNotification(project, getTitle(),
                             String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
-                }catch (Exception exception) {
+                } catch (Exception exception) {
                     console.showErrorMessage(String.format("%s failed", getTxnCommand()), exception);
                 }
             }
@@ -137,7 +137,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
 
                     String signedTxnCbor = transactionService.exportSignedTransaction(paymentTransactions, detailsParams, metadata);
 
-                    if(StringUtil.isEmpty(signedTxnCbor)) {
+                    if (StringUtil.isEmpty(signedTxnCbor)) {
                         console.showErrorMessage("Export transaction failed. Please verify all the inputs");
                         IdeaUtil.showNotification(project, getTitle(),
                                 "Export transaction failed", NotificationType.INFORMATION, null);
@@ -153,7 +153,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
                     console.showInfoMessage("Cbor hex of signed transaction : " + JsonUtil.getPrettyJson(serializedTransaction));
                     IdeaUtil.showNotification(project, getTitle(),
                             "Transaction exported successfully", NotificationType.INFORMATION, null);
-                }catch (Exception exception) {
+                } catch (Exception exception) {
                     console.showErrorMessage(String.format("Export transaction failed", getTxnCommand()), exception);
                 }
             }

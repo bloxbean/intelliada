@@ -84,13 +84,13 @@ public class ScriptChooserDialog extends DialogWrapper {
         ListSelectionModel listSelectionModel = scriptTable.getSelectionModel();
         listSelectionModel.addListSelectionListener(e -> {
             int index = scriptTable.getSelectedRow();
-            if(index != -1 && index <= tableModel.getScriptInfos().size() - 1) {
+            if (index != -1 && index <= tableModel.getScriptInfos().size() - 1) {
                 int selectedRowsCount = scriptTable.getSelectedRowCount();
-                if(selectedRowsCount > 1) {
+                if (selectedRowsCount > 1) {
                     sourceEditor.setText("");
-                } else if(selectedRowsCount == 1) {
+                } else if (selectedRowsCount == 1) {
                     ScriptInfo scriptInfo = tableModel.getScriptInfos().get(index);
-                    if(scriptInfo.getScript() != null)
+                    if (scriptInfo.getScript() != null)
                         sourceEditor.setText(scriptInfo.printFormatted());
                 }
             } else {
@@ -111,7 +111,7 @@ public class ScriptChooserDialog extends DialogWrapper {
                     progressIndicator.setText("Fetching scripts ....");
                     try {
                         List<ScriptInfo> scriptInfos = scriptService.getScripts();
-                        if(showSigScriptOnly) { //Filter composite scripts
+                        if (showSigScriptOnly) { //Filter composite scripts
                             scriptInfos = scriptInfos.stream().filter(scriptInfo -> {
                                 if (scriptInfo.getScript() != null && scriptInfo.getScript() instanceof ScriptPubkey)
                                     return true;
@@ -126,7 +126,7 @@ public class ScriptChooserDialog extends DialogWrapper {
                         console.showErrorMessage("Error getting scripts");
                         console.showErrorMessage(e.getMessage(), e);
                     } finally {
-                        if(progressIndicator != null) {
+                        if (progressIndicator != null) {
                             try {
                                 progressIndicator.setFraction(1.0);
                             } catch (Exception e) {
@@ -146,13 +146,13 @@ public class ScriptChooserDialog extends DialogWrapper {
         scriptTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseReleased(MouseEvent e) {
-                if(e.getClickCount() == 1)
+                if (e.getClickCount() == 1)
                     tableRowPopupMenuHandler(e);
             }
 
             @Override
             public void mousePressed(MouseEvent e) {
-                if(e.getClickCount() == 1)
+                if (e.getClickCount() == 1)
                     tableRowPopupMenuHandler(e);
             }
 
@@ -180,7 +180,7 @@ public class ScriptChooserDialog extends DialogWrapper {
         int rowindex = scriptTable.getSelectedRow();
         if (rowindex < 0)
             return;
-        if (e.isPopupTrigger() && e.getComponent() instanceof JTable ) {
+        if (e.isPopupTrigger() && e.getComponent() instanceof JTable) {
             ScriptInfo scriptInfo = tableModel.getScriptInfos().get(rowindex);
             ListPopup popup = createPopup(scriptInfo);
             RelativePoint relativePoint = new RelativePoint(e.getComponent(), new Point(e.getX(), e.getY()));
@@ -221,8 +221,8 @@ public class ScriptChooserDialog extends DialogWrapper {
         return new AnAction("Delete", "Delete", AllIcons.General.Remove) {
             @Override
             public void actionPerformed(@NotNull AnActionEvent e) {
-                if(scriptInfo == null) return;
-                int response = Messages.showYesNoDialog("Do you really want to delete this script: " + scriptInfo.getName() +"?",
+                if (scriptInfo == null) return;
+                int response = Messages.showYesNoDialog("Do you really want to delete this script: " + scriptInfo.getName() + "?",
                         "Delete Script", AllIcons.General.Warning);
                 if (response == Messages.YES) {
                     if (scriptService.removeScript(scriptInfo)) {

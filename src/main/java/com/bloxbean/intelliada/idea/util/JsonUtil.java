@@ -9,10 +9,10 @@ import com.intellij.openapi.util.text.StringUtil;
 import java.util.Collection;
 
 public class JsonUtil {
-    protected final static ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);;
+    protected final static ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
     public static String getPrettyJson(Object obj) {
-        if(obj == null) return null;
+        if (obj == null) return null;
         try {
             return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(obj);
         } catch (JsonProcessingException e) {
@@ -21,7 +21,7 @@ public class JsonUtil {
     }
 
     public static String getPrettyJson(String jsonStr) {
-        if(jsonStr == null)
+        if (jsonStr == null)
             return null;
 
         try {
@@ -33,7 +33,7 @@ public class JsonUtil {
     }
 
     public static JsonNode parseToJsonNode(String jsonStr) throws JsonProcessingException {
-        if(StringUtil.isEmpty(jsonStr))
+        if (StringUtil.isEmpty(jsonStr))
             return null;
 
         return mapper.readTree(jsonStr);

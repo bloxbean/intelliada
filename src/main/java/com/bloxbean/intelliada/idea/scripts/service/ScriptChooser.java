@@ -12,7 +12,7 @@ public class ScriptChooser {
     public static ScriptInfo selectScript(Project project, boolean showSigScriptOnly) {
         ScriptChooserDialog dialog = new ScriptChooserDialog(project, showSigScriptOnly);
         boolean ok = dialog.showAndGet();
-        if(!ok)
+        if (!ok)
             return null;
 
         return dialog.getSelectedScript();

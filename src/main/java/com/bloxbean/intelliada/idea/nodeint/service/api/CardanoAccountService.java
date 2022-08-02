@@ -1,9 +1,8 @@
 package com.bloxbean.intelliada.idea.nodeint.service.api;
 
-
-import com.bloxbean.cardano.client.backend.common.OrderEnum;
-import com.bloxbean.cardano.client.backend.model.Result;
-import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.api.common.OrderEnum;
+import com.bloxbean.cardano.client.api.model.Result;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.service.api.model.AssetBalance;
 

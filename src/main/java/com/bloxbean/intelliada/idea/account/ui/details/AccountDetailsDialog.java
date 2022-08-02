@@ -32,7 +32,8 @@ public class AccountDetailsDialog extends DialogWrapper {
     }
 
     @Override
-    protected @Nullable JComponent createCenterPanel() {
+    protected @Nullable
+    JComponent createCenterPanel() {
         return mainPanel;
     }
 

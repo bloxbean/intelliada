@@ -30,7 +30,7 @@ public class AccountBasicDetailsForm {
     private JTextField nameTf;
     private JButton accountNameUpdateBtn;
     private JButton showUtxosBtn;
-    private DefaultComboBoxModel<AssetBalance>  assetComboBoxModel;
+    private DefaultComboBoxModel<AssetBalance> assetComboBoxModel;
     private Project project;
     private CardanoConsole console;
     private CardanoAccount account;
@@ -41,7 +41,7 @@ public class AccountBasicDetailsForm {
         this.project = project;
         this.console = console;
         this.account = account;
-        if(account != null) {
+        if (account != null) {
             nameTf.setText(account.getName());
             addressTf.setText(account.getAddress());
         }
@@ -95,7 +95,7 @@ public class AccountBasicDetailsForm {
 
         showUtxosBtn.addActionListener(e -> {
             String address = getAddresss();
-            if(!StringUtil.isEmpty(address)) {
+            if (!StringUtil.isEmpty(address)) {
                 UtxoChooser.selectUtxos(project, address, Collections.EMPTY_LIST);
             }
         });
@@ -114,14 +114,14 @@ public class AccountBasicDetailsForm {
                     progressIndicator.setIndeterminate(false);
 
                     String address = addressTf.getText();
-                    if(StringUtil.isEmpty(address))
+                    if (StringUtil.isEmpty(address))
                         return;
 
                     try {
                         CardanoAccountService accountService = new AccountServiceImpl(project, new LogListenerAdapter(console));
                         List<AssetBalance> assetBalanceList = accountService.getBalance(address);
                         assetComboBoxModel.addAll(assetBalanceList);
-                        if(assetBalanceList.size() > 0)
+                        if (assetBalanceList.size() > 0)
                             assetsCB.setSelectedIndex(0);
                     } catch (Exception e) {
                         console.showErrorMessage("Error getting available assets", e);

@@ -48,7 +48,7 @@ public class AccountCacheService {
             GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
             AccountCache accountCache = globalCache.getAccountCache();
 
-            if(accountCache != null) {
+            if (accountCache != null) {
                 List<CardanoAccount> accounts = accountCache.getAccounts();
                 return accounts;
             } else {
@@ -72,7 +72,7 @@ public class AccountCacheService {
         GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
         AccountCache accountCache = globalCache.getAccountCache();
 
-        if(accountCache.deleteAccount(account)) {
+        if (accountCache.deleteAccount(account)) {
             globalCache.setAccountCache(accountCache);
             return true;
         }
@@ -131,12 +131,12 @@ public class AccountCacheService {
 
         File cacheFolder = new File(home);
 
-        if(!cacheFolder.canWrite()) {
+        if (!cacheFolder.canWrite()) {
             //Let's find temp folder
             String temp = System.getProperty("java.io.tmpdir");
             File tempFolder = new File(temp);
 
-            if(!tempFolder.canWrite()) {
+            if (!tempFolder.canWrite()) {
                 log.warn("Unable to find a writable folder to keep account list cache");
                 return null;
             } else {
@@ -145,7 +145,7 @@ public class AccountCacheService {
         }
 
         File intelliAdaFolder = new File(cacheFolder, ".intelliada");
-        if(!intelliAdaFolder.exists()) {
+        if (!intelliAdaFolder.exists()) {
             intelliAdaFolder.mkdirs();
         }
 

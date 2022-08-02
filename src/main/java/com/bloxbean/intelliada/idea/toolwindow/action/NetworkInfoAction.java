@@ -1,6 +1,6 @@
 package com.bloxbean.intelliada.idea.toolwindow.action;
 
-import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.action.BaseAction;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
@@ -32,10 +32,10 @@ public class NetworkInfoAction extends BaseAction {
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
 
-        if(project == null)
+        if (project == null)
             return;
 
-        if(node == null)
+        if (node == null)
             return;
 
         CardanoConsole console = CardanoConsole.getConsole(project);
@@ -48,7 +48,7 @@ public class NetworkInfoAction extends BaseAction {
             public void run(@NotNull ProgressIndicator indicator) {
                 console.showInfoMessage(String.format("Getting network information ...\n"));
 
-                if(node == null) {
+                if (node == null) {
                     console.showErrorMessage("Remote node cannot be null. Please select a valid node.");
                     return;
                 }
@@ -57,7 +57,7 @@ public class NetworkInfoAction extends BaseAction {
                     NetworkInfoService networkService = new NetworkServiceImpl(node, logListenerAdapter);
                     Result result = networkService.getNetworkInfo();
                     console.clear();
-                    if(result.isSuccessful()) {
+                    if (result.isSuccessful()) {
                         console.showInfoMessage(JsonUtil.getPrettyJson(result.getValue()));
 //                        IdeaUtil.showNotification(project, getTitle(), String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
                     } else {
@@ -68,7 +68,7 @@ public class NetworkInfoAction extends BaseAction {
                     }
                 } catch (TargetNodeNotConfigured ex) {
                     warnTargetNodeNotConfigured(project, "NetworkInfo");
-                }catch (Exception exception) {
+                } catch (Exception exception) {
                     console.showErrorMessage("Error getting network info", exception);
                 }
             }

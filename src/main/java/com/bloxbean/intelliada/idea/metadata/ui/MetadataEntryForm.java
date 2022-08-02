@@ -33,17 +33,17 @@ public class MetadataEntryForm {
         editorType.addItemListener(new ItemListener() {
             @Override
             public void itemStateChanged(ItemEvent e) {
-                CardLayout cl = (CardLayout)(contentPanel.getLayout());
-                cl.show(contentPanel, ((EditorType)e.getItem()).toString());
+                CardLayout cl = (CardLayout) (contentPanel.getLayout());
+                cl.show(contentPanel, ((EditorType) e.getItem()).toString());
             }
         });
     }
 
     public Metadata getMetadata() throws InvalidMetadataException {
-        if(editorType.getSelectedItem() == EditorType.RawJson)
+        if (editorType.getSelectedItem() == EditorType.RawJson)
             return rawJsonEditor.getMetadata();
-        else if(editorType.getSelectedItem() == EditorType.MetadataEditor) {
-          return treeMetadataEditor.getMetadata();
+        else if (editorType.getSelectedItem() == EditorType.MetadataEditor) {
+            return treeMetadataEditor.getMetadata();
         } else
             return null;
     }

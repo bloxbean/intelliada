@@ -16,10 +16,12 @@ public class ByteUtil {
     public static final byte[] EMPTY_WORD = new byte[32];
     public static final byte[] EMPTY_HALFWORD = new byte[16];
     public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
-    public static final byte[] ZERO_BYTE_ARRAY = new byte[] {0};
+    public static final byte[] ZERO_BYTE_ARRAY = new byte[]{0};
     public static final String EMPTY_STRING = "";
 
-    /** Creates a copy of bytes and appends b to the end of it */
+    /**
+     * Creates a copy of bytes and appends b to the end of it
+     */
     public static byte[] appendByte(byte[] bytes, byte b) {
         byte[] result = Arrays.copyOf(bytes, bytes.length + 1);
         result[result.length - 1] = b;
@@ -30,7 +32,7 @@ public class ByteUtil {
      * The regular {@link BigInteger#toByteArray()} method isn't quite what we often need:
      * it appends a leading zero to indicate that the number is positive and may need padding.
      *
-     * @param b the integer to format into a byte array
+     * @param b        the integer to format into a byte array
      * @param numBytes the desired size of the resulting byte array
      * @return numBytes byte long array.
      */
@@ -66,9 +68,9 @@ public class ByteUtil {
      * we use this custom method to avoid an empty array in case of BigInteger.ZERO
      *
      * @param value - any big integer number. A <code>null</code>-value will return <code>null
-     *     </code>
+     *              </code>
      * @return A byte array without a leading zero byte if present in the signed encoding.
-     *     BigInteger.ZERO will return an array with length 1 and byte-value 0.
+     * BigInteger.ZERO will return an array with length 1 and byte-value 0.
      */
     public static byte[] bigIntegerToBytes(BigInteger value) {
         if (value == null) {
@@ -109,7 +111,9 @@ public class ByteUtil {
         return i;
     }
 
-    /** Perform an in-place conversion of a byte array from big endian to little endian. */
+    /**
+     * Perform an in-place conversion of a byte array from big endian to little endian.
+     */
     public static void toLEByteArray(byte[] toConvert) {
 
         if (toConvert == null) {
@@ -229,8 +233,8 @@ public class ByteUtil {
      *
      * @param data - byte-array to convert to a hex-string
      * @return hex representation of the data.<br>
-     *     Returns an empty String if the input is <code>null</code> TODO: swap out with more
-     *     efficient implementation, for now seems like we are stuck with this
+     * Returns an empty String if the input is <code>null</code> TODO: swap out with more
+     * efficient implementation, for now seems like we are stuck with this
      * @see Hex#toHexString
      */
     public static String toHexString(byte[] data) {
@@ -249,7 +253,7 @@ public class ByteUtil {
      */
     public static byte[] calcPacketLength(byte[] msg) {
         int msgLen = msg.length;
-        return new byte[] {
+        return new byte[]{
                 (byte) ((msgLen >> 24) & 0xFF),
                 (byte) ((msgLen >> 16) & 0xFF),
                 (byte) ((msgLen >> 8) & 0xFF),
@@ -287,7 +291,9 @@ public class ByteUtil {
         return new BigInteger(1, b).longValue();
     }
 
-    /** Used in conjunction w/ RLP, casts to byte */
+    /**
+     * Used in conjunction w/ RLP, casts to byte
+     */
     public static byte toByte(byte[] b) {
         if (b == null || b.length == 0) {
             return 0;

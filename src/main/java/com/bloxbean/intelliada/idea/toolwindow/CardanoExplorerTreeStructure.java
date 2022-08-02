@@ -31,19 +31,19 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
     }
 
     public void updateSelectedNodeInfos() {
-        if(project == null)
+        if (project == null)
             return;
     }
 
     @Override
     public @NotNull Object getRootElement() {
-        if(root == null)
+        if (root == null)
             root = new CardanoRoot();
 
-        if(remoteNodeRoot == null)
+        if (remoteNodeRoot == null)
             remoteNodeRoot = new RemoteNodeRoot();
 
-        if(cliProviderRoot == null)
+        if (cliProviderRoot == null)
             cliProviderRoot = new CardanoCLIRoot();
 
         return root;
@@ -51,17 +51,17 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
 
     @Override
     public @NotNull Object[] getChildElements(@NotNull Object element) {
-        if(element instanceof CardanoRoot) {
-            return new Object[] {remoteNodeRoot};
+        if (element instanceof CardanoRoot) {
+            return new Object[]{remoteNodeRoot};
             //TODO - Uncomment in future when CLI support is there
 //            return new Object[] {cliProviderRoot, remoteNodeRoot};
-        } else if(element instanceof RemoteNodeRoot) { //Show Available Cardano Remote Nodes
+        } else if (element instanceof RemoteNodeRoot) { //Show Available Cardano Remote Nodes
             List<RemoteNode> sdks = RemoteNodeState.getInstance().getRemoteNodes();
-            if(sdks != null && sdks.size() > 0)
+            if (sdks != null && sdks.size() > 0)
                 return sdks.toArray();
-        } else if(element instanceof CardanoCLIRoot) { //Show available Cardano CLI Providers
+        } else if (element instanceof CardanoCLIRoot) { //Show available Cardano CLI Providers
             List<CLIProvider> cliProviders = CLIProvidersState.getInstance().getCLIProviders();
-            if(cliProviders != null && cliProviders.size() > 0)
+            if (cliProviders != null && cliProviders.size() > 0)
                 return cliProviders.toArray();
 
         }
@@ -72,7 +72,7 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
     public @Nullable Object getParentElement(@NotNull Object element) {
         if (element instanceof CardanoRoot) {
             return null;
-        } else if(element instanceof RemoteNodeRoot ) {
+        } else if (element instanceof RemoteNodeRoot) {
             return root;
         } else if (element instanceof RemoteNode) {
             return remoteNodeRoot;
@@ -82,21 +82,21 @@ public class CardanoExplorerTreeStructure extends AbstractTreeStructure {
 
     @Override
     public @NotNull NodeDescriptor createDescriptor(@NotNull Object element, @Nullable NodeDescriptor parentDescriptor) {
-        if(element == root) {
+        if (element == root) {
             return new RootNodeDescriptor(project, parentDescriptor);
         }
 
-        if(element == remoteNodeRoot) {
+        if (element == remoteNodeRoot) {
             return new RemoteNodesDescriptor(project, parentDescriptor);
-        } else if(element == cliProviderRoot) {
+        } else if (element == cliProviderRoot) {
             return new CLIProvidersDescriptor(project, parentDescriptor);
         }
 
 
-        if(element instanceof RemoteNode) {
+        if (element instanceof RemoteNode) {
             String defaultNodeId = RemoteNodeState.getInstance().getDefaultNode();
-            return new RemoteNodeDescriptor(project, parentDescriptor, (RemoteNode) element,  defaultNodeId);
-        } else if(element instanceof CLIProvider) {
+            return new RemoteNodeDescriptor(project, parentDescriptor, (RemoteNode) element, defaultNodeId);
+        } else if (element instanceof CLIProvider) {
             String defaultProvider = CLIProvidersState.getInstance().getDefaultProvider();
             return new CLIProviderDescriptor(project, parentDescriptor, (CLIProvider) element, defaultProvider);
         }

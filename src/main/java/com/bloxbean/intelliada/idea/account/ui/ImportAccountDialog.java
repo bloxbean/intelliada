@@ -36,7 +36,7 @@ public class ImportAccountDialog extends DialogWrapper {
     private void attachListener() {
 
         readOnlyAccount.addActionListener(e -> {
-            if(readOnlyAccount.isSelected()) {
+            if (readOnlyAccount.isSelected()) {
                 mnemonicTf.setText("");
                 mnemonicTf.setEditable(false);
                 accountTf.setEditable(true);
@@ -59,7 +59,7 @@ public class ImportAccountDialog extends DialogWrapper {
                     Account account = deriveAccountFromMnemonic();
                     //Account account = new Account(mnemonic);
                     //accountTf.setText(account.getAddress().toString());
-                    if(account != null)
+                    if (account != null)
                         accountTf.setText(account.baseAddress()); //TODO
                 } catch (Exception ex) {
                     accountTf.setText("");
@@ -71,7 +71,7 @@ public class ImportAccountDialog extends DialogWrapper {
 
     @Override
     protected @Nullable ValidationInfo doValidate() {
-        if(StringUtil.isEmpty(accountNameTf.getText())) {
+        if (StringUtil.isEmpty(accountNameTf.getText())) {
             return new ValidationInfo("Account name cannot be empty", accountNameTf);
         }
 
@@ -103,7 +103,7 @@ public class ImportAccountDialog extends DialogWrapper {
         Network network = getNetwork();
         com.bloxbean.cardano.client.common.model.Network clNetwork = null;
 
-        if(network != null) {
+        if (network != null) {
             clNetwork = NetworkUtil.convertToCLNetwork(network);
         } else {
             clNetwork = com.bloxbean.cardano.client.common.model.Networks.testnet(); //default
@@ -120,13 +120,13 @@ public class ImportAccountDialog extends DialogWrapper {
 
     public CardanoAccount getAccount() {
 
-        if(readOnlyAccount.isSelected()) {
+        if (readOnlyAccount.isSelected()) {
             CardanoAccount account = new CardanoAccount(StringUtil.trim(accountTf.getText()));
             account.setName(accountNameTf.getText());
             return account;
         } else {
             Account account = deriveAccountFromMnemonic();
-            if(account == null)
+            if (account == null)
                 return null;
 
             CardanoAccount cardanoAccount = new CardanoAccount(account.baseAddress(), account.mnemonic());
@@ -140,7 +140,8 @@ public class ImportAccountDialog extends DialogWrapper {
     }
 
     @Override
-    protected @Nullable JComponent createCenterPanel() {
+    protected @Nullable
+    JComponent createCenterPanel() {
         return mainPanel;
     }
 

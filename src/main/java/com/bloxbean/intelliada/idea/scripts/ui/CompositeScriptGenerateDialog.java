@@ -24,7 +24,8 @@ public class CompositeScriptGenerateDialog extends BaseScriptGenerateDialog {
     }
 
     @Override
-    protected @Nullable ValidationInfo doCustomValidation() {
+    protected @Nullable
+    ValidationInfo doCustomValidation() {
         ValidationInfo validationInfo = compositeScriptEntryForm.doValidation();
         return validationInfo;
     }
@@ -32,7 +33,7 @@ public class CompositeScriptGenerateDialog extends BaseScriptGenerateDialog {
     @Override
     public ScriptInfo generateScriptPubkey() {
         ScriptInfo scriptInfo = compositeScriptEntryForm.generateCompositeScript();
-        if(scriptInfo != null) {
+        if (scriptInfo != null) {
             editorPane.setText(scriptInfo.printFormatted());
         } else {
             editorPane.setText("");
@@ -42,7 +43,8 @@ public class CompositeScriptGenerateDialog extends BaseScriptGenerateDialog {
     }
 
     @Override
-    protected @Nullable JComponent createCenterPanel() {
+    protected @Nullable
+    JComponent createCenterPanel() {
         return mainPanel;
     }
 }

@@ -27,20 +27,20 @@ public class AccountCache {
     }
 
     public void addAccount(CardanoAccount account) {
-        if(accounts == null)
+        if (accounts == null)
             accounts = new ArrayList<>();
 
-        if(account == null)
+        if (account == null)
             return;
 
         accounts.add(account);
     }
 
     public boolean deleteAccount(CardanoAccount account) {
-        if(accounts == null || account == null)
+        if (accounts == null || account == null)
             return false;
 
-        if(accounts.contains(account)) {
+        if (accounts.contains(account)) {
             accounts.remove(account);
             return true;
         } else {
@@ -49,11 +49,11 @@ public class AccountCache {
     }
 
     public boolean updateAccountName(String address, String name) {
-        if(accounts == null || StringUtil.isEmpty(address))
+        if (accounts == null || StringUtil.isEmpty(address))
             return false;
 
-        for(CardanoAccount account: accounts) {
-            if(address.equals(account.getAddress())) {
+        for (CardanoAccount account : accounts) {
+            if (address.equals(account.getAddress())) {
                 account.setName(name);
                 return true;
             }

@@ -31,7 +31,7 @@ public abstract class BaseScriptGenerateDialog extends DialogWrapper {
 
     @Override
     protected Action @NotNull [] createLeftSideActions() {
-        return new Action[] {
+        return new Action[]{
                 generateScriptAction,
                 exportAction
         };
@@ -40,7 +40,7 @@ public abstract class BaseScriptGenerateDialog extends DialogWrapper {
     @Override
     protected @Nullable ValidationInfo doValidate() {
         ValidationInfo validationInfo = doCustomValidation();
-        if(validationInfo == null) {
+        if (validationInfo == null) {
             generateScriptAction.setEnabled(true);
             exportAction.setEnabled(true);
             return null;
@@ -83,7 +83,7 @@ public abstract class BaseScriptGenerateDialog extends DialogWrapper {
                 ValidationInfo info = infoList.get(0);
 
                 startTrackingValidation();
-                if(infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
+                if (infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
             }
 
             generateScriptPubkey();
@@ -103,7 +103,7 @@ public abstract class BaseScriptGenerateDialog extends DialogWrapper {
                 ValidationInfo info = infoList.get(0);
 
                 startTrackingValidation();
-                if(infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
+                if (infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
             }
             exportScriptInfo();
         }

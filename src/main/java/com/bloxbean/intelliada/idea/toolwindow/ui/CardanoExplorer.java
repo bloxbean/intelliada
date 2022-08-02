@@ -141,31 +141,31 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
             group.add(new UpdateRemoteNodeAction(nodeInfo));
             group.add(new DeleteRemoteNodeAction(nodeInfo));
 
-            if(!remoteNodeDescriptor.isDefaultNode()) {
+            if (!remoteNodeDescriptor.isDefaultNode()) {
                 group.add(new SetDefaultRemoteNodeAction(nodeInfo.getId()));
             }
 
             group.add(new NetworkInfoAction(nodeInfo));
 
-        }  else if (userObject instanceof CLIProviderDescriptor) {
-            CLIProviderDescriptor providerDescriptor = (CLIProviderDescriptor)userObject;
+        } else if (userObject instanceof CLIProviderDescriptor) {
+            CLIProviderDescriptor providerDescriptor = (CLIProviderDescriptor) userObject;
             CLIProvider cliProvider = providerDescriptor.getProvider();
 
             group.add(new UpdateCLIProviderAction(cliProvider));
             group.add(new DeleteCLIProviderAction(cliProvider));
 
-            if(!providerDescriptor.isDefaultProvider()) {
+            if (!providerDescriptor.isDefaultProvider()) {
                 group.add(new SetDefaultProviderAction(cliProvider.getId()));
             }
 
-        }   else if(userObject instanceof CardanoExplorerTreeStructure.CLIProvidersDescriptor) {
+        } else if (userObject instanceof CardanoExplorerTreeStructure.CLIProvidersDescriptor) {
             group.add(new CreateCLIProviderAction());
-        } else if(userObject instanceof CardanoExplorerTreeStructure.RemoteNodesDescriptor) {
+        } else if (userObject instanceof CardanoExplorerTreeStructure.RemoteNodesDescriptor) {
             group.add(new CreateRemoteNodeAction());
         }
 
 
-    final ActionPopupMenu popupMenu = ActionManager.getInstance().createActionPopupMenu(CardanoExplorer.CARDANO_EXPLORER_POPUP, group);
+        final ActionPopupMenu popupMenu = ActionManager.getInstance().createActionPopupMenu(CardanoExplorer.CARDANO_EXPLORER_POPUP, group);
         popupMenu.getComponent().show(comp, x, y);
     }
 

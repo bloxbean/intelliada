@@ -13,7 +13,7 @@ public class AssetEntryForm {
 
     }
 
-    public void initializeData(Project project){
+    public void initializeData(Project project) {
 
     }
 

@@ -33,8 +33,8 @@ import java.util.List;
 
 public class ScriptListTableModel extends AbstractTableModel {
     private List<ScriptInfo> scriptInfos;
-    protected String[] columnNames = new String[] {"Name", "Type", "KeyHash", "Address"};
-    protected Class[] columnClasses = new Class[] {String.class, String.class, String.class, String.class};
+    protected String[] columnNames = new String[]{"Name", "Type", "KeyHash", "Address"};
+    protected Class[] columnClasses = new Class[]{String.class, String.class, String.class, String.class};
 
     public ScriptListTableModel() {
         this.scriptInfos = new ArrayList<>();
@@ -63,22 +63,22 @@ public class ScriptListTableModel extends AbstractTableModel {
 
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
-        if(scriptInfos == null || scriptInfos.size() == 0 || scriptInfos.size()-1 < rowIndex)
+        if (scriptInfos == null || scriptInfos.size() == 0 || scriptInfos.size() - 1 < rowIndex)
             return null;
 
         ScriptInfo scriptInfo = scriptInfos.get(rowIndex);
-        if(columnIndex == 0)
+        if (columnIndex == 0)
             return scriptInfo.getName();
-        else if(columnIndex == 1) {
+        else if (columnIndex == 1) {
             return scriptInfo.getType();
-        } else if(columnIndex == 2) {
-            if((scriptInfo.getScript() instanceof ScriptPubkey) &&
+        } else if (columnIndex == 2) {
+            if ((scriptInfo.getScript() instanceof ScriptPubkey) &&
                     ((ScriptPubkey) scriptInfo.getScript()).getKeyHash() != null) {
                 return ((ScriptPubkey) scriptInfo.getScript()).getKeyHash();
             } else
                 return "";
-        } else if(columnIndex == 3) {
-            if(!StringUtil.isEmpty(scriptInfo.getAddress())) {
+        } else if (columnIndex == 3) {
+            if (!StringUtil.isEmpty(scriptInfo.getAddress())) {
                 return scriptInfo.getAddress();
             } else {
                 return "";
@@ -94,25 +94,25 @@ public class ScriptListTableModel extends AbstractTableModel {
 
     public void addElement(ScriptInfo scriptInfo) {
         scriptInfos.add(scriptInfo);
-        fireTableRowsUpdated(scriptInfos.size()-1, scriptInfos.size()-1);
+        fireTableRowsUpdated(scriptInfos.size() - 1, scriptInfos.size() - 1);
     }
 
     public void setElements(List<ScriptInfo> scriptInfos) {
         int size = this.scriptInfos.size();
         this.scriptInfos.clear();
 
-        if(size == 0)
+        if (size == 0)
             size = 1;
-        if(size > 0) { //Refresh based on old size
+        if (size > 0) { //Refresh based on old size
             fireTableRowsDeleted(0, size - 1);
         }
 
         this.scriptInfos.addAll(scriptInfos);
-        fireTableRowsUpdated(0, this.scriptInfos.size()-1);
+        fireTableRowsUpdated(0, this.scriptInfos.size() - 1);
     }
 
     public List<ScriptInfo> getScriptInfos() {
-        if(this.scriptInfos == null)
+        if (this.scriptInfos == null)
             return Collections.emptyList();
 
         return this.scriptInfos;

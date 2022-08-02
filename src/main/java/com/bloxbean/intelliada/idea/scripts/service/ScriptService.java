@@ -7,6 +7,7 @@ import com.bloxbean.intelliada.idea.scripts.cache.ScriptCacheService;
 import com.bloxbean.intelliada.idea.scripts.exception.ScriptGenerationException;
 import com.intellij.openapi.util.text.StringUtil;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -71,33 +72,39 @@ public class ScriptService {
 
     public ScriptInfo generateCompositeScript(String name, ScriptType type, ScriptType timeLockType, List<NativeScript> nativeScripts,
                                               ScriptGenInputs params) throws ScriptGenerationException {
-        if(StringUtil.isEmpty(name)) {
+        if (StringUtil.isEmpty(name)) {
             throw new ScriptGenerationException("Name cannot be empty");
         }
 
-        if(type == null && timeLockType == null) {
+        if (type == null && timeLockType == null) {
             throw new ScriptGenerationException("Script type and Time Lock type, both cannot be null");
         }
 
+        if (nativeScripts == null)
+            nativeScripts = Collections.EMPTY_LIST;
+
         NativeScript newScript = null;
 
-        if(type != null) {
+        if (type != null) {
             switch (type) {
                 case sig:
                     break;
                 case all:
                     ScriptAll scriptAll = new ScriptAll();
-                    scriptAll.setScripts(nativeScripts);
+                    nativeScripts.forEach(script -> scriptAll.addScript(script));
+//                    scriptAll.addScript(nativeScripts);
                     newScript = scriptAll;
                     break;
                 case any:
                     ScriptAny scriptAny = new ScriptAny();
-                    scriptAny.setScripts(nativeScripts);
+                    nativeScripts.forEach(script -> scriptAny.addScript(script));
+//                    scriptAny.setScripts(nativeScripts);
                     newScript = scriptAny;
                     break;
                 case atLeast:
                     ScriptAtLeast scriptAtLeast = new ScriptAtLeast(params.getRequired());
-                    scriptAtLeast.setScripts(nativeScripts);
+                    nativeScripts.forEach(script -> scriptAtLeast.addScript(script));
+//                    scriptAtLeast.setScripts(nativeScripts);
                     newScript = scriptAtLeast;
                     break;
 //                case after:
@@ -128,12 +135,12 @@ public class ScriptService {
             }
         }
 
-        if(timeLockType != null) {
-            if(params.getSlot() == null)
+        if (timeLockType != null) {
+            if (params.getSlot() == null)
                 throw new ScriptGenerationException("Slot cannot be null when TimeLock is used.");
             switch (timeLockType) {
                 case before:
-                    if(newScript != null) {
+                    if (newScript != null) {
                         addTimeLockTypeToScript(newScript, new RequireTimeBefore(params.getSlot()));
                     } else {
                         RequireTimeBefore requireTimeBefore = new RequireTimeBefore(params.getSlot());
@@ -141,7 +148,7 @@ public class ScriptService {
                     }
                     break;
                 case after:
-                    if(newScript != null) {
+                    if (newScript != null) {
                         addTimeLockTypeToScript(newScript, new RequireTimeAfter(params.getSlot()));
                     } else {
                         RequireTimeAfter requireTimeAfter = new RequireTimeAfter(params.getSlot());
@@ -153,7 +160,7 @@ public class ScriptService {
             }
         }
 
-        if(newScript == null)
+        if (newScript == null)
             return null;
 
         ScriptInfo scriptInfo = ScriptInfo.builder()
@@ -167,21 +174,19 @@ public class ScriptService {
     }
 
     private void addTimeLockTypeToScript(NativeScript script, NativeScript timeLockScript) {
-       if(timeLockScript == null || script == null)
-           return;
+        if (timeLockScript == null || script == null)
+            return;
 
-       if(script instanceof ScriptAll) {
-           if(((ScriptAll)script).getScripts() != null)
-               ((ScriptAll)script).getScripts().add(0, timeLockScript);
-       }
-       else if(script instanceof ScriptAny) {
-           if(((ScriptAny)script).getScripts() != null)
-               ((ScriptAny)script).getScripts().add(0, timeLockScript);
-       }
-       else if(script instanceof ScriptAtLeast) {
-           if(((ScriptAtLeast)script).getScripts() != null)
-               ((ScriptAtLeast)script).getScripts().add(0, timeLockScript);
-       }
+        if (script instanceof ScriptAll) {
+            if (((ScriptAll) script).getScripts() != null)
+                ((ScriptAll) script).getScripts().add(0, timeLockScript);
+        } else if (script instanceof ScriptAny) {
+            if (((ScriptAny) script).getScripts() != null)
+                ((ScriptAny) script).getScripts().add(0, timeLockScript);
+        } else if (script instanceof ScriptAtLeast) {
+            if (((ScriptAtLeast) script).getScripts() != null)
+                ((ScriptAtLeast) script).getScripts().add(0, timeLockScript);
+        }
     }
 
     public List<ScriptInfo> getScripts() {
@@ -189,14 +194,14 @@ public class ScriptService {
     }
 
     public void addScript(ScriptInfo scriptInfo) {
-        if(scriptInfo == null)
+        if (scriptInfo == null)
             return;
 
         scriptCacheService.storeScript(scriptInfo);
     }
 
     public boolean removeScript(ScriptInfo scriptInfo) {
-        if(scriptInfo == null)
+        if (scriptInfo == null)
             return false;
 
         return scriptCacheService.deleteScript(scriptInfo);

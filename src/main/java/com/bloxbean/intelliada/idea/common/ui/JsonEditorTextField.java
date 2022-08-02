@@ -14,6 +14,7 @@ public class JsonEditorTextField extends LanguageTextField {
     public JsonEditorTextField(Project project) {
         super(Language.findLanguageByID("JSON"), project, "", false);
     }
+
     @Override
     protected @NotNull EditorEx createEditor() {
         EditorEx editor = super.createEditor();

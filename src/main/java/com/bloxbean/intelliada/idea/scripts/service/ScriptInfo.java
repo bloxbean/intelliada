@@ -38,16 +38,16 @@ public class ScriptInfo {
 
     @JsonIgnore
     public NativeScript getScript() {
-        if(script != null)
+        if (script != null)
             return script;
 
-        if(scriptCbor == null)
+        if (scriptCbor == null)
             return null;
 
         try {
             byte[] cborBytes = HexUtil.decodeHexString(scriptCbor);
             List<DataItem> dataItemList = CborDecoder.decode(cborBytes);
-            if(dataItemList == null || dataItemList.size() == 0)
+            if (dataItemList == null || dataItemList.size() == 0)
                 return null;
 
             Array array = (Array) dataItemList.get(0);
@@ -69,7 +69,7 @@ public class ScriptInfo {
     }
 
     public String getScriptCbor() {
-        if(scriptCbor == null && script != null) {
+        if (scriptCbor == null && script != null) {
             try {
                 scriptCbor = HexUtil.encodeHexString(this.script.serialize());
             } catch (CborSerializationException e) {
@@ -97,8 +97,8 @@ public class ScriptInfo {
     //Used for list
     public String toString() {
         String str = name + " : " + type;
-        if(type == ScriptType.sig) {
-            if(StringUtil.isEmpty(address)) {
+        if (type == ScriptType.sig) {
+            if (StringUtil.isEmpty(address)) {
                 str += " :- (vkey) " + vKey.getCborHex();
             } else {
                 str += " :- (address) " + address;
@@ -122,14 +122,14 @@ public class ScriptInfo {
         } catch (Exception e) {
         }
 
-        if(StringUtil.isEmpty(this.getAddress())) {
-            if(this.getSkey() != null) {
+        if (StringUtil.isEmpty(this.getAddress())) {
+            if (this.getSkey() != null) {
                 sb.append("------------------  Secret Key   ------------------\n");
                 sb.append(JsonUtil.getPrettyJson(this.getSkey()));
                 sb.append("\n\n");
             }
 
-            if(this.getVKey() != null) {
+            if (this.getVKey() != null) {
                 sb.append("------------------  Verification Key   ------------\n");
                 sb.append(JsonUtil.getPrettyJson(this.getVKey()));
                 sb.append("\n\n");

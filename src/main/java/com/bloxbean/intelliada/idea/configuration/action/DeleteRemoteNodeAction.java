@@ -21,14 +21,14 @@ public class DeleteRemoteNodeAction extends AnAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
-        if(project == null) return;
+        if (project == null) return;
 
         int result = Messages.showYesNoDialog("Do you really want to delete this Cardano node configuration ?", "Cardano Node Configuration", AllIcons.General.QuestionDialog);
 
-        if(result == Messages.NO)
+        if (result == Messages.NO)
             return;
 
-        if(node != null) {
+        if (node != null) {
             ConfigurationHelperService.deleteRemoteNodeConfiguration(node);
             NodeServiceFactory.getInstance().nodeRemoved(node);
         }

@@ -28,7 +28,7 @@ public class AccountService {
     }
 
     public CardanoAccount createNewAccount(String accountName, Network network) throws NoSuchAlgorithmException {
-        if(StringUtil.isEmpty(accountName))
+        if (StringUtil.isEmpty(accountName))
             accountName = "New Account";
 
         CardanoAccount cardanoAccount = new CardanoAccount();
@@ -45,11 +45,11 @@ public class AccountService {
     }
 
     public boolean importAccount(CardanoAccount account) {
-        if(account == null)
+        if (account == null)
             return false;
 
         CardanoAccount existingAcc = getAccountByAddress(account.getAddress());
-        if(existingAcc != null) {
+        if (existingAcc != null) {
             return false;
         }
 
@@ -63,8 +63,8 @@ public class AccountService {
 
     public CardanoAccount getAccountByAddress(String address) {
         List<CardanoAccount> accounts = accountCacheService.getAccounts();
-        for(CardanoAccount acc: accounts) {
-            if(acc.getAddress().equals(address))
+        for (CardanoAccount acc : accounts) {
+            if (acc.getAddress().equals(address))
                 return acc;
         }
 
@@ -77,7 +77,7 @@ public class AccountService {
 //            return new AlgoAccount(account.getAddress().toString(), mnemonic);
             return new CardanoAccount();
         } catch (Exception e) {
-            if(LOG.isDebugEnabled()) {
+            if (LOG.isDebugEnabled()) {
                 LOG.warn("Account derivation failed from mnemonic");
             }
             return null;
@@ -89,12 +89,12 @@ public class AccountService {
     }
 
     public boolean removeAccount(CardanoAccount account) {
-        if(account == null) return false;
+        if (account == null) return false;
         return accountCacheService.deleteAccount(account);
     }
 
     public boolean updateAccountName(String address, String accountName) {
-        if(StringUtil.isEmpty(address))
+        if (StringUtil.isEmpty(address))
             return false;
 
         return accountCacheService.updateAccountName(address, accountName);

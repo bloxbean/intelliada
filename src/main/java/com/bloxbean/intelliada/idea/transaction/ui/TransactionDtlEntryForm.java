@@ -59,9 +59,9 @@ public class TransactionDtlEntryForm {
 
         addAccBtn.addActionListener(e -> {
             CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
-            if(cardanoAccount != null) {
+            if (cardanoAccount != null) {
                 Account account = deriveAccount(cardanoAccount);
-                if(account != null) {
+                if (account != null) {
                     addlAccountListModel.addElement(account);
                 }
             }
@@ -69,7 +69,7 @@ public class TransactionDtlEntryForm {
 
         removeAccBtn.addActionListener(e -> {
             int index = addlWitnessAccountList.getSelectedIndex();
-            if(index == -1)
+            if (index == -1)
                 return;
 
             addlAccountListModel.remove(index);
@@ -78,61 +78,61 @@ public class TransactionDtlEntryForm {
 
     private void initializeNetwork(Project project) {
         RemoteNode node = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
-        if(node != null)
+        if (node != null)
             isMainnet = NetworkUtil.isMainnet(node);
 
-        if(isMainnet)
+        if (isMainnet)
             network = Networks.mainnet();
         else
             network = Networks.testnet();
     }
 
     private void fetchTtl(Project project) {
-            if(console != null)
-                console.clearAndshow();
-            try {
-                ProgressManager.getInstance().runProcessWithProgressSynchronously(new Runnable() {
-                    @Override
-                    public void run() {
-                        ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
+        if (console != null)
+            console.clearAndshow();
+        try {
+            ProgressManager.getInstance().runProcessWithProgressSynchronously(new Runnable() {
+                @Override
+                public void run() {
+                    ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
 
-                        try {
-                            NetworkInfoService networkInfoService = new NetworkServiceImpl(project, new LogListenerAdapter(console));
-                            Long ttl = networkInfoService.getTtl();
-                            if(ttl != null)
-                                ttlTf.setText(String.valueOf(ttl));
-                        } catch (Exception e) {
-                            console.showErrorMessage("Error getting ttl info", e);
-                        }
-                        progressIndicator.setFraction(1.0);
+                    try {
+                        NetworkInfoService networkInfoService = new NetworkServiceImpl(project, new LogListenerAdapter(console));
+                        Long ttl = networkInfoService.getTtl();
+                        if (ttl != null)
+                            ttlTf.setText(String.valueOf(ttl));
+                    } catch (Exception e) {
+                        console.showErrorMessage("Error getting ttl info", e);
                     }
-                }, "Calculating ttl ...", true, project);
+                    progressIndicator.setFraction(1.0);
+                }
+            }, "Calculating ttl ...", true, project);
 
-            } finally {
+        } finally {
 
-            }
+        }
 
     }
 
     private Account deriveAccount(CardanoAccount cardanoAccount) {
-        if(cardanoAccount == null)
+        if (cardanoAccount == null)
             return null;
 
         String senderMnenomic = cardanoAccount.getMnemonic();
-        if(StringUtil.isEmpty(senderMnenomic))
+        if (StringUtil.isEmpty(senderMnenomic))
             return null;
 
         try {
             Account senderAcc = null;
-            if(isMainnet) {
+            if (isMainnet) {
                 senderAcc = new Account(senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             } else {
                 senderAcc = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             }
             return senderAcc;
@@ -143,7 +143,7 @@ public class TransactionDtlEntryForm {
     }
 
     public BigInteger getTtl() {
-        if(StringUtil.isEmpty(ttlTf.getText()))
+        if (StringUtil.isEmpty(ttlTf.getText()))
             return null;
 
         try {
@@ -155,11 +155,11 @@ public class TransactionDtlEntryForm {
 
     public List<Account> getAdditionalWitnessAccounts() {
         Enumeration<Account> accountsEnum = addlAccountListModel.elements();
-        if(accountsEnum == null)
+        if (accountsEnum == null)
             return Collections.EMPTY_LIST;
 
         List<Account> accounts = new ArrayList<>();
-        while(accountsEnum.hasMoreElements())  {
+        while (accountsEnum.hasMoreElements()) {
             accounts.add(accountsEnum.nextElement());
         }
 

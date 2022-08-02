@@ -79,15 +79,15 @@ public class CompositeScriptEntryForm {
     private void attachListeners() {
         addScriptButton.addActionListener(e -> {
             ScriptInfo scriptInfo = ScriptChooser.selectScript(project);
-            if(scriptInfo == null)
+            if (scriptInfo == null)
                 return;
-            if(!scriptModel.contains(scriptInfo))
+            if (!scriptModel.contains(scriptInfo))
                 scriptModel.addElement(scriptInfo);
         });
 
         removeScriptButton.addActionListener(e -> {
             int index = scriptList.getSelectedIndex();
-            if(index == -1)
+            if (index == -1)
                 return;
             scriptModel.remove(index);
         });
@@ -98,13 +98,13 @@ public class CompositeScriptEntryForm {
 
         scriptTypeCB.addActionListener(e -> {
             ScriptType type = getType();
-            if(type == null) return;
+            if (type == null) return;
 
-            if(ScriptType.all == type || ScriptType.any == type) {
+            if (ScriptType.all == type || ScriptType.any == type) {
                 resetTypeSpecificFields();
                 enableTimeLockFieldsIfRequired();
 
-            } else  if(ScriptType.atLeast == type) {
+            } else if (ScriptType.atLeast == type) {
                 resetTypeSpecificFields();
                 requiredTf.setEnabled(true);
                 enableTimeLockFieldsIfRequired();
@@ -118,14 +118,14 @@ public class CompositeScriptEntryForm {
 
         timeLockingTypeCB.addActionListener(e -> {
             ScriptType type = getTimeLockType();
-            if(type == null) {
+            if (type == null) {
                 slotNoTf.setText("");
                 slotNoTf.setEnabled(false);
                 currentSlotButton.setEnabled(false);
                 return;
             }
 
-            if(ScriptType.after == type || ScriptType.before == type) {
+            if (ScriptType.after == type || ScriptType.before == type) {
 //                resetTypeSpecificFields();
                 enableTimeLockFieldsIfRequired();
             }
@@ -133,7 +133,7 @@ public class CompositeScriptEntryForm {
     }
 
     private void enableTimeLockFieldsIfRequired() {
-        if(getTimeLockType() != null) {
+        if (getTimeLockType() != null) {
             slotNoTf.setEnabled(true);
             currentSlotButton.setEnabled(true);
         }
@@ -152,11 +152,11 @@ public class CompositeScriptEntryForm {
     }
 
     private ScriptType getType() {
-        return (ScriptType)scriptTypeCB.getSelectedItem();
+        return (ScriptType) scriptTypeCB.getSelectedItem();
     }
 
     private ScriptType getTimeLockType() {
-        return (ScriptType)timeLockingTypeCB.getSelectedItem();
+        return (ScriptType) timeLockingTypeCB.getSelectedItem();
     }
 
     private Long getSlot() {
@@ -177,29 +177,30 @@ public class CompositeScriptEntryForm {
 
     private List<NativeScript> getNativeScripts() {
         Enumeration<ScriptInfo> enumeration = scriptModel.elements();
-        if(enumeration == null)
+        if (enumeration == null)
             return Collections.emptyList();
 
         List<NativeScript> scripts = new ArrayList<>();
-        while(enumeration.hasMoreElements()) {
+        while (enumeration.hasMoreElements()) {
             ScriptInfo scriptInfo = enumeration.nextElement();
-            if(scriptInfo != null && scriptInfo.getScript() != null)
+            if (scriptInfo != null && scriptInfo.getScript() != null)
                 scripts.add(scriptInfo.getScript());
             else
-                continue;;
+                continue;
+            ;
         }
 
         return scripts;
     }
 
     public ValidationInfo doValidation() {
-        if(StringUtil.isEmpty(getName())) {
+        if (StringUtil.isEmpty(getName())) {
             return new ValidationInfo("Please provide a valid name", nameTf);
         }
-        if(getType() == ScriptType.atLeast && getRequired() == null) {
+        if (getType() == ScriptType.atLeast && getRequired() == null) {
             return new ValidationInfo("Please provide a valid integer value for min required", requiredTf);
         }
-        if((getTimeLockType() == ScriptType.before || getTimeLockType() == ScriptType.after) && getSlot() == null) {
+        if ((getTimeLockType() == ScriptType.before || getTimeLockType() == ScriptType.after) && getSlot() == null) {
             return new ValidationInfo("Invalid slot number", slotNoTf);
         }
 
@@ -229,13 +230,13 @@ public class CompositeScriptEntryForm {
                 @Override
                 public void run() {
                     ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
-                    if(console != null)
+                    if (console != null)
                         console.clearAndshow();
 
                     try {
                         NetworkInfoService networkInfoService = new NetworkServiceImpl(project, new LogListenerAdapter(console));
                         Long currentSlot = networkInfoService.getCurrentSlot();
-                        if(currentSlot != null)
+                        if (currentSlot != null)
                             slotNoTf.setText(String.valueOf(currentSlot));
                     } catch (Exception e) {
                         console.showErrorMessage("Error getting current slot", e);

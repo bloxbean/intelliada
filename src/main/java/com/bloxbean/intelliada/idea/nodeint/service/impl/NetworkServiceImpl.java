@@ -1,9 +1,9 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
-import com.bloxbean.cardano.client.backend.exception.ApiException;
+import com.bloxbean.cardano.client.api.exception.ApiException;
+import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.cardano.client.backend.model.Block;
 import com.bloxbean.cardano.client.backend.model.Genesis;
-import com.bloxbean.cardano.client.backend.model.Result;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
@@ -34,16 +34,16 @@ public class NetworkServiceImpl extends NodeBaseService implements NetworkInfoSe
     public Long getTtl() throws ApiCallException {
         Result<Block> result = null;
         try {
-            result = backendService.getBlockService().getLastestBlock();
+            result = backendService.getBlockService().getLatestBlock();
         } catch (ApiException e) {
             throw new ApiCallException("Could not get block information from the network : \n" + result.toString());
         }
 
-        if(result.isSuccessful()) {
+        if (result.isSuccessful()) {
             long latestSlot = result.getValue().getSlot();
             return latestSlot + 1000;
         } else {
-            if(result != null)
+            if (result != null)
                 logListener.error(result.toString());
             throw new ApiCallException("Could not get block information from the network : \n" + result.toString());
         }
@@ -53,16 +53,16 @@ public class NetworkServiceImpl extends NodeBaseService implements NetworkInfoSe
     public Long getCurrentSlot() throws ApiCallException {
         Result<Block> result = null;
         try {
-            result = backendService.getBlockService().getLastestBlock();
+            result = backendService.getBlockService().getLatestBlock();
         } catch (ApiException e) {
             throw new ApiCallException("Could not get block information from the network : \n" + result.toString());
         }
 
-        if(result.isSuccessful()) {
+        if (result.isSuccessful()) {
             long latestSlot = result.getValue().getSlot();
             return latestSlot;
         } else {
-            if(result != null)
+            if (result != null)
                 logListener.error(result.toString());
             throw new ApiCallException("Could not get block information from the network : \n" + result.toString());
         }

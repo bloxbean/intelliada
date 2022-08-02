@@ -20,8 +20,8 @@ public class RemoteNodeDescriptor extends NodeDescriptor {
         myColor = JBColor.GREEN;
         myClosedIcon = CardanoIcons.CARDANO_ICON_16x16;
 
-        if(node.getId() != null) {
-            if(node.getId().equals(defaultNodeId)) {
+        if (node.getId() != null) {
+            if (node.getId().equals(defaultNodeId)) {
                 myName += " (default)";
                 this.isDefaultNode = true;
                 myClosedIcon = CardanoIcons.CARDANO_ICON_16x16_DEFAULT;

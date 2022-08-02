@@ -1,6 +1,6 @@
 package com.bloxbean.intelliada.idea.account.ui.details;
 
-import com.bloxbean.cardano.client.backend.common.OrderEnum;
+import com.bloxbean.cardano.client.api.common.OrderEnum;
 import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.backend.model.metadata.MetadataJSONContent;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
@@ -57,7 +57,7 @@ public class AccountTransactionsUI {
         ListSelectionModel listSelectionModel = transactionList.getSelectionModel();
         listSelectionModel.addListSelectionListener(e -> {
             int index = transactionList.getSelectedIndex();
-            if(index != -1 && index <= txnListModel.size() - 1) {
+            if (index != -1 && index <= txnListModel.size() - 1) {
                 transactionContentTf.setText("");
                 metadataEditorTf.setText("");
             }
@@ -71,9 +71,9 @@ public class AccountTransactionsUI {
             public void mouseClicked(MouseEvent me) {
                 if (me.getClickCount() == 2 && me.getButton() == BUTTON1) {     // to detect doble click events
                     int index = transactionList.getSelectedIndex();
-                    if(index != -1 && index <= txnListModel.size() - 1) {
+                    if (index != -1 && index <= txnListModel.size() - 1) {
                         String txnHash = txnListModel.get(index);
-                        if(StringUtil.isEmpty(txnHash)) {
+                        if (StringUtil.isEmpty(txnHash)) {
                             return;
                         }
                         getTransactionDetail(txnHash);
@@ -92,11 +92,11 @@ public class AccountTransactionsUI {
                     ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
                     progressIndicator.setIndeterminate(false);
 
-                    if(account == null)
+                    if (account == null)
                         return;
 
                     String address = account.getAddress();
-                    if(StringUtil.isEmpty(address))
+                    if (StringUtil.isEmpty(address))
                         return;
 
                     try {
@@ -117,7 +117,7 @@ public class AccountTransactionsUI {
     }
 
     private void getTransactionDetail(String txnHash) {
-        if(StringUtil.isEmpty(txnHash)) {
+        if (StringUtil.isEmpty(txnHash)) {
             console.showErrorMessage("Invalid transaction hash");
             return;
         }
@@ -129,17 +129,17 @@ public class AccountTransactionsUI {
                     ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
                     progressIndicator.setIndeterminate(false);
 
-                    if(account == null)
+                    if (account == null)
                         return;
 
                     String address = account.getAddress();
-                    if(StringUtil.isEmpty(address))
+                    if (StringUtil.isEmpty(address))
                         return;
 
                     try {
                         TransactionInfoService transactionInfoService = new TransactionInfoServiceImpl(project, new LogListenerAdapter(console));
                         TransactionContent txnContent = transactionInfoService.getTransactionDetailsByTxnHash(txnHash);
-                        if(txnContent == null) {
+                        if (txnContent == null) {
                             console.showErrorMessage("Error getting transaction details");
                             MessageUtil.showMessage("Error getting transaction details", "Transaction Details", true);
                             return;
@@ -158,7 +158,7 @@ public class AccountTransactionsUI {
                     }
 
                     progressIndicator.setFraction(0.5);
-                    if(progressIndicator.isCanceled())
+                    if (progressIndicator.isCanceled())
                         return;
 
                     progressIndicator.setText("Getting metadata ...");
@@ -166,7 +166,7 @@ public class AccountTransactionsUI {
                     try {
                         TransactionInfoService transactionInfoService = new TransactionInfoServiceImpl(project, new LogListenerAdapter(console));
                         List<MetadataJSONContent> metadata = transactionInfoService.getTransactionMetadata(txnHash);
-                        if(metadata == null) {
+                        if (metadata == null) {
                             console.showErrorMessage("Error getting transaction metadata");
                             MessageUtil.showMessage("Error getting transaction metadata", "Transaction Details", true);
                             return;

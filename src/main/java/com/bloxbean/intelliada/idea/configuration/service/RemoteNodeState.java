@@ -40,11 +40,11 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
     public Element getState() {
         Element state = new Element("remoteNodes");
 
-        for(RemoteNode node: remoteNodes) {
+        for (RemoteNode node : remoteNodes) {
             Element entry = new Element("remoteNode");
             entry.setAttribute("id", node.getId());
             entry.setAttribute("name", node.getName());
-            if(node.getNodeType() != null)
+            if (node.getNodeType() != null)
                 entry.setAttribute("nodeType", node.getNodeType().name());
             else
                 entry.setAttribute("nodeType", "");
@@ -70,7 +70,7 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             state.addContent(entry);
         }
 
-        if(defaultNode != null)
+        if (defaultNode != null)
             state.setAttribute("defaultNode", defaultNode);
 
         return state;
@@ -108,7 +108,7 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
             }
 
             NodeType nodeType = null;
-            if(!StringUtil.isEmpty(nodeTypeStr))
+            if (!StringUtil.isEmpty(nodeTypeStr))
                 nodeType = NodeType.lookupByName(nodeTypeStr);
 
             RemoteNode node = new RemoteNode(id, name, nodeType, apiEndPoint);
@@ -131,15 +131,15 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
 
     public void addRemoteNode(RemoteNode node) {
         remoteNodes.add(node);
-        if(remoteNodes.size() == 1) {
+        if (remoteNodes.size() == 1) {
             //Set this as default node also
             setDefaultNode(node.getId());
         }
     }
 
     public void updateRemoteNode(RemoteNode node) {
-        for(RemoteNode rnode: remoteNodes) {
-            if(rnode.getId() != null && rnode.getId().equals(node.getId())) {
+        for (RemoteNode rnode : remoteNodes) {
+            if (rnode.getId() != null && rnode.getId().equals(node.getId())) {
                 rnode.updateValues(node);
                 break;
             }
@@ -151,7 +151,7 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
     }
 
     public void removeRemoteNode(RemoteNode node) {
-        if(remoteNodes == null || node == null) return;
+        if (remoteNodes == null || node == null) return;
         remoteNodes.remove(node);
     }
 
@@ -160,17 +160,17 @@ public class RemoteNodeState implements PersistentStateComponent<Element> {
     }
 
     public RemoteNode getDefaultRemoteNode() {
-        if(remoteNodes == null || remoteNodes.size() == 0) return null;
+        if (remoteNodes == null || remoteNodes.size() == 0) return null;
 
-        if(remoteNodes.size() == 1)
+        if (remoteNodes.size() == 1)
             return remoteNodes.get(0); //If one node, then that's your default node
 
-        if(StringUtil.isEmpty(defaultNode)) { //Then first node is default node
+        if (StringUtil.isEmpty(defaultNode)) { //Then first node is default node
             return remoteNodes.get(0);
         }
 
-        for(RemoteNode node: remoteNodes) {
-            if(defaultNode.equals(node.getId()))
+        for (RemoteNode node : remoteNodes) {
+            if (defaultNode.equals(node.getId()))
                 return node;
         }
 

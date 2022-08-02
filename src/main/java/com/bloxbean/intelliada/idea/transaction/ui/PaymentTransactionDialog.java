@@ -63,18 +63,18 @@ public class PaymentTransactionDialog extends BaseTransactionDialog {
         return metadataEntryForm;
     }
 
-//    @Override
+    //    @Override
     protected @Nullable ValidationInfo _doValidate() {
         ValidationInfo validationInfo = txnEntryForm.doValidate();
-        if(validationInfo != null)
+        if (validationInfo != null)
             return validationInfo;
 
         validationInfo = txnDtlForm.doValidate();
-        if(validationInfo != null)
+        if (validationInfo != null)
             return validationInfo;
 
         validationInfo = utxoSelectEntryForm.doValidate(txnEntryForm.getUnit(), txnEntryForm.getAmount());
-        if(validationInfo != null)
+        if (validationInfo != null)
             return validationInfo;
 
         return null;

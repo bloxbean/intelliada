@@ -28,7 +28,7 @@ public abstract class BaseTransactionDialog extends DialogWrapper {
 
     @Override
     protected Action @NotNull [] createLeftSideActions() {
-        return new Action[] {
+        return new Action[]{
                 exportAction
         };
     }
@@ -36,7 +36,7 @@ public abstract class BaseTransactionDialog extends DialogWrapper {
     @Override
     protected @Nullable ValidationInfo doValidate() {
         ValidationInfo validationInfo = doInputValidation();
-        if(validationInfo == null) {
+        if (validationInfo == null) {
             exportAction.setEnabled(true);
             return null;
         } else {
@@ -65,7 +65,7 @@ public abstract class BaseTransactionDialog extends DialogWrapper {
                 ValidationInfo info = infoList.get(0);
 
                 startTrackingValidation();
-                if(infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
+                if (infoList.stream().anyMatch(info1 -> !info1.okEnabled)) return;
             }
             requestMode = RequestMode.EXPORT_SIGNED;
             doOKAction();

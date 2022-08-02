@@ -36,7 +36,7 @@ public class CLIProvidersState implements PersistentStateComponent<Element> {
     @Override
     public Element getState() {
         Element elm = new Element("installations");
-        for(CLIProvider provider: cliProviders) {
+        for (CLIProvider provider : cliProviders) {
             Element entry = new Element("providers");
             entry.setAttribute("id", provider.getId());
             entry.setAttribute("name", provider.getName());
@@ -46,7 +46,7 @@ public class CLIProvidersState implements PersistentStateComponent<Element> {
             elm.addContent(entry);
         }
 
-        if(defaultProvider != null)
+        if (defaultProvider != null)
             elm.setAttribute("default-provider", defaultProvider);
         return elm;
     }
@@ -87,8 +87,8 @@ public class CLIProvidersState implements PersistentStateComponent<Element> {
     }
 
     public void updateCLIProvider(CLIProvider provider) {
-        for(CLIProvider rnode: cliProviders) {
-            if(rnode.getId() != null && rnode.getId().equals(provider.getId())) {
+        for (CLIProvider rnode : cliProviders) {
+            if (rnode.getId() != null && rnode.getId().equals(provider.getId())) {
                 rnode.updateValues(provider);
                 break;
             }
@@ -100,7 +100,7 @@ public class CLIProvidersState implements PersistentStateComponent<Element> {
     }
 
     public void removeCLIProvider(CLIProvider node) {
-        if(cliProviders == null || node == null) return;
+        if (cliProviders == null || node == null) return;
         cliProviders.remove(node);
     }
 }

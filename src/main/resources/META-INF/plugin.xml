@@ -28,7 +28,8 @@
         <projectService serviceImplementation="com.bloxbean.intelliada.idea.toolwindow.CardanoConsole"/>
 
         <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState"/>
-        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.CLIProvidersState"/>
+        <applicationService
+                serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.CLIProvidersState"/>
     </extensions>
 
     <actions>

@@ -54,11 +54,11 @@ public class GlobalCache {
         File file = getAccountCacheFile();
 
         SecretKey secretKey = getSecretKeyFromFile();
-        if(secretKey == null) { //Create a secret key
+        if (secretKey == null) { //Create a secret key
             secretKey = generateNewSecretAndStore();
         }
 
-        if(secretKey == null) { //If secret is still null. write cache in plain text
+        if (secretKey == null) { //If secret is still null. write cache in plain text
             getAccountCacheKeyFile().delete();
             writeAccountCacheToFile(accountCache, file);
         } else {
@@ -80,12 +80,12 @@ public class GlobalCache {
         File file = getAccountCacheFile();
         File keyFile = getAccountCacheKeyFile();
 
-        if(!file.exists())
+        if (!file.exists())
             return new AccountCache();
 
-        if(keyFile.exists()) {
+        if (keyFile.exists()) {
             SecretKey secretKey = getSecretKeyFromFile();
-            if(secretKey == null) {
+            if (secretKey == null) {
                 return new AccountCache();
             } else {
                 try {
@@ -112,7 +112,7 @@ public class GlobalCache {
         } catch (Exception e) {
             accountCache = new AccountCache();
             log.warn("Could not read from account cache: " + e.getMessage());
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.debug("Could not read from account cache", e);
             }
         }
@@ -128,7 +128,7 @@ public class GlobalCache {
             accountCache = new AccountCache();
             //e.printStackTrace();
             log.warn("Could not read from account cache: " + e.getMessage());
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.debug("Could not read from account cache", e);
             }
         }
@@ -201,7 +201,7 @@ public class GlobalCache {
             return null;
         }
 
-        if(key == null) {
+        if (key == null) {
             return null;
         }
 
@@ -232,7 +232,7 @@ public class GlobalCache {
             props.store(output, null);
 
         } catch (Exception io) {
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.warn(io);
             }
         } finally {
@@ -259,7 +259,7 @@ public class GlobalCache {
             return properties;
 
         } catch (Exception io) {
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.warn(io);
             }
             return new Properties();

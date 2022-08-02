@@ -1,6 +1,6 @@
 package com.bloxbean.intelliada.idea.configuration.ui;
 
-import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUrls;
@@ -25,7 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 
 //Config panel for Blockfrost api
-public class RemoteNodeConfigPanel implements NodeConfigurator{
+public class RemoteNodeConfigPanel implements NodeConfigurator {
     private JPanel mainPanel;
     private JTextField nameTf;
     private JButton testConnectionBtn;
@@ -59,7 +59,7 @@ public class RemoteNodeConfigPanel implements NodeConfigurator{
 
     @Override
     public void setNodeData(RemoteNode node) {
-        if(node != null) {
+        if (node != null) {
             newConfig = false;
             nameTf.setText(node.getName());
             nodeTypesCB.setSelectedItem(node.getNodeType());
@@ -73,15 +73,15 @@ public class RemoteNodeConfigPanel implements NodeConfigurator{
 
     private void handleNodeTypeSelection() {
         nodeTypesCB.addActionListener(e -> {
-            if(NodeType.BLOCKFROST_TESTNET.equals(nodeTypesCB.getSelectedItem())
+            if (NodeType.BLOCKFROST_TESTNET.equals(nodeTypesCB.getSelectedItem())
                     || NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
                 apiEndpointTf.setEnabled(false);
                 authKeyLabel.setText("Project Id");
 
-                if(NodeType.BLOCKFROST_TESTNET.equals(nodeTypesCB.getSelectedItem())) {
+                if (NodeType.BLOCKFROST_TESTNET.equals(nodeTypesCB.getSelectedItem())) {
                     apiEndpointTf.setText(NetworkUrls.BLOCKFROST_TESTNET_BASEURL);
                     setNetwork(Networks.testnet());
-                } else if(NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
+                } else if (NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
                     apiEndpointTf.setText(NetworkUrls.BLOCKFROST_MAINNET_BASEURL);
                     setNetwork(Networks.mainnet());
                 }
@@ -94,7 +94,7 @@ public class RemoteNodeConfigPanel implements NodeConfigurator{
     }
 
     private void setNetwork(Network network) {
-        if(network != null) {
+        if (network != null) {
             networkTf.setText(network.getName());
             networkIdTf.setText(network.getNetworkId());
             protocolMagicTf.setText(network.getProtocolMagic());
@@ -106,15 +106,15 @@ public class RemoteNodeConfigPanel implements NodeConfigurator{
             return new ValidationInfo("Please enter a valid name", nameTf);
         }
 
-        if(getNodeType() == null || getNodeType().equals(NodeType.EMPTY)) {
+        if (getNodeType() == null || getNodeType().equals(NodeType.EMPTY)) {
             return new ValidationInfo("Please select a valid node type", nodeTypesCB);
         }
 
-        if(StringUtil.isEmpty(getApiEndpoint())) {
+        if (StringUtil.isEmpty(getApiEndpoint())) {
             return new ValidationInfo("Please enter a valid api endpoint url", apiEndpointTf);
         }
 
-        if(getApiEndpoint().contains("blockfrost.io") && StringUtil.isEmpty(getAuthKey())) {
+        if (getApiEndpoint().contains("blockfrost.io") && StringUtil.isEmpty(getAuthKey())) {
             return new ValidationInfo("Please enter a valid project id", authKey);
         }
 
@@ -138,7 +138,7 @@ public class RemoteNodeConfigPanel implements NodeConfigurator{
     }
 
     public NodeType getNodeType() {
-        return (NodeType)nodeTypesCB.getSelectedItem();
+        return (NodeType) nodeTypesCB.getSelectedItem();
     }
 
     public String getNetwork() {
@@ -200,19 +200,19 @@ public class RemoteNodeConfigPanel implements NodeConfigurator{
                     NetworkInfoService networkService = new NetworkServiceImpl(remoteNode, logListener);
                     Result result = networkService.testAndGetNetworkInfo();
 
-                    if(result.isSuccessful()) {
+                    if (result.isSuccessful()) {
                         connectionTestLabel.setForeground(Color.black);
                         connectionTestLabel.setText("Successfully connected !!!");
-                     } else {
+                    } else {
                         connectionTestLabel.setForeground(Color.red);
                         String response = result.getResponse();
-                        if(response != null && response.length() > 30)
+                        if (response != null && response.length() > 30)
                             response = response.substring(0, 27) + "...";
 
                         connectionTestLabel.setText("Could not connect to node : " + response);
                         connectionTestLabel.setToolTipText(result.getResponse());
                     }
-                }catch (Exception exception) {
+                } catch (Exception exception) {
                     connectionTestLabel.setText("Could not connect to node. Reason: " + exception.getMessage());
                 }
             }

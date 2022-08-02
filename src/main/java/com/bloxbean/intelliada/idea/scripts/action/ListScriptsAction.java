@@ -16,12 +16,12 @@ public class ListScriptsAction extends AnAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
-        if(project == null)
+        if (project == null)
             return;
 
         ScriptChooserDialog dialog = new ScriptChooserDialog(project, false);
         boolean ok = dialog.showAndGet();
-        if(!ok)
+        if (!ok)
             return;
 
     }

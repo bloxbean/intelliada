@@ -1,7 +1,7 @@
 package com.bloxbean.intelliada.idea.utxos.ui;
 
-import com.bloxbean.cardano.client.backend.common.OrderEnum;
-import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.api.common.OrderEnum;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
@@ -91,17 +91,19 @@ public class ListUtxosDialog extends DialogWrapper {
         ListSelectionModel listSelectionModel = utxosTable.getSelectionModel();
         listSelectionModel.addListSelectionListener(e -> {
             int index = utxosTable.getSelectedRow();
-            if(index != -1 && index <= tableModel.getUtxos().size() - 1) {
+            if (index != -1 && index <= tableModel.getUtxos().size() - 1) {
                 int selectedRowsCount = utxosTable.getSelectedRowCount();
-                if(selectedRowsCount > 1) {
+                if (selectedRowsCount > 1) {
                     amountsListModel.clear();
-                } else if(selectedRowsCount == 1) {
+                } else if (selectedRowsCount == 1) {
                     Utxo utxo = tableModel.getUtxos().get(index);
                     List<UtxoAsset> utxoAssets = utxo.getAmount().stream().map(amount -> new UtxoAsset(amount.getUnit(), amount.getQuantity()))
                             .collect(Collectors.toList());
 
                     amountsListModel.clear();
-                    utxoAssets.stream().forEach(utxoAsset -> {amountsListModel.addElement(utxoAsset);});
+                    utxoAssets.stream().forEach(utxoAsset -> {
+                        amountsListModel.addElement(utxoAsset);
+                    });
                 }
             } else {
                 amountsListModel.clear();
@@ -122,11 +124,11 @@ public class ListUtxosDialog extends DialogWrapper {
 
     private void copyTxnHash() {
         int index = utxosTable.getSelectedRow();
-        if(index == -1) return;
+        if (index == -1) return;
         int selectedRowsCount = utxosTable.getSelectedRowCount();
-        if(selectedRowsCount == 1) {
+        if (selectedRowsCount == 1) {
             Utxo utxo = tableModel.getUtxos().get(index);
-            if(utxo == null)
+            if (utxo == null)
                 return;
             StringSelection stringSelection = new StringSelection(utxo.getTxHash());
             Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
@@ -137,16 +139,16 @@ public class ListUtxosDialog extends DialogWrapper {
 
     public List<Utxo> getSelectedUtxos() {
         int index = utxosTable.getSelectedRow();
-        if(index == -1) return Collections.emptyList();
+        if (index == -1) return Collections.emptyList();
 
         int selectedRowsCount = utxosTable.getSelectedRowCount();
-        if(selectedRowsCount == 1) {
+        if (selectedRowsCount == 1) {
             int selectedRow = utxosTable.getSelectedRow();
             return Arrays.asList(tableModel.getUtxos().get(selectedRow));
-        } else if (selectedRowsCount > 1){
+        } else if (selectedRowsCount > 1) {
             int[] selectedRows = utxosTable.getSelectedRows();
             List<Utxo> selectedUtxos = new ArrayList<>();
-            for(int selectedRow: selectedRows) {
+            for (int selectedRow : selectedRows) {
                 Utxo utxo = tableModel.getUtxos().get(selectedRow);
                 selectedUtxos.add(utxo);
             }
@@ -158,7 +160,8 @@ public class ListUtxosDialog extends DialogWrapper {
     }
 
     @Override
-    protected @Nullable JComponent createCenterPanel() {
+    protected @Nullable
+    JComponent createCenterPanel() {
         return mainPanel;
     }
 
@@ -189,11 +192,12 @@ public class ListUtxosDialog extends DialogWrapper {
 
                         List<Utxo> utxos = new ArrayList<>();
                         boolean canContinue = true;
-                        while(canContinue) {
+                        while (canContinue) {
                             List fetchUtxos = cardanoAccountService.getUtxos(address, count, page, order);
-                            if(page == 20) {
+                            if (page == 20) {
                                 console.showWarningMessage("Too many utxos. Can't show more than 1000.");
-                            } if(fetchUtxos == null || fetchUtxos.size() == 0) {
+                            }
+                            if (fetchUtxos == null || fetchUtxos.size() == 0) {
                                 canContinue = false;
                             } else {
                                 utxos.addAll(fetchUtxos);
@@ -213,7 +217,7 @@ public class ListUtxosDialog extends DialogWrapper {
                         console.showErrorMessage("Error getting utxos for address : " + address);
                         console.showErrorMessage(e.getMessage(), e);
                     } finally {
-                        if(progressIndicator != null) {
+                        if (progressIndicator != null) {
                             try {
                                 progressIndicator.setFraction(1.0);
                             } catch (Exception e) {

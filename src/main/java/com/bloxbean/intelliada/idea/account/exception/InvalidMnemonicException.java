@@ -9,5 +9,5 @@ public class InvalidMnemonicException extends Exception {
     public InvalidMnemonicException(String message, Throwable cause) {
         super(message, cause);
     }
-    
+
 }

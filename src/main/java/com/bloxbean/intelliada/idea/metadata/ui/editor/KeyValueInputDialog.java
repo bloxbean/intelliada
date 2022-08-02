@@ -12,7 +12,7 @@ public class KeyValueInputDialog extends DialogWrapper {
     private KeyValueInputForm keyValueForm;
 
     public KeyValueInputDialog(@Nullable Project project) {
-       this(project, false);
+        this(project, false);
     }
 
     public KeyValueInputDialog(@Nullable Project project, boolean metadatalabel) {
@@ -37,17 +37,20 @@ public class KeyValueInputDialog extends DialogWrapper {
     public void enableListMode() {
         keyValueForm.enableListMode();
     }
+
     public void enableEditMode() {
         keyValueForm.enableEditMode();
     }
 
     @Override
-    protected @Nullable ValidationInfo doValidate() {
+    protected @Nullable
+    ValidationInfo doValidate() {
         return keyValueForm.doValidate();
     }
 
     @Override
-    protected @Nullable JComponent createCenterPanel() {
+    protected @Nullable
+    JComponent createCenterPanel() {
         return mainPanel;
     }
 

@@ -21,7 +21,7 @@ public class ScriptCache {
     }
 
     public boolean deleteScriptInfo(ScriptInfo scriptInfo) {
-        if(scriptInfos.contains(scriptInfo)) {
+        if (scriptInfos.contains(scriptInfo)) {
             scriptInfos.remove(scriptInfo);
             return true;
         } else {
@@ -30,8 +30,8 @@ public class ScriptCache {
     }
 
     public ScriptInfo getScriptInfoByUuid(String uuid) {
-        for(ScriptInfo sc: scriptInfos) {
-            if(sc.getUuid().equals(uuid)) {
+        for (ScriptInfo sc : scriptInfos) {
+            if (sc.getUuid().equals(uuid)) {
                 return sc;
             }
         }
@@ -40,7 +40,7 @@ public class ScriptCache {
 
     public boolean updateScriptName(String uuid, String name) {
         ScriptInfo scriptInfo = getScriptInfoByUuid(uuid);
-        if(scriptInfo != null) {
+        if (scriptInfo != null) {
             scriptInfo.setName(name);
             return true;
         } else {

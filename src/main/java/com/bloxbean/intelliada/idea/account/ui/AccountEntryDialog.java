@@ -27,7 +27,7 @@ public class AccountEntryDialog extends DialogWrapper {
             @Override
             public void actionPerformed(ActionEvent e) {
                 CardanoAccount account = AccountChooser.getSelectedAccount(project, true);
-                if(account != null) {
+                if (account != null) {
                     accountTf.setText(account.getAddress());
                 }
             }
@@ -42,8 +42,9 @@ public class AccountEntryDialog extends DialogWrapper {
     }
 
     @Override
-    protected @Nullable ValidationInfo doValidate() {
-        if(StringUtil.isEmpty(accountTf.getText())) {
+    protected @Nullable
+    ValidationInfo doValidate() {
+        if (StringUtil.isEmpty(accountTf.getText())) {
             return new ValidationInfo("Please enter a valid account", accountTf);
         } else
             return null;
@@ -54,7 +55,8 @@ public class AccountEntryDialog extends DialogWrapper {
     }
 
     @Override
-    protected @Nullable JComponent createCenterPanel() {
+    protected @Nullable
+    JComponent createCenterPanel() {
         return mainPanel;
     }
 }

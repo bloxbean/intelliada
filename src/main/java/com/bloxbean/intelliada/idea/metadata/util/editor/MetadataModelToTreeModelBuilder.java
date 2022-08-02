@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 public class MetadataModelToTreeModelBuilder {
 
     public static DefaultMutableTreeNode buildTree(Metadata metadata) throws InvalidMetadataException {
-        if(metadata == null)
+        if (metadata == null)
             return null;
 
         Map map = metadata.getData();
@@ -25,34 +25,34 @@ public class MetadataModelToTreeModelBuilder {
 
         List keys = getKeys(map);
 
-        for(Object key: keys) {
-           if(!(key instanceof BigInteger))
-               throw new InvalidMetadataException("Metadata label - only unsigned integer allowed");
+        for (Object key : keys) {
+            if (!(key instanceof BigInteger))
+                throw new InvalidMetadataException("Metadata label - only unsigned integer allowed");
 
-           BigInteger keyBI = (BigInteger) key;
-           Object value = getValue(map, keyBI);
+            BigInteger keyBI = (BigInteger) key;
+            Object value = getValue(map, keyBI);
 
-           processValue(key, value, (node -> {
-               rootNode.add(node);
-           }));
+            processValue(key, value, (node -> {
+                rootNode.add(node);
+            }));
         }
 
         return rootNode;
     }
 
     private static TreeMetadataEditor.MapNode processMetadataMap(Object keyValue, CBORMetadataMapEx map) {
-        if(map == null)
+        if (map == null)
             return null;
 
         TreeMetadataEditor.MapNode mapNode = new TreeMetadataEditor.MapNode(keyValue, map);
         List keys = map.getKeys();
-        for(Object key: keys) {
+        for (Object key : keys) {
             Object value = null;
-            if(key instanceof BigInteger) {
+            if (key instanceof BigInteger) {
                 value = map.getValue((BigInteger) key);
-            } else if(key instanceof String) {
+            } else if (key instanceof String) {
                 value = map.getValue((String) key);
-            } else if(key instanceof byte[]) {
+            } else if (key instanceof byte[]) {
                 value = map.getValue((byte[]) key);
             }
 
@@ -64,11 +64,11 @@ public class MetadataModelToTreeModelBuilder {
     }
 
     private static TreeMetadataEditor.ListNode processMetadataList(Object keyVal, CBORMetadataListEx list) {
-        if(list == null)
+        if (list == null)
             return null;
 
         TreeMetadataEditor.ListNode listNode = new TreeMetadataEditor.ListNode(keyVal, list);
-        for(int i=0; i < list.size(); i++) {
+        for (int i = 0; i < list.size(); i++) {
             Object value = list.getValueAt(i);
 
             processValue(keyVal, value, true, (node -> {
@@ -84,25 +84,25 @@ public class MetadataModelToTreeModelBuilder {
     }
 
     private static void processValue(Object key, Object value, boolean isListParent, ValueProcessor processor) {
-        if(value instanceof CBORMetadataMapEx) {
+        if (value instanceof CBORMetadataMapEx) {
             processor.attachToParent(processMetadataMap(null, (CBORMetadataMapEx) value));
-        } else if(value instanceof CBORMetadataListEx) {
+        } else if (value instanceof CBORMetadataListEx) {
             processor.attachToParent(processMetadataList(null, (CBORMetadataListEx) value));
         } else {
-            if(value instanceof BigInteger) {
-                if(isListParent) {
+            if (value instanceof BigInteger) {
+                if (isListParent) {
                     processor.attachToParent(new TreeMetadataEditor.SingleValueLeafNode(DataType.Int, value));
                 } else {
                     processor.attachToParent(new TreeMetadataEditor.KeyValueLeafNode(DataType.Int, key, value));
                 }
-            } else if(value instanceof String) {
-                if(isListParent) {
+            } else if (value instanceof String) {
+                if (isListParent) {
                     processor.attachToParent(new TreeMetadataEditor.SingleValueLeafNode(DataType.String, value));
                 } else {
                     processor.attachToParent(new TreeMetadataEditor.KeyValueLeafNode(DataType.String, key, value));
                 }
-            } else if(value instanceof byte[]) {
-                if(isListParent) {
+            } else if (value instanceof byte[]) {
+                if (isListParent) {
                     processor.attachToParent(new TreeMetadataEditor.SingleValueLeafNode(DataType.Bytes, value));
                 } else {
                     processor.attachToParent(new TreeMetadataEditor.KeyValueLeafNode(DataType.Bytes, key, value));
@@ -112,7 +112,7 @@ public class MetadataModelToTreeModelBuilder {
     }
 
     private static Object getValue(Map map, BigInteger key) {
-        if(((BigInteger) key).compareTo(BigInteger.ZERO) == -1) {
+        if (((BigInteger) key).compareTo(BigInteger.ZERO) == -1) {
             return MetadataHelper.extractActualValue(map.get(new NegativeInteger(key)));
         } else {
             return MetadataHelper.extractActualValue(map.get(new UnsignedInteger(key)));

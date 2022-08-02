@@ -17,15 +17,11 @@ import com.bloxbean.intelliada.idea.util.MessageUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intellij.icons.AllIcons;
-import com.intellij.lang.Language;
 import com.intellij.openapi.actionSystem.*;
-import com.intellij.openapi.editor.EditorFactory;
-import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.EditorTextField;
 import com.intellij.ui.PopupHandler;
-import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.treeStructure.Tree;
 import org.jetbrains.annotations.NotNull;
 
@@ -79,7 +75,7 @@ public class TreeMetadataEditor {
             group.add(new AddKeyValueAction(node));
         } else if (userObject instanceof CBORMetadataList) {
             group.add(new AddValueAction(node));
-        } else if(node instanceof KeyValueLeafNode || node instanceof SingleValueLeafNode) {
+        } else if (node instanceof KeyValueLeafNode || node instanceof SingleValueLeafNode) {
             group.add(new EditAction(node));
         }
 
@@ -106,7 +102,7 @@ public class TreeMetadataEditor {
     }
 
     public Metadata getMetadata() {
-        RootNode rootNode = (RootNode)(treeModel.getRoot());
+        RootNode rootNode = (RootNode) (treeModel.getRoot());
         return rootNode.getCBORMetadata();
     }
 
@@ -352,7 +348,7 @@ public class TreeMetadataEditor {
         }
 
         public void updateValue(DefaultMutableTreeNode parentNode, DefaultMutableTreeNode node) {
-            if(node instanceof KeyValueLeafNode) {
+            if (node instanceof KeyValueLeafNode) {
                 KeyValueLeafNode kvl = (KeyValueLeafNode) node;
                 KeyValueInputDialog dialog = new KeyValueInputDialog(project);
                 dialog.setKey(String.valueOf(kvl.getKey()));
@@ -363,8 +359,8 @@ public class TreeMetadataEditor {
                 boolean ok = dialog.showAndGet();
                 if (!ok) return;
 
-                if(dialog.getKeyValueForm().getType() == DataType.Bytes) {
-                    kvl.value = "0x" + HexUtil.encodeHexString((byte[])dialog.getKeyValueForm().getValue());
+                if (dialog.getKeyValueForm().getType() == DataType.Bytes) {
+                    kvl.value = "0x" + HexUtil.encodeHexString((byte[]) dialog.getKeyValueForm().getValue());
                 } else {
                     kvl.value = dialog.getKeyValueForm().getValue();
                 }
@@ -373,16 +369,16 @@ public class TreeMetadataEditor {
                 Object parentObject = parentNode.getUserObject();
                 if (parentObject instanceof CBORMetadataMapEx) {
                     ((CBORMetadataMapEx) parentObject).putValue(String.valueOf(kvl.getKey()), kvl.getValue());
-                } else if(parentObject instanceof CBORMetadataEx) {
+                } else if (parentObject instanceof CBORMetadataEx) {
                     ((CBORMetadataEx) parentObject).putValue((BigInteger) kvl.getKey(), kvl.getValue());
                 } else if (parentObject instanceof CBORMetadataListEx) {
                     ((CBORMetadataListEx) parentObject).addValue(kvl.getValue());
                 }
 
                 updateEditorText();
-            } else if(node instanceof SingleValueLeafNode) {
+            } else if (node instanceof SingleValueLeafNode) {
                 int index = parentNode.getIndex(node);
-                if(index == -1)
+                if (index == -1)
                     return;
 
                 SingleValueLeafNode svl = (SingleValueLeafNode) node;
@@ -394,8 +390,8 @@ public class TreeMetadataEditor {
 
                 boolean ok = dialog.showAndGet();
                 if (!ok) return;
-                if(dialog.getKeyValueForm().getType() == DataType.Bytes) {
-                    svl.value = "0x" + HexUtil.encodeHexString((byte[])dialog.getKeyValueForm().getValue());
+                if (dialog.getKeyValueForm().getType() == DataType.Bytes) {
+                    svl.value = "0x" + HexUtil.encodeHexString((byte[]) dialog.getKeyValueForm().getValue());
                 } else {
                     svl.value = dialog.getKeyValueForm().getValue();
                 }
@@ -425,7 +421,7 @@ public class TreeMetadataEditor {
         @Override
         public void actionPerformed(@NotNull AnActionEvent e) {
             String content = editorTf.getText();
-            if(StringUtil.isEmpty(content))
+            if (StringUtil.isEmpty(content))
                 return;
 
             Metadata metadata = null;
@@ -436,7 +432,7 @@ public class TreeMetadataEditor {
                 return;
             }
 
-            if(metadata == null) {
+            if (metadata == null) {
                 MessageUtil.showMessage("Parsing error", "Metadata Json Parsing", true);
                 return;
             }
@@ -488,6 +484,7 @@ public class TreeMetadataEditor {
 
     public static class MapNode extends DefaultMutableTreeNode {
         private Object key;
+
         public MapNode(Object key, CBORMetadataMapEx map) {
             super(map);
             this.key = key;
@@ -503,7 +500,7 @@ public class TreeMetadataEditor {
 
         @Override
         public String toString() {
-            if(key != null) {
+            if (key != null) {
                 return key + ": <Map>";
             } else {
                 return "<Map>";
@@ -513,6 +510,7 @@ public class TreeMetadataEditor {
 
     public static class ListNode extends DefaultMutableTreeNode {
         private Object key;
+
         public ListNode(Object key, CBORMetadataListEx list) {
             super(list);
             this.key = key;
@@ -528,7 +526,7 @@ public class TreeMetadataEditor {
 
         @Override
         public String toString() {
-            if(key != null) {
+            if (key != null) {
                 return key + ": [List]";
             } else {
                 return "[List]";
@@ -540,12 +538,13 @@ public class TreeMetadataEditor {
         DataType type;
         Object key;
         Object value;
+
         public KeyValueLeafNode(DataType type, Object key, Object value) {
             super(key + " : " + value);
             this.type = type;
             this.key = key;
-            if(type == DataType.Bytes) {
-                if(value != null) {
+            if (type == DataType.Bytes) {
+                if (value != null) {
                     this.value = "0x" + HexUtil.encodeHexString((byte[]) value);
                     refresh();
                 }
@@ -574,11 +573,12 @@ public class TreeMetadataEditor {
     public static class SingleValueLeafNode extends DefaultMutableTreeNode {
         DataType type;
         Object value;
+
         public SingleValueLeafNode(DataType type, Object value) {
             super(value);
             this.type = type;
-            if(type == DataType.Bytes) {
-                if(value != null) {
+            if (type == DataType.Bytes) {
+                if (value != null) {
                     this.value = "0x" + HexUtil.encodeHexString((byte[]) value);
                     refresh();
                 }

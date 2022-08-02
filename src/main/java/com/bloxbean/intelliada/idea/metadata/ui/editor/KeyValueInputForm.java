@@ -25,7 +25,7 @@ public class KeyValueInputForm {
         this.metadataLabel = metadataLabel;
         typeCB.addActionListener(e -> {
             DataType type = (DataType) typeCB.getSelectedItem();
-            if(type == DataType.List || type == DataType.Map)
+            if (type == DataType.List || type == DataType.Map)
                 valueTf.setEnabled(false);
             else
                 valueTf.setEnabled(true);
@@ -51,13 +51,13 @@ public class KeyValueInputForm {
     }
 
     public Object getValue() {
-        if(getType() == DataType.String)
+        if (getType() == DataType.String)
             return valueTf.getText();
-        else if(getType() == DataType.Int)
+        else if (getType() == DataType.Int)
             return new BigInteger(valueTf.getText());
-        else if(getType() == DataType.Bytes) {
+        else if (getType() == DataType.Bytes) {
             String val = valueTf.getText();
-            if(val != null && val.length() >= 2 && val.startsWith("0x")) {
+            if (val != null && val.length() >= 2 && val.startsWith("0x")) {
                 val = val.substring(2);
             }
             return HexUtil.decodeHexString(val);
@@ -82,7 +82,7 @@ public class KeyValueInputForm {
     }
 
     public ValidationInfo doValidate() {
-        if(metadataLabel) {
+        if (metadataLabel) {
             try {
                 getKeyAsBI();
             } catch (Exception e) {
@@ -90,11 +90,11 @@ public class KeyValueInputForm {
             }
         }
 
-        if(!listMode && StringUtil.isEmpty(getKey())) {
+        if (!listMode && StringUtil.isEmpty(getKey())) {
             return new ValidationInfo("Invalid key", keyTf);
         }
 
-        if(getType() == DataType.Int) {
+        if (getType() == DataType.Int) {
             try {
                 getValue();
             } catch (Exception e) {
@@ -102,7 +102,7 @@ public class KeyValueInputForm {
             }
         }
 
-        if(getType() == DataType.Bytes) {
+        if (getType() == DataType.Bytes) {
             try {
                 getValue();
             } catch (Exception e) {
@@ -112,6 +112,7 @@ public class KeyValueInputForm {
 
         return null;
     }
+
     private void createUIComponents() {
         // TODO: place custom component creation code here
         typeCB = new ComboBox(types);

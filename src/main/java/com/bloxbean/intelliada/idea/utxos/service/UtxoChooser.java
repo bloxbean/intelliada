@@ -1,6 +1,6 @@
 package com.bloxbean.intelliada.idea.utxos.service;
 
-import com.bloxbean.cardano.client.backend.model.Utxo;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.intelliada.idea.utxos.ui.ListUtxosDialog;
 import com.intellij.openapi.project.Project;
 
@@ -13,7 +13,7 @@ public class UtxoChooser {
         ListUtxosDialog dialog = new ListUtxosDialog(project, address, ignoreUtxos);
 
         boolean ok = dialog.showAndGet();
-        if(!ok)
+        if (!ok)
             return Collections.emptyList();
 
         return dialog.getSelectedUtxos();

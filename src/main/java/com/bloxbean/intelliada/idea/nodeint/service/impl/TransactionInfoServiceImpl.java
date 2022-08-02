@@ -1,7 +1,7 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
-import com.bloxbean.cardano.client.backend.exception.ApiException;
-import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.cardano.client.api.exception.ApiException;
+import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.backend.model.metadata.MetadataJSONContent;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
@@ -32,10 +32,10 @@ public class TransactionInfoServiceImpl extends NodeBaseService implements Trans
             throw new ApiCallException("Could not get transaction details for the transaction hash : " + txnHash + "\n" + result.toString());
         }
 
-        if(result.isSuccessful()) {
+        if (result.isSuccessful()) {
             return result.getValue();
         } else {
-            if(result != null)
+            if (result != null)
                 logListener.error(result.toString());
             throw new ApiCallException("Could not get transaction details for the transaction hash : " + txnHash + "\n" + result.toString());
         }
@@ -50,10 +50,10 @@ public class TransactionInfoServiceImpl extends NodeBaseService implements Trans
             throw new ApiCallException("Could not get transaction metadata. TxnHash : " + txnHash + "\n" + result.toString());
         }
 
-        if(result.isSuccessful()) {
+        if (result.isSuccessful()) {
             return result.getValue();
         } else {
-            if(result != null)
+            if (result != null)
                 logListener.error(result.toString());
             throw new ApiCallException("Could not get transaction metadata. TxnHash : " + txnHash + "\n" + result.toString());
         }

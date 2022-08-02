@@ -64,10 +64,10 @@ public class TransactionEntryForm {
     public void initializeData(Project project) {
         console = CardanoConsole.getConsole(project);
         RemoteNode node = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
-        if(node != null)
+        if (node != null)
             isMainnet = NetworkUtil.isMainnet(node);
 
-        if(isMainnet) {
+        if (isMainnet) {
             network = Networks.mainnet();
         } else {
             network = Networks.testnet();
@@ -75,7 +75,7 @@ public class TransactionEntryForm {
 
         senderAccChooserBtn.addActionListener(e -> {
             CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
-            if(cardanoAccount != null) {
+            if (cardanoAccount != null) {
                 setSenderAddress(cardanoAccount.getAddress());
                 senderMnemonicTf.setText(cardanoAccount.getMnemonic());
 
@@ -85,6 +85,7 @@ public class TransactionEntryForm {
 
         senderMnemonicTf.addFocusListener(new FocusListener() {
             String oldMnemonic;
+
             @Override
             public void focusGained(FocusEvent e) {
                 oldMnemonic = senderMnemonicTf.getText();
@@ -92,7 +93,7 @@ public class TransactionEntryForm {
 
             @Override
             public void focusLost(FocusEvent e) {
-                if(oldMnemonic != null && oldMnemonic.equals(senderMnemonicTf.getText())) {
+                if (oldMnemonic != null && oldMnemonic.equals(senderMnemonicTf.getText())) {
                     oldMnemonic = null;
                     return;
                 }
@@ -101,8 +102,8 @@ public class TransactionEntryForm {
                 String mnemonic = String.valueOf(senderMnemonicTf.getPassword());
                 try {
                     RemoteNode node = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
-                    if(node != null) {
-                        if(NetworkUtil.isMainnet(node)) {
+                    if (node != null) {
+                        if (NetworkUtil.isMainnet(node)) {
                             Account account = new Account(mnemonic);
                             setSenderAddress(account.baseAddress());
                         } else {
@@ -122,20 +123,20 @@ public class TransactionEntryForm {
 
         receiverAccChooserBtn.addActionListener(e -> {
             CardanoAccount cardanoAccount = AccountChooser.getSelectedAccountForNetwork(project, network, true);
-            if(cardanoAccount != null) {
+            if (cardanoAccount != null) {
                 receiverTf.setText(cardanoAccount.getAddress());
             }
         });
 
         availableBalanceCB.addActionListener(e -> {
-           AssetBalance assetBalance = (AssetBalance) availableBalanceCB.getSelectedItem();
-           if(assetBalance == null) return;
+            AssetBalance assetBalance = (AssetBalance) availableBalanceCB.getSelectedItem();
+            if (assetBalance == null) return;
 
-           if(LOVELACE.equals(assetBalance.getUnit())) {
-               amtUnitTypeCB.setVisible(true);
-           } else {
-               amtUnitTypeCB.setVisible(false);
-           }
+            if (LOVELACE.equals(assetBalance.getUnit())) {
+                amtUnitTypeCB.setVisible(true);
+            } else {
+                amtUnitTypeCB.setVisible(false);
+            }
         });
 
         calculateFeeBtn.addActionListener(e -> {
@@ -143,7 +144,7 @@ public class TransactionEntryForm {
         });
 
         feeOverrideCB.addActionListener(e -> {
-            if(feeOverrideCB.isSelected()) {
+            if (feeOverrideCB.isSelected()) {
                 feeTf.setEditable(true);
             } else {
                 feeTf.setEditable(false);
@@ -153,7 +154,7 @@ public class TransactionEntryForm {
 
     private void setSenderAddress(String address) {
         senderTf.setText(address);
-        if(transactionEntryListener != null && address != null && !address.isEmpty()) {
+        if (transactionEntryListener != null && address != null && !address.isEmpty()) {
             transactionEntryListener.senderAddressChanged(senderTf.getText());
         }
     }
@@ -166,7 +167,7 @@ public class TransactionEntryForm {
                     ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
 
                     String senderAcc = senderTf.getText();
-                    if(StringUtil.isEmpty(senderAcc))
+                    if (StringUtil.isEmpty(senderAcc))
                         return;
 
                     try {
@@ -231,20 +232,20 @@ public class TransactionEntryForm {
 
     public Account getSender() {
         String senderMnenomic = new String(senderMnemonicTf.getPassword());
-        if(StringUtil.isEmpty(senderMnenomic))
+        if (StringUtil.isEmpty(senderMnenomic))
             return null;
 
         try {
             Account senderAcc = null;
-            if(isMainnet) {
+            if (isMainnet) {
                 senderAcc = new Account(senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             } else {
                 senderAcc = new Account(com.bloxbean.cardano.client.common.model.Networks.testnet(), senderMnenomic);
                 String baseAddress = senderAcc.baseAddress(); //Check if baseAddress can be derived
-                if(StringUtil.isEmpty(baseAddress))
+                if (StringUtil.isEmpty(baseAddress))
                     return null;
             }
             return senderAcc;
@@ -260,7 +261,7 @@ public class TransactionEntryForm {
 
     public String getUnit() {
         AssetBalance assetBalance = (AssetBalance) availableBalanceCB.getSelectedItem();
-        if(assetBalance == null)
+        if (assetBalance == null)
             return null;
 
         return assetBalance.getUnit();
@@ -268,17 +269,17 @@ public class TransactionEntryForm {
 
     public BigInteger getAmount() {
         String amtStr = amountTf.getText();
-        if(StringUtil.isEmpty(amtStr))
+        if (StringUtil.isEmpty(amtStr))
             return null;
 
         try {
             String unit = getUnit();
-            if(unit !=null && LOVELACE.equals(unit)) {
+            if (unit != null && LOVELACE.equals(unit)) {
                 //Find ADA / Lovelace in dropdown
-                String amtUnit = (String)amtUnitTypeCB.getSelectedItem();
-                if(ADA.equals(amtUnit)) {
+                String amtUnit = (String) amtUnitTypeCB.getSelectedItem();
+                if (ADA.equals(amtUnit)) {
                     return AdaConversionUtil.adaToLovelace(new BigDecimal(amtStr));
-                } else if(LOVELACE.equals(amtUnit)) {
+                } else if (LOVELACE.equals(amtUnit)) {
                     BigInteger amt = new BigInteger(amtStr);
                     return amt;
                 } else {
@@ -296,11 +297,11 @@ public class TransactionEntryForm {
     }
 
     public BigInteger getFee() {
-        if(!feeOverrideCB.isSelected())
+        if (!feeOverrideCB.isSelected())
             return null;
 
         String feeStr = feeTf.getText();
-        if(StringUtil.isEmpty(feeStr))
+        if (StringUtil.isEmpty(feeStr))
             return null;
 
         try {
@@ -316,19 +317,19 @@ public class TransactionEntryForm {
     }
 
     public @Nullable ValidationInfo doValidate() {
-        if(getSender() == null) {
+        if (getSender() == null) {
             return new ValidationInfo("Please select a valid sender Account or enter valid sender Mnemonic", senderTf);
         }
 
-        if(getUnit() == null) {
+        if (getUnit() == null) {
             return new ValidationInfo("Please select a valid asset to transfer", availableBalanceCB);
         }
 
-        if(StringUtil.isEmpty(getReceiver())) {
+        if (StringUtil.isEmpty(getReceiver())) {
             return new ValidationInfo("Please select a valid receiver address", receiverTf);
         }
 
-        if(getAmount() == null) {
+        if (getAmount() == null) {
             return new ValidationInfo("Please enter valid amount", amountTf);
         }
 

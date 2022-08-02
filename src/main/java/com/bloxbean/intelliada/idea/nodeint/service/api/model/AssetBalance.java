@@ -23,7 +23,7 @@ public class AssetBalance {
     private BigInteger quantity;
 
     public String getFingerPrint() {
-        if(!StringUtil.isEmpty(fingerPrint))
+        if (!StringUtil.isEmpty(fingerPrint))
             return fingerPrint;
         else {
             if (unit == null || LOVELACE.equals(unit))
@@ -37,11 +37,11 @@ public class AssetBalance {
 
     public String toString() {
         String result = "";
-        if(quantity != null && LOVELACE.equals(unit)) {
-            String formattedAmount = AdaConversionUtil.toAssetDecimalAmtFormatted(quantity, (int)6);
+        if (quantity != null && LOVELACE.equals(unit)) {
+            String formattedAmount = AdaConversionUtil.toAssetDecimalAmtFormatted(quantity, (int) 6);
             result += formattedAmount + " Ada";
             result += " (" + AdaConversionUtil.toAssetDecimalAmtFormatted(quantity, 0) + " lovelace)";
-        } else if(quantity != null) {
+        } else if (quantity != null) {
             result += AdaConversionUtil.toAssetDecimalAmtFormatted(quantity, 0);
             result += " - " + getFingerPrint();
         }

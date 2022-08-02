@@ -13,7 +13,7 @@ public class CardanoToolWindowFactory implements ToolWindowFactory, DumbAware {
 
     @Override
     public boolean isApplicable(Project project) {
-       return true;
+        return true;
     }
 
     @Override

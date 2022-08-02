@@ -1,11 +1,12 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
-import com.bloxbean.cardano.client.backend.common.OrderEnum;
-import com.bloxbean.cardano.client.backend.exception.ApiException;
+import com.bloxbean.cardano.client.api.common.OrderEnum;
+import com.bloxbean.cardano.client.api.exception.ApiException;
+import com.bloxbean.cardano.client.api.model.Result;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.model.AddressContent;
-import com.bloxbean.cardano.client.backend.model.Result;
+import com.bloxbean.cardano.client.backend.model.AddressTransactionContent;
 import com.bloxbean.cardano.client.backend.model.TxContentOutputAmount;
-import com.bloxbean.cardano.client.backend.model.Utxo;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.model.LedgerAccount;
@@ -19,6 +20,7 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static com.bloxbean.intelliada.idea.util.AdaConversionUtil.LOVELACE;
 
@@ -35,10 +37,10 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
         AddressContent addressContent = null;
         try {
             Result<AddressContent> result = backendService.getAddressService().getAddressInfo(address);
-            if(result.isSuccessful()) {
+            if (result.isSuccessful()) {
                 addressContent = result.getValue();
             } else {
-                if(result != null)
+                if (result != null)
                     logListener.error(result.toString());
                 throw new ApiException("Unable to get address details");
             }
@@ -51,8 +53,8 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
         List<TxContentOutputAmount> amountList = addressContent.getAmount();
 
         Long amount = 0L;
-        for(TxContentOutputAmount amt: amountList) {
-            if(LOVELACE.equals(amt.getUnit())) {
+        for (TxContentOutputAmount amt : amountList) {
+            if (LOVELACE.equals(amt.getUnit())) {
                 try {
                     amount += Long.parseLong(amt.getQuantity());
                 } catch (Exception e) {
@@ -72,10 +74,10 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
         AddressContent addressContent = null;
         try {
             Result<AddressContent> result = backendService.getAddressService().getAddressInfo(address);
-            if(result.isSuccessful()) {
+            if (result.isSuccessful()) {
                 addressContent = result.getValue();
             } else {
-                if(result != null)
+                if (result != null)
                     logListener.error(result.toString());
                 throw new ApiException("Unable to get address details");
             }
@@ -88,8 +90,8 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
         List<TxContentOutputAmount> amountList = addressContent.getAmount();
 
         List<AssetBalance> assetBalances = new ArrayList<>();
-        for(TxContentOutputAmount amt: amountList) {
-            if(LOVELACE.equals(amt.getUnit())) {
+        for (TxContentOutputAmount amt : amountList) {
+            if (LOVELACE.equals(amt.getUnit())) {
                 try {
                     AssetBalance assetBalance = AssetBalance.builder()
                             .unit(LOVELACE)
@@ -119,11 +121,11 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
     public List<Utxo> getUtxos(String address, int count, int page, OrderEnum order) throws ApiCallException {
         try {
             Result<List<Utxo>> result = backendService.getUtxoService().getUtxos(address, count, page, order);
-            if(result.isSuccessful()) {
+            if (result.isSuccessful()) {
                 logListener.info(JsonUtil.getPrettyJson(result.getValue()));
                 return result.getValue();
             } else {
-                if(result != null)
+                if (result != null)
                     logListener.error(result.toString());
                 throw new ApiException("Unable to get utxos for the address");
             }
@@ -136,12 +138,13 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
     @Override
     public List<String> getRecentTransactions(String address, int count, int page, OrderEnum order) throws ApiCallException {
         try {
-            Result<List<String>> result = backendService.getAddressService().getTransactions(address, count, page, order);
-            if(result.isSuccessful()) {
+            Result<List<AddressTransactionContent>> result = backendService.getAddressService().getTransactions(address, count, page, order);
+            if (result.isSuccessful()) {
                 logListener.info(JsonUtil.getPrettyJson(result.getValue()));
-                return result.getValue();
+                return result.getValue().stream().map(atc -> atc.getTxHash())
+                        .collect(Collectors.toList());
             } else {
-                if(result != null)
+                if (result != null)
                     logListener.error(result.toString());
                 throw new ApiException("Unable to get recent transactions for the address");
             }

@@ -49,11 +49,11 @@ public class IOUtil {
     }
 
     public static String getNameWithoutExtension(String file) {
-        if(StringUtil.isEmpty(file))
+        if (StringUtil.isEmpty(file))
             return file;
 
         int index = file.lastIndexOf(".");
-        if(index == -1)
+        if (index == -1)
             return file;
         else {
             return file.substring(0, index);

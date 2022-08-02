@@ -9,7 +9,10 @@ public enum NodeType {
     CARDANO_WALLET("Cardano Wallet"),
     CARDANO_GRAPHQL("Cardano GraphQL"),
     BLOCKFROST_TESTNET("Blockfrost Testnet"),
-    BLOCKFROST_MAINNET("Blockfrost Mainnet");
+    BLOCKFROST_MAINNET("Blockfrost Mainnet"),
+    KOIOS_TESTNET("Koios Testnet"),
+    KOIOS_MAINNET("Koios Mainnet"),
+    KOIOS_CUSTOM("Koios Custom");
 
     private String displayName;
 
@@ -28,11 +31,13 @@ public enum NodeType {
 
     private static final Map<String, NodeType> nameIndex =
             new HashMap<>(NodeType.values().length);
+
     static {
         for (NodeType nodeType : NodeType.values()) {
             nameIndex.put(nodeType.name(), nodeType);
         }
     }
+
     public static NodeType lookupByName(String name) {
         return nameIndex.get(name);
     }

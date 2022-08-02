@@ -36,7 +36,7 @@
               <forms/>
             </constraints>
             <properties>
-              <text value="Node Type"/>
+              <text value="Providers"/>
             </properties>
           </component>
           <vspacer id="59c04">

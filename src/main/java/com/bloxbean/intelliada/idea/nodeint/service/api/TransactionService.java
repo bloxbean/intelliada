@@ -11,20 +11,20 @@ import java.util.List;
 
 public interface TransactionService {
 
-    public BigInteger calculateFee(PaymentTransaction paymentTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
+    BigInteger calculateFee(PaymentTransaction paymentTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
             throws ApiCallException;
 
-    public String transfer(List<PaymentTransaction> transactions,
-                                   TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
-
-    public String exportSignedTransaction(List<PaymentTransaction> transactions,
+    String transfer(List<PaymentTransaction> transactions,
                            TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
 
+    String exportSignedTransaction(List<PaymentTransaction> transactions,
+                                          TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
 
-    public String mintToken(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
-        throws ApiCallException;
 
-    public String exportMintTokenTransaction(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
+    String mintToken(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
+            throws ApiCallException;
+
+    String exportMintTokenTransaction(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
             throws ApiCallException;
 
 }

@@ -37,8 +37,7 @@ import java.util.Base64;
 public class AESEncryptionHelper {
     private final static Logger logger = Logger.getInstance(AESEncryptionHelper.class);
 
-    public static SecretKey generateKey(String myKey)
-    {
+    public static SecretKey generateKey(String myKey) {
         SecretKeySpec secretKey = null;
         byte[] key = null;
         MessageDigest sha = null;
@@ -49,50 +48,40 @@ public class AESEncryptionHelper {
             key = sha.digest(key);
             key = Arrays.copyOf(key, 16);
             secretKey = new SecretKeySpec(key, "AES");
-        }
-        catch (NoSuchAlgorithmException e) {
+        } catch (NoSuchAlgorithmException e) {
             logger.warn(e);
-        }
-        catch (UnsupportedEncodingException e) {
+        } catch (UnsupportedEncodingException e) {
             logger.warn(e);
         }
 
         return secretKey;
     }
 
-    public static String encrypt(String strToEncrypt, String key)
-    {
-        try
-        {
+    public static String encrypt(String strToEncrypt, String key) {
+        try {
             SecretKey secretKey = generateKey(key);
-            if(secretKey == null)
+            if (secretKey == null)
                 return null;
 
             Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
             cipher.init(Cipher.ENCRYPT_MODE, secretKey);
             return Base64.getEncoder().encodeToString(cipher.doFinal(strToEncrypt.getBytes("UTF-8")));
-        }
-        catch (Exception e)
-        {
+        } catch (Exception e) {
             logger.warn("Error while encrypting: " + e.toString());
         }
         return null;
     }
 
-    public static String decrypt(String strToDecrypt, String key)
-    {
-        try
-        {
+    public static String decrypt(String strToDecrypt, String key) {
+        try {
             SecretKey secretKey = generateKey(key);
-            if(secretKey == null)
+            if (secretKey == null)
                 return null;
 
             Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5PADDING");
             cipher.init(Cipher.DECRYPT_MODE, secretKey);
             return new String(cipher.doFinal(Base64.getDecoder().decode(strToDecrypt)));
-        }
-        catch (Exception e)
-        {
+        } catch (Exception e) {
             logger.warn("Error while decrypting: " + e.toString());
         }
         return null;

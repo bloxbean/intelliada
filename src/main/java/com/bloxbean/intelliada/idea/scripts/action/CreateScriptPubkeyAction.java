@@ -19,17 +19,17 @@ public class CreateScriptPubkeyAction extends AnAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
-        if(project == null)
+        if (project == null)
             return;
 
         ScriptPubKeyGenerateDialog dialog = new ScriptPubKeyGenerateDialog(project);
         boolean ok = dialog.showAndGet();
-        if(!ok)
+        if (!ok)
             return;
 
         ScriptInfo scriptInfo = dialog.getScriptPubkeyEntryForm().generateScriptPubkey();
         ScriptService scriptService = new ScriptService();
-        if(ok) {
+        if (ok) {
             scriptService.addScript(scriptInfo);
         }
 

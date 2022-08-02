@@ -1,21 +1,25 @@
 package com.bloxbean.intelliada.idea.nodeint.service.api;
 
 public interface LogListener {
-    public void info(String msg);
-    public void error(String msg);
-    public void warn(String msg);
-    default public void error(String msg, Throwable t) {
+    void info(String msg);
 
-    }
-    default public void warn(String msg, Throwable t) {
+    void error(String msg);
 
-    }
+    void warn(String msg);
 
-    default public void info(String msg, boolean noLineBreak) {
+    default void error(String msg, Throwable t) {
 
     }
 
-    default public void printWait(String msg) {
+    default void warn(String msg, Throwable t) {
+
+    }
+
+    default void info(String msg, boolean noLineBreak) {
+
+    }
+
+    default void printWait(String msg) {
 
     }
 }

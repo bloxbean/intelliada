@@ -25,7 +25,8 @@ public class CLIProviderDialog extends DialogWrapper {
     }
 
     @Override
-    protected @Nullable JComponent createCenterPanel() {
+    protected @Nullable
+    JComponent createCenterPanel() {
         return localSDKPanel.getMainPanel();
     }
 
@@ -43,15 +44,15 @@ public class CLIProviderDialog extends DialogWrapper {
 
     @Override
     protected @Nullable ValidationInfo doValidate() {
-        if(StringUtil.isEmpty(localSDKPanel.getName())) {
+        if (StringUtil.isEmpty(localSDKPanel.getName())) {
             return new ValidationInfo("Invalid Name", localSDKPanel.getNameTf());
         }
 
-        if(StringUtil.isEmpty(localSDKPanel.getHome())) {
+        if (StringUtil.isEmpty(localSDKPanel.getHome())) {
             return new ValidationInfo("Invalid Cardano CLI Folder", localSDKPanel.getHomeTf());
         }
 
-        if(StringUtil.isEmpty(localSDKPanel.getVersion())) {
+        if (StringUtil.isEmpty(localSDKPanel.getVersion())) {
             return new ValidationInfo("Invalid Version Number or Version could not be determined", localSDKPanel.getVersionTf());
         }
 

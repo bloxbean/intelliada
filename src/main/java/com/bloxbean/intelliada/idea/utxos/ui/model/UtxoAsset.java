@@ -21,7 +21,7 @@ public class UtxoAsset {
     }
 
     private void calculateFingerprint() {
-        if(StringUtil.isEmpty(unit) || LOVELACE.equals(unit))
+        if (StringUtil.isEmpty(unit) || LOVELACE.equals(unit))
             return;
 
         Tuple<String, String> pidAssetName = AssetUtil.getPolicyIdAndAssetName(unit);
@@ -42,7 +42,7 @@ public class UtxoAsset {
 
     @Override
     public String toString() {
-        if(LOVELACE.equals(unit)) {
+        if (LOVELACE.equals(unit)) {
             if (quantity != null)
                 return "Lovelace  (" + AdaConversionUtil.toAssetDecimalAmtFormatted(quantity, 0) + ")";
             else

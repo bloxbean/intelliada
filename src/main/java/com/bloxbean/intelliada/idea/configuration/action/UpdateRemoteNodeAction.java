@@ -21,7 +21,7 @@ public class UpdateRemoteNodeAction extends AnAction {
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
 
-        if(node != null) {
+        if (node != null) {
             ConfigurationHelperService.createOrUpdateRemoteNodeConfiguration(project, node);
             NodeServiceFactory.getInstance().nodeRemoved(node);
         }

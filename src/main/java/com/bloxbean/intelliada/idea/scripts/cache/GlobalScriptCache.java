@@ -63,11 +63,11 @@ public class GlobalScriptCache {
         File file = getScriptsCacheFile();
 
         SecretKey secretKey = getSecretKeyFromFile();
-        if(secretKey == null) { //Create a secret key
+        if (secretKey == null) { //Create a secret key
             secretKey = generateNewSecretAndStore();
         }
 
-        if(secretKey == null) { //If secret is still null. write cache in plain text
+        if (secretKey == null) { //If secret is still null. write cache in plain text
             getScriptCacheKeyFile().delete();
             writeScriptCacheToFile(scriptCache, file);
         } else {
@@ -89,12 +89,12 @@ public class GlobalScriptCache {
         File file = getScriptsCacheFile();
         File keyFile = getScriptCacheKeyFile();
 
-        if(!file.exists())
+        if (!file.exists())
             return new ScriptCache();
 
-        if(keyFile.exists()) {
+        if (keyFile.exists()) {
             SecretKey secretKey = getSecretKeyFromFile();
-            if(secretKey == null) {
+            if (secretKey == null) {
                 return new ScriptCache();
             } else {
                 try {
@@ -121,7 +121,7 @@ public class GlobalScriptCache {
         } catch (Exception e) {
             scriptCache = new ScriptCache();
             log.warn("Could not read from script cache: " + e.getMessage());
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.debug("Could not read from script cache", e);
             }
         }
@@ -137,7 +137,7 @@ public class GlobalScriptCache {
             scriptCache = new ScriptCache();
             //e.printStackTrace();
             log.warn("Could not read from script cache: " + e.getMessage());
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.debug("Could not read from script cache", e);
             }
         }
@@ -210,7 +210,7 @@ public class GlobalScriptCache {
             return null;
         }
 
-        if(key == null) {
+        if (key == null) {
             return null;
         }
 
@@ -241,7 +241,7 @@ public class GlobalScriptCache {
             props.store(output, null);
 
         } catch (Exception io) {
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.warn(io);
             }
         } finally {
@@ -268,7 +268,7 @@ public class GlobalScriptCache {
             return properties;
 
         } catch (Exception io) {
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.warn(io);
             }
             return new Properties();

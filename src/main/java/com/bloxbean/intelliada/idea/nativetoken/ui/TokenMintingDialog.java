@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.nativetoken.ui;
 
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
+import com.bloxbean.cardano.client.transaction.spec.Policy;
 import com.bloxbean.intelliada.idea.core.ui.BaseTransactionDialog;
 import com.bloxbean.intelliada.idea.metadata.ui.MetadataEntryForm;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
@@ -50,8 +51,11 @@ public class TokenMintingDialog extends BaseTransactionDialog {
         mintTransaction.setSender(tokenMintAddressEntryForm.getCreatorAccount());
         mintTransaction.setReceiver(tokenMintAddressEntryForm.getReceiver());
         mintTransaction.setMintAssets(Arrays.asList(assetEntryForm.getMultiAsset()));
-        mintTransaction.setPolicyScript(assetEntryForm.getPolicyScript());
-        mintTransaction.setPolicyKeys(assetEntryForm.getPolicyKeys());
+
+        Policy policy = new Policy();
+        policy.setPolicyScript(assetEntryForm.getPolicyScript());
+        policy.setPolicyKeys(assetEntryForm.getPolicyKeys());
+        mintTransaction.setPolicy(policy);
 
         return mintTransaction;
     }
@@ -87,19 +91,19 @@ public class TokenMintingDialog extends BaseTransactionDialog {
     @Override
     protected @Nullable ValidationInfo doInputValidation() {
         ValidationInfo validationInfo = tokenMintAddressEntryForm.doValidate();
-        if(validationInfo != null)
+        if (validationInfo != null)
             return validationInfo;
 
         validationInfo = assetEntryForm.doValidation();
-        if(validationInfo != null)
+        if (validationInfo != null)
             return validationInfo;
 
         validationInfo = txnDtlEntryForm.doValidate();
-        if(validationInfo != null)
+        if (validationInfo != null)
             return validationInfo;
 
         validationInfo = metadataEntryForm.doValidate();
-        if(validationInfo != null)
+        if (validationInfo != null)
             return validationInfo;
 
         return null;

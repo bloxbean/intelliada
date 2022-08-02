@@ -18,7 +18,7 @@ public class NetworkHelper {
     }
 
     public static NetworkHelper getInstance() {
-        if(instance == null) {
+        if (instance == null) {
             instance = new NetworkHelper();
         }
 
@@ -26,14 +26,14 @@ public class NetworkHelper {
     }
 
     public String getExplorerBaseUrl(String network) {
-        if(StringUtil.isEmpty(network))
+        if (StringUtil.isEmpty(network))
             return null;
         return networkTOExplorerUrlMap.get(network);
     }
 
     public String getTxnHashUrl(String network, String txnHash) {
         String url = getExplorerBaseUrl(network);
-        if(StringUtil.isEmpty(url)) return null;
+        if (StringUtil.isEmpty(url)) return null;
 
         return url + "/transaction?id=" + txnHash;
     }

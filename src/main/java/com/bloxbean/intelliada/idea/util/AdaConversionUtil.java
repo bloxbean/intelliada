@@ -22,7 +22,7 @@ public class AdaConversionUtil {
     }
 
     public static BigDecimal assetToDecimal(BigInteger amount, long decimals) {
-        if(decimals == 0)
+        if (decimals == 0)
             return new BigDecimal(amount);
 
         double oneUnit = Math.pow(10, decimals);
@@ -34,7 +34,7 @@ public class AdaConversionUtil {
     }
 
     public static BigInteger assetFromDecimal(BigDecimal doubleAmout, long decimals) {
-        if(decimals == 0)
+        if (decimals == 0)
             return doubleAmout.toBigInteger();
 
         double oneUnit = Math.pow(10, decimals);
@@ -45,7 +45,7 @@ public class AdaConversionUtil {
     }
 
     public static String formatBigDecimal(BigDecimal amount, int decimals) {
-        if(amount == null) return null;
+        if (amount == null) return null;
 
         amount = amount.setScale(decimals, BigDecimal.ROUND_DOWN);
 
