@@ -33,14 +33,16 @@ LINE_COMMENT="//".*\n
 BLOCK_COMMENT="/"\*(.|\n)*\*"/"
 I_LITERAL=[0-9]+ | 0b[0-1]+ | 0o[0-7]+ | 0x[0-9a-f]+
 B_ARRAYLITERAL=# "/"[0-9a-f]*"/"
-S_LITERALCHAR=('\' | '\n' | '\t' | '\"' | [^\\])
 T_WORD=[a-zA-Z_][0-9a-zA-Z_]*
 
 %%
 <YYINITIAL> {
   {WHITE_SPACE}             { return WHITE_SPACE; }
 
-  "ListLiteralExpr"         { return LISTLITERALEXPR; }
+  "if"                      { return IF; }
+  "else"                    { return ELSE; }
+  "func"                    { return FUNC; }
+ // "ListLiteralExpr"         { return LISTLITERALEXPR; }
   "FuncArc"                 { return FUNCARC; }
 
   {NL}                      { return NL; }
@@ -51,7 +53,6 @@ T_WORD=[a-zA-Z_][0-9a-zA-Z_]*
   {BLOCK_COMMENT}           { return BLOCK_COMMENT; }
   {I_LITERAL}               { return I_LITERAL; }
   {B_ARRAYLITERAL}          { return B_ARRAYLITERAL; }
-  {S_LITERALCHAR}           { return S_LITERALCHAR; }
   {T_WORD}                  { return T_WORD; }
 
 }

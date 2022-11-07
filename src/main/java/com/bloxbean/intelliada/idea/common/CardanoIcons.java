@@ -13,4 +13,5 @@ public class CardanoIcons {
     public final static Icon SCRIPT_LIST_ICON = IconLoader.getIcon("/icons/script_list.png", CardanoIcons.class);
     public final static Icon TRANSFER_ICON = IconLoader.getIcon("/icons/transfer.png", CardanoIcons.class);
     public final static Icon MINT_ICON = IconLoader.getIcon("/icons/mint.png", CardanoIcons.class);
+    public final static Icon HELIOS_FILE_ICON = IconLoader.getIcon("/icons/mint.png", CardanoIcons.class);
 }

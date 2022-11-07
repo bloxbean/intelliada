@@ -15,10 +15,15 @@
 
   psiImplUtilClass="com.bloxbean.intelliada.idea.language.helios.psi.impl.HeliosPsiImplUtil"
 
+  extends(".*Expr")=ValueExpr
   tokens = [
       NL = 'regexp:\r\n'
       EOF = 'regexp:\Z'
       SPACE='regexp:\s+'
+
+      IF='if'
+      ELSE='else'
+      FUNC='func'
 
     program_types_code="regexp:(test|minting_policy|validator)"
 
@@ -28,24 +33,30 @@
     b_arrayliteral = 'regexp:# /[0-9a-f]*/'
 
 //    s_literal = 'regexp: \\ | \n | \t | \" | [^\\]'
-    s_literalchar = "regexp:('\\' | '\n' | '\t' | '\"' | [^\\])"
+    //s_literalchar = "regexp:('\\' | '\n' | '\t' | '\"' | [^\\])"
     t_word = 'regexp:[a-zA-Z_][0-9a-zA-Z_]*'
 
   ]
 }
 
-Program ::= ProgramType (Statement)*
+Program ::= ProgramType Statement (Statement)*
+
+private UntilSemicolonRecover ::= !(';')
+private UntilBraceRecover ::= !('}')
 
 //ProgramType ::= ('test' | 'minting_policy' | 'validator') Word
 ProgramType ::= program_types_code Word
 
-Statement ::= ConstStatement
-                | StructStatement
-                | FuncStatement
-                | EnumStatement
+Statement ::= ImportStatement | ConstStatement | StructStatement | FuncStatement | EnumStatement
+//Statement ::= ConstStatement | StructStatement | FuncStatement | EnumStatement
 
-//Comment ::= 'regexp://.*\n' | 'regexp:/\*(.*|\n)\*/'
-Comment ::= line_comment | block_comment
+Comment ::= 'regexp://.*\n' | 'regexp:/\*(.*|\n)\*/'
+
+ImportStatement ::= 'import' '{' ImportField (',' ImportField)* '}' 'from' ModuleName
+
+ModuleName ::= Word
+
+ImportField ::= Word ['as' Word]
 
 StructStatement ::= 'struct' Word '{' DataDefinition [ImplDefinition] '}'
 
@@ -65,8 +76,7 @@ ImplMember ::= ConstStatement | FuncStatement
 
 ConstStatement ::= 'const' Identifier [':' TypeExpr] '=' ValueExpr
 
-FuncStatement ::= 'func' Identifier '(' [FuncArg (',' FuncArg)*] ')' '->' TypeExpr '{' ValueExpr '}' {pin=3}
-//FuncStatement ::= FUNC Identifier '(' [FuncArg (',' FuncArg)*] ')' '->' TypeExpr '{' ValueExpr '}'
+FuncStatement ::= FUNC Identifier '(' [FuncArg (',' FuncArg)*] ')' '->' TypeExpr '{' ValueExpr '}'
 
 FuncArg ::= NameTypePair
 
@@ -86,7 +96,19 @@ MapTypeExpr ::= 'Map' '[' NonFuncTypeExpr ']' NonFuncTypeExpr
 
 OptionTypeExpr ::= 'Option' '[' NonFuncTypeExpr ']'
 
-//ValueExpr ::= AssignExpr | PrintExpr | LiteralExpr | ValueRefExpr | ValuePathExpr | UnaryExpr | BinaryExpr | ParensExpr | CallExpr | MemberExpr | IfElseExpr | SwitchExpr
+//ValueExpr ::= AssignExpr
+//                  | PrintExpr
+//                  | LiteralExpr
+//                  | ValueRefExpr
+//                  | ValuePathExpr
+//                  | UnaryExpr
+//                  | BinaryExpr
+//                  | ParensExpr
+//                  | CallExpr
+//                  | MemberExpr
+//                  | IfElseExpr
+//                  | SwitchExpr
+
 ValueExpr ::= BinaryExpr
                 | AssignExpr
                 | PrintExpr
@@ -100,44 +122,36 @@ ValueExpr ::= BinaryExpr
                 | ValuePathExpr
                 | LiteralExpr
 
-LiteralExpr ::= PrimitiveLiteralExpr
-                | StructLiteralExpr
-                | ListLiteralExpr
-                | FuncLiteralExpr
+LiteralExpr ::= PrimitiveLiteralExpr | StructLiteralExpr | ListLiteralExpr | MapLiteralExpr | FuncLiteralExpr
 
 PrimitiveLiteralExpr ::= PrimitiveLiteral
 
-PrimitiveLiteral ::= IntLiteral
-                | BoolLiteral
-                | StringLiteral
-                | ByteArrayLiteral
+PrimitiveLiteral ::= IntLiteral | BoolLiteral | StringLiteral | ByteArrayLiteral
 
 StructLiteralExpr ::= (TypePathExpr | TypeRefExpr) ['{' StructLiteralField (',' StructLiteralField)* '}']
 
 StructLiteralField ::= [Word ':'] ValueExpr
 
+ListLiteralExpr ::= '[]' TypeExpr '{' [ValueExpr] (',' ValueExpr)* '}'
+
+MapLiteralExpr ::= 'Map' '[' TypeExpr ']' TypeExpr '{' [ValueExpr ':' ValueExpr] (',' ValueExpr ':' ValueExpr)* '}'
+
 FuncLiteralExpr ::= '(' [FuncArg (',' FuncArc)*] ')' '->' TypeExpr '{' ValueExpr '}'
 
-//IntLiteral ::= 'regexp:[0-9]+' | 'regexp:0b[0-1]+' | 'regexp:0o[0-7]+' | 'regexp:0x[0-9a-f]+'
-IntLiteral ::= i_literal
+IntLiteral ::= 'regexp:[0-9]+' | 'regexp:0b[0-1]+' | 'regexp:0o[0-7]+' | 'regexp:0x[0-9a-f]+'
 
 BoolLiteral ::= 'true' | 'false'
 
 StringLiteral ::= '"' StringLiteralChar* '"';
 
-//StringLiteralChar ::= '\\' | '\n' | '\t' | '\"' | 'regexp:[^\\]' //TODO
-StringLiteralChar ::= s_literalchar
+//original StringLiteralChar ::= '\' | '\n' | '\t' | '"' | 'regexp:[^]'
+StringLiteralChar ::= '\\' | '\n' | '\t' | '\"' | 'regexp:[^\\]'
 
-//ByteArrayLiteral ::= '#' 'regexp:[0-9a-f]*'
-ByteArrayLiteral ::= b_arrayliteral
+ByteArrayLiteral ::= '#' 'regexp:[0-9a-f]*'
 
-BinaryExpr ::= ValueExpr BinaryOp ValueExpr {extends=ValueExpr}
+BinaryExpr ::= ValueExpr BinaryOp ValueExpr
 
-ConditionalExpr ::= ValueExpr ConditionalOp ValueExpr {extends=ValueExpr}
-
-//BinaryOp ::= '+' | '-' | '*' | '/' | '%' | '==' | '!=' | '<' | '>' | '<=' | '>=' | '||' | '&&'
-BinaryOp ::= '+' | '-' | '*' | '/' | '%' | ConditionalOp
-ConditionalOp ::= '==' | '!=' | '<' | '>' | '<=' | '>=' | '||' | '&&'
+BinaryOp ::= '+' | '-' | '*' | '/' | '%' | '==' | '!=' | '<' | '>' | '<=' | '>=' | '||' | '&&'
 
 UnaryExpr ::= UnaryOp ValueExpr
 
@@ -147,20 +161,18 @@ AssignExpr ::= Identifier [':' TypeExpr] '=' ValueExpr ';' ValueExpr
 
 PrintExpr ::= 'print' '(' ValueExpr ')' ';' ValueExpr
 
-//IfElseExpr ::= 'if' '(' ValueExpr ')' '{' ValueExpr '}' ('else' 'if' '(' ValueExpr ')' '{' ValueExpr '}')* 'else' '{' ValueExpr '}' {pin=2}
-
-IfElseExpr ::= 'if' '(' ConditionalExpr ')' '{' ValueExpr '}' ('else' 'if' '(' ConditionalExpr ')' '{' ValueExpr '}')* 'else' '{' ValueExpr '}' {pin=2}
+IfElseExpr ::= IF '(' ValueExpr ')' '{' ValueExpr '}' (ELSE IF '(' ValueExpr ')' '{' ValueExpr '}')* ELSE '{' ValueExpr '}'
 
 
-SwitchExpr ::= ValueExpr '.' 'switch' '{' SwitchCase (',' SwitchCase)* [SwitchDefault] '}' {extends=ValueExpr}
+SwitchExpr ::= ValueExpr '.' 'switch' '{' SwitchCase (',' SwitchCase)* [SwitchDefault] '}'
 
 SwitchCase ::= (Word | (Identifier ':' Word)) '=>' (ValueExpr | ('{' ValueExpr '}'))
 
-SwitchDefault ::= 'else' '=>' (ValueExpr | ('{' ValueExpr '}'))
+SwitchDefault ::= ELSE '=>' (ValueExpr | ('{' ValueExpr '}'))
 
-CallExpr ::= ValueExpr '(' [ValueExpr (',' ValueExpr)*] ')'; {extends=ValueExpr}
+CallExpr ::= ValueExpr '(' [ValueExpr (',' ValueExpr)*] ')';
 
-MemberExpr ::= ValueExpr '.' Word {extends=ValueExpr}
+MemberExpr ::= ValueExpr '.' Word
 
 ParensExpr ::= '(' ValueExpr ')'
 

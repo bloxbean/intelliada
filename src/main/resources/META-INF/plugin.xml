@@ -30,6 +30,17 @@
         <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState"/>
         <applicationService
                 serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.CLIProvidersState"/>
+
+        <fileType
+                name="Helios File"
+                implementationClass="com.bloxbean.intelliada.idea.language.helios.HeliosFileType"
+                fieldName="INSTANCE"
+                language="Helios"
+                extensions="hl"/>
+
+        <lang.parserDefinition
+                language="Helios"
+                implementationClass="com.bloxbean.intelliada.idea.language.helios.HeliosParserDefinition"/>
     </extensions>
 
     <actions>
