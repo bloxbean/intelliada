@@ -28,7 +28,7 @@ WHITE_SPACE=\s+
 NL=\r\n
 EOF=\Z
 SPACE=[ \t\n\x0B\f\r]+
-PROGRAM_TYPES_CODE=(test|minting_policy|validator)
+PROGRAM_TYPES_CODE=(testing|minting|spending|staking|module)
 LINE_COMMENT="//".*\n
 BLOCK_COMMENT="/"\*(.|\n)*\*"/"
 I_LITERAL=[0-9]+ | 0b[0-1]+ | 0o[0-7]+ | 0x[0-9a-f]+
@@ -44,6 +44,7 @@ T_WORD=[a-zA-Z_][0-9a-zA-Z_]*
   "func"                    { return FUNC; }
  // "ListLiteralExpr"         { return LISTLITERALEXPR; }
   "FuncArc"                 { return FUNCARC; }
+  "Option"                  { return OPTION; }
 
   {NL}                      { return NL; }
   {EOF}                     { return EOF; }

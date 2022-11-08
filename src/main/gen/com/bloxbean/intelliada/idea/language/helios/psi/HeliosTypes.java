@@ -75,7 +75,10 @@ public interface HeliosTypes {
   IElementType I_LITERAL = new HeliosTokenType("i_literal");
   IElementType LINE_COMMENT = new HeliosTokenType("line_comment");
   IElementType NL = new HeliosTokenType("NL");
+  IElementType OPTION = new HeliosTokenType("Option");
   IElementType PROGRAM_TYPES_CODE = new HeliosTokenType("program_types_code");
+  IElementType STRUCT = new HeliosTokenType("struct");
+  IElementType SWITCH = new HeliosTokenType("switch");
   IElementType T_WORD = new HeliosTokenType("t_word");
 
   class Factory {

@@ -21,11 +21,14 @@
       EOF = 'regexp:\Z'
       SPACE='regexp:\s+'
 
+      STRUCT='struct'
       IF='if'
       ELSE='else'
       FUNC='func'
+      OPTION = 'Option'
+      SWITCH = 'switch'
 
-    program_types_code="regexp:(test|minting_policy|validator)"
+    program_types_code="regexp:(testing|minting|spending|staking|module)"
 
     line_comment='regexp://.*\n'
     block_comment='regexp:/\*(.|\n)*\*/'
@@ -47,8 +50,9 @@ private UntilBraceRecover ::= !('}')
 //ProgramType ::= ('test' | 'minting_policy' | 'validator') Word
 ProgramType ::= program_types_code Word
 
-Statement ::= ImportStatement | ConstStatement | StructStatement | FuncStatement | EnumStatement
+Statement ::= (ImportStatement | ConstStatement | StructStatement | FuncStatement | EnumStatement)
 //Statement ::= ConstStatement | StructStatement | FuncStatement | EnumStatement
+private statement_recover ::= !(  "}" | "\r\n")
 
 Comment ::= 'regexp://.*\n' | 'regexp:/\*(.*|\n)\*/'
 
@@ -58,7 +62,7 @@ ModuleName ::= Word
 
 ImportField ::= Word ['as' Word]
 
-StructStatement ::= 'struct' Word '{' DataDefinition [ImplDefinition] '}'
+StructStatement ::= STRUCT Word '{' DataDefinition [ImplDefinition] '}' {pin=3 recoverWhile=statement_recover}
 
 DataDefinition ::= DataField (DataField)*
 
@@ -76,7 +80,7 @@ ImplMember ::= ConstStatement | FuncStatement
 
 ConstStatement ::= 'const' Identifier [':' TypeExpr] '=' ValueExpr
 
-FuncStatement ::= FUNC Identifier '(' [FuncArg (',' FuncArg)*] ')' '->' TypeExpr '{' ValueExpr '}'
+FuncStatement ::= FUNC Identifier '(' [('self' | FuncArg) (',' FuncArg)*] ')' '->' TypeExpr '{' ValueExpr '}'
 
 FuncArg ::= NameTypePair
 
@@ -94,7 +98,7 @@ ListTypeExpr ::= '[' ']' NonFuncTypeExpr
 
 MapTypeExpr ::= 'Map' '[' NonFuncTypeExpr ']' NonFuncTypeExpr
 
-OptionTypeExpr ::= 'Option' '[' NonFuncTypeExpr ']'
+OptionTypeExpr ::= OPTION '[' NonFuncTypeExpr ']'
 
 //ValueExpr ::= AssignExpr
 //                  | PrintExpr
@@ -109,6 +113,10 @@ OptionTypeExpr ::= 'Option' '[' NonFuncTypeExpr ']'
 //                  | IfElseExpr
 //                  | SwitchExpr
 
+//VARIABLE ::=Identifier
+//METHOD_NAME ::=Identifier
+private MethodExpr ::= ValueExpr '.' CallExpr //TODO -- Check if it's required
+
 ValueExpr ::= BinaryExpr
                 | AssignExpr
                 | PrintExpr
@@ -121,6 +129,7 @@ ValueExpr ::= BinaryExpr
                 | ValueRefExpr
                 | ValuePathExpr
                 | LiteralExpr
+
 
 LiteralExpr ::= PrimitiveLiteralExpr | StructLiteralExpr | ListLiteralExpr | MapLiteralExpr | FuncLiteralExpr
 
@@ -164,7 +173,7 @@ PrintExpr ::= 'print' '(' ValueExpr ')' ';' ValueExpr
 IfElseExpr ::= IF '(' ValueExpr ')' '{' ValueExpr '}' (ELSE IF '(' ValueExpr ')' '{' ValueExpr '}')* ELSE '{' ValueExpr '}'
 
 
-SwitchExpr ::= ValueExpr '.' 'switch' '{' SwitchCase (',' SwitchCase)* [SwitchDefault] '}'
+SwitchExpr ::= ValueExpr '.' SWITCH '{' SwitchCase (',' SwitchCase)* [SwitchDefault] '}'
 
 SwitchCase ::= (Word | (Identifier ':' Word)) '=>' (ValueExpr | ('{' ValueExpr '}'))
 

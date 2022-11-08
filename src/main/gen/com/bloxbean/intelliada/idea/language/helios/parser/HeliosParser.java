@@ -331,7 +331,7 @@ public class HeliosParser implements PsiParser, LightPsiParser {
   }
 
   /* ********************************************************** */
-  // FUNC Identifier '(' [FuncArg (',' FuncArg)*] ')' '->' TypeExpr '{' ValueExpr '}'
+  // FUNC Identifier '(' [('self' | FuncArg) (',' FuncArg)*] ')' '->' TypeExpr '{' ValueExpr '}'
   public static boolean FuncStatement(PsiBuilder b, int l) {
     if (!recursion_guard_(b, l, "FuncStatement")) return false;
     if (!nextTokenIs(b, FUNC)) return false;
@@ -351,21 +351,30 @@ public class HeliosParser implements PsiParser, LightPsiParser {
     return r;
   }
 
-  // [FuncArg (',' FuncArg)*]
+  // [('self' | FuncArg) (',' FuncArg)*]
   private static boolean FuncStatement_3(PsiBuilder b, int l) {
     if (!recursion_guard_(b, l, "FuncStatement_3")) return false;
     FuncStatement_3_0(b, l + 1);
     return true;
   }
 
-  // FuncArg (',' FuncArg)*
+  // ('self' | FuncArg) (',' FuncArg)*
   private static boolean FuncStatement_3_0(PsiBuilder b, int l) {
     if (!recursion_guard_(b, l, "FuncStatement_3_0")) return false;
     boolean r;
     Marker m = enter_section_(b);
-    r = FuncArg(b, l + 1);
+    r = FuncStatement_3_0_0(b, l + 1);
     r = r && FuncStatement_3_0_1(b, l + 1);
     exit_section_(b, m, null, r);
+    return r;
+  }
+
+  // 'self' | FuncArg
+  private static boolean FuncStatement_3_0_0(PsiBuilder b, int l) {
+    if (!recursion_guard_(b, l, "FuncStatement_3_0_0")) return false;
+    boolean r;
+    r = consumeToken(b, "self");
+    if (!r) r = FuncArg(b, l + 1);
     return r;
   }
 
@@ -723,6 +732,19 @@ public class HeliosParser implements PsiParser, LightPsiParser {
   }
 
   /* ********************************************************** */
+  // ValueExpr '.' CallExpr
+  static boolean MethodExpr(PsiBuilder b, int l) {
+    if (!recursion_guard_(b, l, "MethodExpr")) return false;
+    boolean r;
+    Marker m = enter_section_(b);
+    r = ValueExpr(b, l + 1, -1);
+    r = r && consumeToken(b, ".");
+    r = r && ValueExpr(b, l + 1, 4);
+    exit_section_(b, m, null, r);
+    return r;
+  }
+
+  /* ********************************************************** */
   // Word
   public static boolean ModuleName(PsiBuilder b, int l) {
     if (!recursion_guard_(b, l, "ModuleName")) return false;
@@ -764,16 +786,17 @@ public class HeliosParser implements PsiParser, LightPsiParser {
   }
 
   /* ********************************************************** */
-  // 'Option' '[' NonFuncTypeExpr ']'
+  // OPTION '[' NonFuncTypeExpr ']'
   public static boolean OptionTypeExpr(PsiBuilder b, int l) {
     if (!recursion_guard_(b, l, "OptionTypeExpr")) return false;
+    if (!nextTokenIs(b, OPTION)) return false;
     boolean r;
-    Marker m = enter_section_(b, l, _NONE_, OPTION_TYPE_EXPR, "<option type expr>");
-    r = consumeToken(b, "Option");
+    Marker m = enter_section_(b);
+    r = consumeToken(b, OPTION);
     r = r && consumeToken(b, "[");
     r = r && NonFuncTypeExpr(b, l + 1);
     r = r && consumeToken(b, "]");
-    exit_section_(b, l, m, r, false, null);
+    exit_section_(b, m, OPTION_TYPE_EXPR, r);
     return r;
   }
 
@@ -998,19 +1021,20 @@ public class HeliosParser implements PsiParser, LightPsiParser {
   }
 
   /* ********************************************************** */
-  // 'struct' Word '{' DataDefinition [ImplDefinition] '}'
+  // STRUCT Word '{' DataDefinition [ImplDefinition] '}'
   public static boolean StructStatement(PsiBuilder b, int l) {
     if (!recursion_guard_(b, l, "StructStatement")) return false;
-    boolean r;
+    boolean r, p;
     Marker m = enter_section_(b, l, _NONE_, STRUCT_STATEMENT, "<struct statement>");
-    r = consumeToken(b, "struct");
+    r = consumeToken(b, STRUCT);
     r = r && Word(b, l + 1);
     r = r && consumeToken(b, "{");
-    r = r && DataDefinition(b, l + 1);
-    r = r && StructStatement_4(b, l + 1);
-    r = r && consumeToken(b, "}");
-    exit_section_(b, l, m, r, false, null);
-    return r;
+    p = r; // pin = 3
+    r = r && report_error_(b, DataDefinition(b, l + 1));
+    r = p && report_error_(b, StructStatement_4(b, l + 1)) && r;
+    r = p && consumeToken(b, "}") && r;
+    exit_section_(b, l, m, r, p, HeliosParser::statement_recover);
+    return r || p;
   }
 
   // [ImplDefinition]
@@ -1218,6 +1242,26 @@ public class HeliosParser implements PsiParser, LightPsiParser {
     Marker m = enter_section_(b);
     r = consumeToken(b, T_WORD);
     exit_section_(b, m, WORD, r);
+    return r;
+  }
+
+  /* ********************************************************** */
+  // !(  "}" | "\r\n")
+  static boolean statement_recover(PsiBuilder b, int l) {
+    if (!recursion_guard_(b, l, "statement_recover")) return false;
+    boolean r;
+    Marker m = enter_section_(b, l, _NOT_);
+    r = !statement_recover_0(b, l + 1);
+    exit_section_(b, l, m, r, false, null);
+    return r;
+  }
+
+  // "}" | "\r\n"
+  private static boolean statement_recover_0(PsiBuilder b, int l) {
+    if (!recursion_guard_(b, l, "statement_recover_0")) return false;
+    boolean r;
+    r = consumeToken(b, "}");
+    if (!r) r = consumeToken(b, "\r\n");
     return r;
   }
 
@@ -1471,13 +1515,13 @@ public class HeliosParser implements PsiParser, LightPsiParser {
     return r;
   }
 
-  // '.' 'switch' '{' SwitchCase (',' SwitchCase)* [SwitchDefault] '}'
+  // '.' SWITCH '{' SwitchCase (',' SwitchCase)* [SwitchDefault] '}'
   private static boolean SwitchExpr_0(PsiBuilder b, int l) {
     if (!recursion_guard_(b, l, "SwitchExpr_0")) return false;
     boolean r;
     Marker m = enter_section_(b);
     r = consumeTokenSmart(b, ".");
-    r = r && consumeToken(b, "switch");
+    r = r && consumeToken(b, SWITCH);
     r = r && consumeToken(b, "{");
     r = r && SwitchCase(b, l + 1);
     r = r && SwitchExpr_0_4(b, l + 1);

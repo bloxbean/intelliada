@@ -28,9 +28,9 @@ public class HeliosStructStatementImpl extends ASTWrapperPsiElement implements H
   }
 
   @Override
-  @NotNull
+  @Nullable
   public HeliosDataDefinition getDataDefinition() {
-    return findNotNullChildByClass(HeliosDataDefinition.class);
+    return findChildByClass(HeliosDataDefinition.class);
   }
 
   @Override

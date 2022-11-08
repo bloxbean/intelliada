@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.language.helios;
 
 import com.bloxbean.intelliada.idea.language.helios.parser.HeliosParser;
 import com.bloxbean.intelliada.idea.language.helios.psi.HeliosFile;
+import com.bloxbean.intelliada.idea.language.helios.psi.HeliosTokenType;
 import com.bloxbean.intelliada.idea.language.helios.psi.HeliosTypes;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.ParserDefinition;
@@ -12,6 +13,7 @@ import com.intellij.psi.FileViewProvider;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.TokenType;
+import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
 import org.jetbrains.annotations.NotNull;
@@ -19,7 +21,10 @@ import org.jetbrains.annotations.NotNull;
 public class HeliosParserDefinition implements ParserDefinition {
 
     public static final TokenSet WHITE_SPACES = TokenSet.create(TokenType.WHITE_SPACE);
-    public static final TokenSet COMMENTS = TokenSet.create(HeliosTypes.COMMENT);
+
+    public static final IElementType LINE_COMMENT = HeliosTypes.LINE_COMMENT;
+    public static final IElementType BLOCK_COMMENT = HeliosTypes.BLOCK_COMMENT;
+    public static final TokenSet COMMENTS = TokenSet.create(LINE_COMMENT, BLOCK_COMMENT);
 
     public static final IFileElementType FILE = new IFileElementType(HeliosLanguage.INSTANCE);
 

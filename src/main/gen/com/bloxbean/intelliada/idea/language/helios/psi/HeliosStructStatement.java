@@ -7,7 +7,7 @@ import com.intellij.psi.PsiElement;
 
 public interface HeliosStructStatement extends PsiElement {
 
-  @NotNull
+  @Nullable
   HeliosDataDefinition getDataDefinition();
 
   @Nullable
