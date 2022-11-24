@@ -1,20 +1,21 @@
 package com.bloxbean.intelliada.idea.nodeint.util;
 
+import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.intellij.openapi.util.text.StringUtil;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class NetworkHelper {
-    public static final String MAINNET = "mainnet";
-    public static final String TESTNET = "testnet";
     private static NetworkHelper instance;
     private Map<String, String> networkTOExplorerUrlMap;
 
     private NetworkHelper() {
         networkTOExplorerUrlMap = new HashMap<>();
-        networkTOExplorerUrlMap.put(MAINNET, "https://explorer.cardano.org/en");
-        networkTOExplorerUrlMap.put(TESTNET, "https://explorer.cardano-testnet.iohkdev.io/en");
+        networkTOExplorerUrlMap.put(Networks.mainnet().getName(), "https://cexplorer.io");
+        networkTOExplorerUrlMap.put(Networks.testnet().getName(), "https://testnet.cexplorer.io");
+        networkTOExplorerUrlMap.put(Networks.prepod().getName(), "https://preprod.cexplorer.io");
+        networkTOExplorerUrlMap.put(Networks.preview().getName(), "https://preview.cexplorer.io");
     }
 
     public static NetworkHelper getInstance() {
@@ -35,7 +36,7 @@ public class NetworkHelper {
         String url = getExplorerBaseUrl(network);
         if (StringUtil.isEmpty(url)) return null;
 
-        return url + "/transaction?id=" + txnHash;
+        return url + "/tx/" + txnHash;
     }
 
 }

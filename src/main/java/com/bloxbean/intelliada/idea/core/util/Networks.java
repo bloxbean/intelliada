@@ -10,4 +10,14 @@ public class Networks {
         Network testnet = new Network("testnet", "0", "1097911063");
         return testnet;
     }
+
+    public static Network prepod() {
+        Network testnet = new Network("prepod", "0", "1");
+        return testnet;
+    }
+
+    public static Network preview() {
+        Network testnet = new Network("preview", "0", "2");
+        return testnet;
+    }
 }

@@ -10,6 +10,9 @@ public enum NodeType {
     CARDANO_GRAPHQL("Cardano GraphQL"),
     BLOCKFROST_TESTNET("Blockfrost Testnet"),
     BLOCKFROST_MAINNET("Blockfrost Mainnet"),
+    BLOCKFROST_PREPOD("Blockfrost Prepod"),
+    BLOCKFROST_PREVIEW("Blockfrost Preview"),
+    BLOCKFROST_CUSTOM("Blockfrost Custom"),
     KOIOS_TESTNET("Koios Testnet"),
     KOIOS_MAINNET("Koios Mainnet"),
     KOIOS_CUSTOM("Koios Custom");

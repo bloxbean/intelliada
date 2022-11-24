@@ -37,7 +37,11 @@ public class NodeServiceFactory {
             return backendService;
 
         if (NodeType.BLOCKFROST_TESTNET.equals(remoteNode.getNodeType()) ||
-                NodeType.BLOCKFROST_MAINNET.equals(remoteNode.getNodeType())) {
+                NodeType.BLOCKFROST_MAINNET.equals(remoteNode.getNodeType()) ||
+                NodeType.BLOCKFROST_PREPOD.equals(remoteNode.getNodeType()) ||
+                NodeType.BLOCKFROST_PREVIEW.equals(remoteNode.getNodeType()) ||
+                NodeType.BLOCKFROST_CUSTOM.equals(remoteNode.getNodeType())
+        ) {
             backendService
                     = new BFBackendService(remoteNode.getApiEndpoint(), remoteNode.getAuthKey());
             backendServiceMap.put(remoteNode.getId(), backendService);

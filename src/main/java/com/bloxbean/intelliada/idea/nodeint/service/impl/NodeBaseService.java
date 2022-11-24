@@ -5,6 +5,7 @@ import com.bloxbean.cardano.client.backend.api.BackendService;
 import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.util.JsonUtil;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
@@ -97,11 +98,11 @@ public class NodeBaseService {
                     logListener.info(JsonUtil.getPrettyJson(txnResult.getValue()));
 
                     try {
-                        if (NetworkUtil.isMainnet(remoteNode)) {
-                            logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.MAINNET, txnId));
-                        } else {
-                            logListener.info("Check transaction details here : " + NetworkHelper.getInstance().getTxnHashUrl(NetworkHelper.TESTNET, txnId));
-                        }
+                        Network network = NetworkUtil.getNetworkType(remoteNode);
+                        if (network != null)
+                            logListener.info("Check transaction details here : "
+                                    + NetworkHelper.getInstance().getTxnHashUrl(network.getName(), txnId));
+
                     } catch (Exception e) {
                         //Ignore
                     }

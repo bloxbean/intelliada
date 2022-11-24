@@ -74,7 +74,11 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
     private void handleNodeTypeSelection() {
         nodeTypesCB.addActionListener(e -> {
             if (NodeType.BLOCKFROST_TESTNET.equals(nodeTypesCB.getSelectedItem())
-                    || NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
+                    || NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())
+                    || NodeType.BLOCKFROST_PREPOD.equals(nodeTypesCB.getSelectedItem())
+                    || NodeType.BLOCKFROST_PREVIEW.equals(nodeTypesCB.getSelectedItem())
+                    || NodeType.BLOCKFROST_CUSTOM.equals(nodeTypesCB.getSelectedItem())
+            ) {
                 apiEndpointTf.setEnabled(false);
                 authKeyLabel.setText("Project Id");
 
@@ -84,6 +88,15 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
                 } else if (NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
                     apiEndpointTf.setText(NetworkUrls.BLOCKFROST_MAINNET_BASEURL);
                     setNetwork(Networks.mainnet());
+                } else if (NodeType.BLOCKFROST_PREPOD.equals(nodeTypesCB.getSelectedItem())) {
+                    apiEndpointTf.setText(NetworkUrls.BLOCKFROST_PREPOD_BASEURL);
+                    setNetwork(Networks.prepod());
+                } else if (NodeType.BLOCKFROST_PREVIEW.equals(nodeTypesCB.getSelectedItem())) {
+                    apiEndpointTf.setText(NetworkUrls.BLOCKFROST_PREVIEW_BASEURL);
+                    setNetwork(Networks.preview());
+                } else if (NodeType.BLOCKFROST_CUSTOM.equals(nodeTypesCB.getSelectedItem())) {
+                    apiEndpointTf.setEnabled(true);
+                    setNetwork(Networks.testnet());
                 }
 
             } else {
@@ -223,6 +236,12 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
 
     private void createUIComponents() {
         // TODO: place custom component creation code here
-        nodeTypesCB = new ComboBox(new NodeType[]{NodeType.EMPTY, NodeType.BLOCKFROST_TESTNET, NodeType.BLOCKFROST_MAINNET});
+        nodeTypesCB = new ComboBox(new NodeType[]{NodeType.EMPTY,
+                NodeType.BLOCKFROST_PREPOD,
+                NodeType.BLOCKFROST_PREVIEW,
+                NodeType.BLOCKFROST_TESTNET,
+                NodeType.BLOCKFROST_MAINNET,
+                NodeType.BLOCKFROST_CUSTOM
+        });
     }
 }

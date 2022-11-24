@@ -9,6 +9,12 @@ public class NetworkUtil {
         com.bloxbean.cardano.client.common.model.Network clNetwork = null;
         if (Networks.mainnet().equals(network))
             clNetwork = com.bloxbean.cardano.client.common.model.Networks.mainnet();
+        else if (Networks.testnet().equals(network))
+            clNetwork = com.bloxbean.cardano.client.common.model.Networks.testnet();
+        else if (Networks.prepod().equals(network))
+            clNetwork = com.bloxbean.cardano.client.common.model.Networks.preprod();
+        else if (Networks.preview().equals(network))
+            clNetwork = com.bloxbean.cardano.client.common.model.Networks.preview();
         else
             clNetwork = com.bloxbean.cardano.client.common.model.Networks.testnet();
 
@@ -21,4 +27,18 @@ public class NetworkUtil {
         else
             return false;
     }
+
+    public static com.bloxbean.intelliada.idea.core.util.Network getNetworkType(RemoteNode node) {
+        if (Networks.mainnet().getName().equals(node.getNetwork())) {
+            return Networks.mainnet();
+        } else if (Networks.testnet().getName().equals(node.getNetwork())) {
+            return Networks.testnet();
+        } else if (Networks.prepod().getName().equals(node.getNetwork())) {
+            return Networks.prepod();
+        } if (Networks.preview().getName().equals(node.getNetwork())) {
+            return Networks.preview();
+        } else
+            return Networks.testnet();
+    }
+
 }
