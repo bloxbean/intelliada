@@ -240,8 +240,7 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
                 NodeType.BLOCKFROST_PREPOD,
                 NodeType.BLOCKFROST_PREVIEW,
                 NodeType.BLOCKFROST_TESTNET,
-                NodeType.BLOCKFROST_MAINNET,
-                NodeType.BLOCKFROST_CUSTOM
+                NodeType.BLOCKFROST_MAINNET
         });
     }
 }

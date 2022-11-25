@@ -7,6 +7,9 @@ import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.model.AddressContent;
 import com.bloxbean.cardano.client.backend.model.AddressTransactionContent;
 import com.bloxbean.cardano.client.backend.model.TxContentOutputAmount;
+import com.bloxbean.cardano.client.util.AssetUtil;
+import com.bloxbean.cardano.client.util.HexUtil;
+import com.bloxbean.cardano.client.util.Tuple;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
 import com.bloxbean.intelliada.idea.nodeint.model.LedgerAccount;
@@ -17,6 +20,7 @@ import com.bloxbean.intelliada.idea.util.JsonUtil;
 import com.intellij.openapi.project.Project;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -103,8 +107,17 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
                 }
             } else {
                 try {
+                    String assetName = null;
+                    String policy = null;
+                    try {
+                        Tuple<String, String> policyAssetName = AssetUtil.getPolicyIdAndAssetName(amt.getUnit());
+                        assetName = new String(HexUtil.decodeHexString(policyAssetName._2), StandardCharsets.UTF_8);
+                        policy = policyAssetName._1;
+                    } catch (Exception e) {}
                     AssetBalance assetBalance = AssetBalance.builder()
                             .unit(amt.getUnit())
+                            .policy(policy)
+                            .assetName(assetName)
                             .quantity(new BigInteger(amt.getQuantity()))
                             .build();
                     assetBalances.add(assetBalance);

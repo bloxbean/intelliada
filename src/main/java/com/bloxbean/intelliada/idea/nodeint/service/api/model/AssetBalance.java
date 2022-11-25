@@ -20,6 +20,8 @@ import static com.bloxbean.intelliada.idea.util.AdaConversionUtil.LOVELACE;
 public class AssetBalance {
     private String unit;
     private String fingerPrint;
+    private String policy;
+    private String assetName;
     private BigInteger quantity;
 
     public String getFingerPrint() {
@@ -43,7 +45,10 @@ public class AssetBalance {
             result += " (" + AdaConversionUtil.toAssetDecimalAmtFormatted(quantity, 0) + " lovelace)";
         } else if (quantity != null) {
             result += AdaConversionUtil.toAssetDecimalAmtFormatted(quantity, 0);
-            result += " - " + getFingerPrint();
+            if (!StringUtil.isEmpty(getAssetName()) && !StringUtil.isEmpty(getPolicy()))
+                result += " - " + StringUtil.trimMiddle(getAssetName(), 30) + " (" + StringUtil.trimMiddle(getPolicy(), 18) + ")";
+            else
+                result += " - " + getFingerPrint();
         }
 
         return result;
