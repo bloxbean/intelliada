@@ -30,6 +30,18 @@
         <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState"/>
         <applicationService
                 serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.CLIProvidersState"/>
+
+        <fileType
+                name="Aiken File"
+                implementationClass="com.bloxbean.intelliada.idea.aiken.lang.AikenFileType"
+                fieldName="INSTANCE"
+                language="Aiken"
+                extensions="ak"/>
+
+        <lang.parserDefinition language="Aiken" implementationClass="com.bloxbean.intelliada.idea.aiken.lang.AikenParserDefinition"/>
+        <lang.syntaxHighlighter language="Aiken" implementationClass="com.bloxbean.intelliada.idea.aiken.highlight.AikenHighlighter"/>
+<!--        <highlightErrorFilter-->
+<!--                implementation="com.bloxbean.intelliada.idea.aiken.highlight.ParseErrorHighlightFilter" />-->
     </extensions>
 
     <actions>
