@@ -15,14 +15,26 @@ import java.util.Map;
 
 public class AikenHighlighter extends SyntaxHighlighterBase {
     private static final TextAttributesKey[] EMPTY_KEYS = new TextAttributesKey[0];
-//
-//    //https://developer.algorand.org/docs/reference/teal/specification/#arithmetic-logic-and-cryptographic-operations
-//    private static final TokenSet OPERATIONS = TokenSet.create(TEALKeywords.GENERAL_OPERATIONS_ELEMENTS.toArray(new IElementType[0]));
-//
+
     private static final TokenSet KEYWORDS = TokenSet.create(
-        AikenTypes.IMPORT, AikenTypes.PUB, AikenTypes.FN, AikenTypes.LET, AikenTypes.CASE, AikenTypes.IMPORT, AikenTypes.TYPE, AikenTypes.ASSERT, AikenTypes.TODO, AikenTypes.CONST, AikenTypes.EXTERNAL
+        AikenTypes.IF,
+        AikenTypes.ELSE,
+        AikenTypes.WHEN,
+        AikenTypes.IS,
+        AikenTypes.FN,
+        AikenTypes.USE,
+        AikenTypes.LET,
+        AikenTypes.PUB,
+        AikenTypes.TYPE,
+        AikenTypes.OPAQUE,
+        AikenTypes.CONST,
+        AikenTypes.TODO,
+        AikenTypes.ASSERT,
+        AikenTypes.CHECK,
+        AikenTypes.TEST,
+        AikenTypes.ERROR
     );
-//    //
+
     private static final Map<IElementType, TextAttributesKey> keys = new HashMap<>();
 
     static {

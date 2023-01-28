@@ -18,15 +18,25 @@
 
 tokens = [
         // Keywords
-        PUB = "pub"
+        IF = "if"
+        ELSE = "else"
+        WHEN = "when"
+        IS = "is"
         FN = "fn"
+        USE = "use"
         LET = "let"
-        CASE = "case"
-        IMPORT = "use"
+        PUB = "pub"
         TYPE = "type"
-        ASSERT = "assert"
-        TODO = "todo"
+        OPAQUE = "opaque"
         CONST = "const"
+        TODO = "todo"
+        ASSERT = "assert"
+        CHECK = "check"
+        TEST = "test"
+        TRACE = "trace"
+        ERROR = "error"
+
+        //check if required??
         EXTERNAL = "external"
 
         // Regexp
@@ -102,7 +112,7 @@ typeIdentifierInnerType ::= typeIdentifier [COMMA]
 private constructorElement ::= constructorIdentifier typeIdentifier [COMMA]
 constructorIdentifier ::= IDENTIFIER COLON
 
-importStatement ::= IMPORT importStatementElement
+importStatement ::= USE importStatementElement
 importStatementElement ::= IDENTIFIER ('/' IDENTIFIER [importStatementTypes])*
 importStatementTypes ::= DOT LBRACE ((UPPER_IDENTIFIER|IDENTIFIER) [COMMA])* RBRACE
 
