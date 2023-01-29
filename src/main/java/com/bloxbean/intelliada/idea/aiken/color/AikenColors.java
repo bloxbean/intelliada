@@ -15,9 +15,9 @@ public class AikenColors {
     public static final TextAttributesKey KEYWORD =
             createTextAttributesKey("Keyword", DefaultLanguageHighlighterColors.KEYWORD);
     public static final TextAttributesKey STRING =
-            createTextAttributesKey("Keyword", DefaultLanguageHighlighterColors.STRING);
+            createTextAttributesKey("String", DefaultLanguageHighlighterColors.STRING);
     public static final TextAttributesKey IDENTIFIER =
-            createTextAttributesKey("Keyword", DefaultLanguageHighlighterColors.CLASS_NAME);
+            createTextAttributesKey("Identifier//Type", DefaultLanguageHighlighterColors.CLASS_NAME);
 
 //
 //    DOC_COMMENT(AikenBundle.messagePointer("settings.Aiken.color.comment.doc"), DefaultLanguageHighlighterColors.DOC_COMMENT),

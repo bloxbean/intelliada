@@ -45,17 +45,18 @@ compileTestKotlin {
 
 dependencies {
     compile fileTree(include: ['*.jar'], dir: 'lib')
-    compile('com.bloxbean.cardano:cardano-client-lib:0.3.0') {
+    compile('com.bloxbean.cardano:cardano-client-lib:0.4.2') {
         exclude group: 'org.slf4j', module: 'slf4j-api'
     }
-    compile('com.bloxbean.cardano:cardano-client-backend-blockfrost:0.3.0') {
-        exclude group: 'org.slf4j', module: 'slf4j-api'
-        exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
-    }
-    compile('com.bloxbean.cardano:cardano-client-backend-koios:0.3.0') {
+    compile('com.bloxbean.cardano:cardano-client-backend-blockfrost:0.4.2') {
         exclude group: 'org.slf4j', module: 'slf4j-api'
         exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
     }
+    compile('com.bloxbean.cardano:cardano-client-backend-koios:0.4.2') {
+        exclude group: 'org.slf4j', module: 'slf4j-api'
+        exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
+    }
+    compile('com.moandjiezana.toml:toml4j:0.7.2')
 
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.4.10")
 

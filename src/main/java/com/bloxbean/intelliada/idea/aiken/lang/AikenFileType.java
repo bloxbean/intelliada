@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.aiken.lang;
 
+import com.bloxbean.intelliada.idea.aiken.common.AikenIcons;
 import com.intellij.openapi.fileTypes.LanguageFileType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -17,7 +18,7 @@ public class AikenFileType extends LanguageFileType {
     @NotNull
     @Override
     public String getName() {
-        return "Aiken";
+        return "Aiken File";
     }
 
     @NotNull

@@ -38,13 +38,55 @@
                 language="Aiken"
                 extensions="ak"/>
 
+        <fileType
+                name="Aiken Project File"
+                implementationClass="com.bloxbean.intelliada.idea.aiken.filetypes.AikenTomlFileType"
+                fieldName="INSTANCE"
+                fileNames="aiken"
+                extensions="toml"/>
+
         <lang.parserDefinition language="Aiken" implementationClass="com.bloxbean.intelliada.idea.aiken.lang.AikenParserDefinition"/>
         <lang.syntaxHighlighter language="Aiken" implementationClass="com.bloxbean.intelliada.idea.aiken.highlight.AikenHighlighter"/>
-<!--        <highlightErrorFilter-->
-<!--                implementation="com.bloxbean.intelliada.idea.aiken.highlight.ParseErrorHighlightFilter" />-->
+        <highlightErrorFilter
+                implementation="com.bloxbean.intelliada.idea.aiken.highlight.ParseErrorHighlightFilter" />
+
+        <moduleType id="Aiken_Module" implementationClass="com.bloxbean.intelliada.idea.aiken.module.AikenModuleType"/>
+        <moduleBuilder builderClass="com.bloxbean.intelliada.idea.aiken.module.AikenModuleBuilder"/>
+
+        <projectOpenProcessor implementation="com.bloxbean.intelliada.idea.aiken.module.project.AikenProjectOpenProcessor"/>
+        <directoryProjectGenerator implementation="com.bloxbean.intelliada.idea.aiken.module.project.AikenDirectoryProjectGenerator"/>
+
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.aiken.module.pkg.AikenTomlService"/>
+
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.aiken.configuration.service.AikenSDKState"/>
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.aiken.configuration.service.AikenProjectState"/>
+
+        <!-- Aiken Templates -->
+        <internalFileTemplate name="Aiken.Empty"/>
+        <internalFileTemplate name="Aiken.Hello World"/>
+        <internalFileTemplate name="Aiken.Vesting"/>
+
     </extensions>
 
     <actions>
+        <group id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" class="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup"
+               popup="true"
+               text="Aiken" description="Aiken">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </group>
 
+        <action id="Algorand.NewTEALFile" class="com.bloxbean.intelliada.idea.aiken.action.NewAikenFileAction"
+                text="TEAL File" description="Create new Aikon file">
+            <add-to-group group-id="NewGroup" anchor="first" />
+        </action>
+        <action id="com.bloxbean.intelliada.idea.aiken.compile.action.AikenBuildAction" class="com.bloxbean.intelliada.idea.aiken.compile.action.AikenBuildAction" text="Build"
+                description="Build Aiken Project">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" anchor="first"/>
+        </action>
+        <action id="com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction" class="com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction" text="Configuration"
+                description="Configure Algorand Server">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>

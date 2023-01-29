@@ -1,0 +1,17 @@
+use aiken/hash.{Blake2b_224, Hash}
+use aiken/list
+use aiken/string
+use aiken/transaction.{ScriptContext}
+use aiken/transaction/credential.{VerificationKey}
+
+pub type Datum {
+
+}
+
+pub type Redeemer {
+
+}
+
+pub fn spend(datum: Datum, redeemer: Redeemer, context: ScriptContext) -> Bool {
+    todo
+}
