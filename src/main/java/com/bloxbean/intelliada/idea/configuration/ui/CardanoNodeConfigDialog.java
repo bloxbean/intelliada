@@ -43,7 +43,7 @@ public class CardanoNodeConfigDialog {
 
         if (remoteNode != null && remoteNode.getNodeType() != null) {
             if (remoteNode.getNodeType().equals(NodeType.KOIOS_MAINNET) ||
-                    remoteNode.getNodeType().equals(NodeType.KOIOS_TESTNET) ||
+                    remoteNode.getNodeType().equals(NodeType.KOIOS_PREPROD) ||
                     remoteNode.getNodeType().equals(NodeType.KOIOS_CUSTOM)) {
                 nodeTypesCB.setSelectedItem(CardanoNodeType.Koios);
                 koiosNodeConfigPanel.setNodeData(remoteNode);

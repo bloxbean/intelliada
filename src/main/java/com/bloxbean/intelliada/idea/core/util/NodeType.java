@@ -13,7 +13,7 @@ public enum NodeType {
     BLOCKFROST_PREPOD("Blockfrost Prepod"),
     BLOCKFROST_PREVIEW("Blockfrost Preview"),
     BLOCKFROST_CUSTOM("Blockfrost Custom"),
-    KOIOS_TESTNET("Koios Testnet"),
+    KOIOS_PREPROD("Koios Preprod"),
     KOIOS_MAINNET("Koios Mainnet"),
     KOIOS_CUSTOM("Koios Custom");
 

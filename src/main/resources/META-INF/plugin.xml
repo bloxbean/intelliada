@@ -10,11 +10,14 @@
     <p><a href="https://intelliada.bloxbean.com">Documentation</a>
     ]]></description>
 
-    <idea-version since-build="211"/>
+    <idea-version since-build="241"/>
+<!--    <idea-version until-build="232.*"/>-->
 
     <!-- please see https://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+    <depends>com.intellij.modules.lang</depends>
 
     <extensions defaultExtensionNs="com.intellij">
 
@@ -30,9 +33,165 @@
         <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState"/>
         <applicationService
                 serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.CLIProvidersState"/>
+
+        <fileType
+                name="Aiken File"
+                implementationClass="com.bloxbean.intelliada.idea.aiken.lang.AikenFileType"
+                fieldName="INSTANCE"
+                language="Aiken"
+                extensions="ak"/>
+
+        <fileType
+                name="Aiken Project File"
+                implementationClass="com.bloxbean.intelliada.idea.aiken.filetypes.AikenTomlFileType"
+                fieldName="INSTANCE"
+                fileNames="aiken"
+                extensions="toml"/>
+
+        <lang.parserDefinition language="Aiken" implementationClass="com.bloxbean.intelliada.idea.aiken.lang.AikenParserDefinition"/>
+        <lang.syntaxHighlighter language="Aiken" implementationClass="com.bloxbean.intelliada.idea.aiken.highlight.AikenHighlighter"/>
+        <highlightErrorFilter
+                implementation="com.bloxbean.intelliada.idea.aiken.highlight.ParseErrorHighlightFilter" />
+
+<!--        <moduleType id="Aiken_Module" implementationClass="com.bloxbean.intelliada.idea.aiken.module.AikenModuleType"/>-->
+        <moduleBuilder builderClass="com.bloxbean.intelliada.idea.aiken.module.AikenModuleBuilder"/>
+
+        <projectOpenProcessor implementation="com.bloxbean.intelliada.idea.aiken.module.project.AikenProjectOpenProcessor"/>
+        <directoryProjectGenerator implementation="com.bloxbean.intelliada.idea.aiken.module.project.AikenDirectoryProjectGenerator" order="first"/>
+
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.aiken.module.pkg.AikenTomlService"/>
+
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.aiken.configuration.service.AikenSDKState"/>
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.aiken.configuration.service.AikenProjectState"/>
+
+        <!-- Aiken Templates -->
+        <internalFileTemplate name="Aiken.Empty"/>
+        <internalFileTemplate name="Aiken.Hello World"/>
+
+
+<!--        <platform.lsp.serverSupportProvider implementation="com.bloxbean.intelliada.idea.aiken.AikenLSPServerSupportProvider"/>-->
+
+
+
+<!--        &lt;!&ndash; register a preloading activity. You need to init IntellijLanguageClient with your config, see readme &ndash;&gt;-->
+<!--        <preloadingActivity implementation="com.bloxbean.intelliada.idea.aiken.AikenLPSPreloadingActivity" id="com.bloxbean.intelliada.idea.aiken.AikenLPSPreloadingActivity"/>-->
+
+<!--        &lt;!&ndash; register intellijLanguageClient as a Service OR as a plugin component (see readme)... &ndash;&gt;-->
+<!--        <applicationService serviceImplementation="org.wso2.lsp4intellij.IntellijLanguageClient"/>-->
+
+
+<!--        &lt;!&ndash; register a listener on editor events, required for lsp file sync &ndash;&gt;-->
+<!--        <editorFactoryListener implementation="org.wso2.lsp4intellij.listeners.LSPEditorListener"/>-->
+<!--        <fileDocumentManagerListener implementation="org.wso2.lsp4intellij.listeners.LSPFileDocumentManagerListener"/>-->
+
+<!--        &lt;!&ndash; for displaying notifications by lsp &ndash;&gt;-->
+<!--        <notificationGroup id="lsp" displayType="STICKY_BALLOON"/>-->
+
+<!--        &lt;!&ndash; for displaying the statusbar icon &ndash;&gt;-->
+<!--        <statusBarWidgetFactory implementation="org.wso2.lsp4intellij.statusbar.LSPServerStatusWidgetFactory"-->
+<!--                                id="org.wso2.lsp4intellij.statusbar.LSPServerStatusWidgetFactory"-->
+<!--                                order="first" />-->
+
+<!--        &lt;!&ndash; needed for completion &ndash;&gt;-->
+<!--        <completion.contributor implementationClass="org.wso2.lsp4intellij.contributors.LSPCompletionContributor"-->
+<!--                                id="org.wso2.lsp4intellij.contributors.LSPCompletionContributor" language="Aiken"/>-->
+<!--        &lt;!&ndash; needed for completion as well as signature help &ndash;&gt;-->
+<!--        <typedHandler implementation="org.wso2.lsp4intellij.listeners.LSPTypedHandler"-->
+<!--                      id="LSPTypedHandler"/>-->
+
+<!--&lt;!&ndash;        &lt;!&ndash; needed for code diagnostics &ndash;&gt;&ndash;&gt;-->
+<!--        <externalAnnotator id="LSPAnnotator" language="Aiken"-->
+<!--                           implementationClass="org.wso2.lsp4intellij.contributors.annotator.LSPAnnotator"/>-->
+
+<!--&lt;!&ndash;        &lt;!&ndash; needed for Workspace Symbols &ndash;&gt;&ndash;&gt;-->
+<!--        <gotoSymbolContributor implementation="org.wso2.lsp4intellij.contributors.symbol.LSPSymbolContributor"-->
+<!--                               id="LSPSymbolContributor"/>-->
+
+<!--        &lt;!&ndash; needed for renaming &ndash;&gt;-->
+<!--        <renameHandler implementation="org.wso2.lsp4intellij.contributors.rename.LSPRenameHandler" id="LSPRenameHandler" order="first"/>-->
+<!--        <renamePsiElementProcessor implementation="org.wso2.lsp4intellij.contributors.rename.LSPRenameProcessor" id="LSPRenameProcessor" order="first"/>-->
+
+        <lang.foldingBuilder language="Aiken"
+                             implementationClass="com.redhat.devtools.lsp4ij.features.foldingRange.LSPFoldingRangeBuilder"
+                             order="first"/>
+
+        <!-- LSP textDocument/signatureHelp -->
+        <codeInsight.parameterInfo
+                language="Aiken"
+                implementationClass="com.redhat.devtools.lsp4ij.features.signatureHelp.LSPParameterInfoHandler"/>
+
+        <completion.contributor implementationClass="com.redhat.devtools.lsp4ij.features.completion.LSPCompletionContributor"
+                                        id="com.redhat.devtools.lsp4ij.features.completion.LSPCompletionContributor" language="Aiken"/>
+
+        <lang.commenter
+                language="Aiken"
+                implementationClass="com.bloxbean.intelliada.idea.aiken.comment.AikenCommenter"/>
+
+        <lang.foldingBuilder language="Aiken"
+                        implementationClass="com.bloxbean.intelliada.idea.folding.AikenFolderingBuilder"/>
+
+        <lang.braceMatcher language="Aiken"
+                           implementationClass="com.bloxbean.intelliada.idea.folding.AikenPairedBraceMatcher"/>
+<!--        <lang.formatter language="Aiken"-->
+<!--                        implementationClass="com.bloxbean.intelliada.idea.aiken.formatter.SimpleFormattingModuleBuilder"/>-->
     </extensions>
 
-    <actions>
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <server id="aikenLanguageServerId"
+                name="Aiken Language Server"
+                factoryClass="com.bloxbean.intelliada.idea.aiken.AikenLanguageServerFactory">
+            <description><![CDATA[
+            <p>Aiken Language Server</p>
+        ]]>
+            </description>
+        </server>
+        <languageMapping language="Aiken"
+                         serverId="aikenLanguageServerId" />
+<!--                         languageId="aiken"-->
 
+    </extensions>
+
+
+    <actions>
+        <group id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" class="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup"
+               popup="true"
+               text="Aiken" description="Aiken">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </group>
+
+        <action id="Aiken.NewAikenFile" class="com.bloxbean.intelliada.idea.aiken.action.NewAikenFileAction"
+                text="Aiken File" description="Create new Aikon file">
+            <add-to-group group-id="NewGroup" anchor="first" />
+        </action>
+        <action id="com.bloxbean.intelliada.idea.aiken.compile.action.AikenBuildAction" class="com.bloxbean.intelliada.idea.aiken.compile.action.AikenBuildAction" text="Build"
+                description="Build Aiken Project">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" anchor="first"/>
+        </action>
+        <action id="com.bloxbean.intelliada.idea.aiken.compile.action.AikenFormatAction" class="com.bloxbean.intelliada.idea.aiken.compile.action.AikenFormatAction" text="Format Code"
+                description="Format Aiken Code">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" />
+        </action>
+        <action id="com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction" class="com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction" text="Configuration"
+                description="Configure Aiken">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" anchor="last"/>
+        </action>
+
+<!--        <action class="org.wso2.lsp4intellij.actions.LSPReformatAction" id="ReformatCode" use-shortcut-of="ReformatCode"-->
+<!--                overrides="true" text="Reformat Code"/>-->
+<!--        <action class="org.wso2.lsp4intellij.actions.LSPShowReformatDialogAction" id="ShowReformatFileDialog"-->
+<!--                use-shortcut-of="ShowReformatFileDialog" overrides="true" text="Show Reformat File Dialog"/>-->
     </actions>
+
+    <applicationListeners>
+<!--        <listener class="com.bloxbean.intelliada.idea.aiken.LSPFileSaveListener" topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener" implementationClass="com.yourplugin.LSPFileSaveListener" />-->
+        <!-- required for lsp file sync -->
+<!--        <listener class="org.wso2.lsp4intellij.listeners.VFSListener"-->
+<!--                  topic="com.intellij.openapi.vfs.VirtualFileListener"/>-->
+<!--        <listener class="org.wso2.lsp4intellij.listeners.LSPProjectManagerListener"-->
+<!--                  topic="com.intellij.openapi.project.ProjectManagerListener"/>-->
+
+<!--        <listener class="org.wso2.lsp4intellij.listeners.DocumentListenerImpl"-->
+<!--                  topic="com.intellij.openapi.editor.event.DocumentListener"/>-->
+    </applicationListeners>
 </idea-plugin>

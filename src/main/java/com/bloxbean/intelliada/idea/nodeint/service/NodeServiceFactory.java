@@ -49,7 +49,7 @@ public class NodeServiceFactory {
                 LOG.debug("Backend service created for the node : " + remoteNode);
             }
         } else if (NodeType.KOIOS_MAINNET.equals(remoteNode.getNodeType()) ||
-            NodeType.KOIOS_TESTNET.equals(remoteNode.getNodeType()) ||
+            NodeType.KOIOS_PREPROD.equals(remoteNode.getNodeType()) ||
             NodeType.KOIOS_CUSTOM.equals(remoteNode.getNodeType())
         ) {
             backendService = new KoiosBackendService(remoteNode.getApiEndpoint());

@@ -101,12 +101,12 @@ public class KoiosNodeConfigPanel implements NodeConfigurator {
 
     private void handleNodeTypeSelection() {
         nodeTypesCB.addActionListener(e -> {
-            if (NodeType.KOIOS_TESTNET.equals(nodeTypesCB.getSelectedItem())
+            if (NodeType.KOIOS_PREPROD.equals(nodeTypesCB.getSelectedItem())
                     || NodeType.KOIOS_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
                 gqlEndpointTf.setEnabled(false);
 
-                if (NodeType.KOIOS_TESTNET.equals(nodeTypesCB.getSelectedItem())) {
-                    gqlEndpointTf.setText(Constants.KOIOS_TESTNET_URL);
+                if (NodeType.KOIOS_PREPROD.equals(nodeTypesCB.getSelectedItem())) {
+                    gqlEndpointTf.setText(Constants.KOIOS_PREPROD_URL);
                     setNetwork(Networks.testnet());
                 } else if (NodeType.KOIOS_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
                     gqlEndpointTf.setText(Constants.KOIOS_MAINNET_URL);
@@ -302,10 +302,10 @@ public class KoiosNodeConfigPanel implements NodeConfigurator {
         Collection<String> availableNodeOptions = new ArrayList<String>();
         availableNodeOptions.add("");
         availableNodeOptions.add(Constants.KOIOS_MAINNET_URL);
-        availableNodeOptions.add(Constants.KOIOS_TESTNET_URL);
+        availableNodeOptions.add(Constants.KOIOS_PREPROD_URL);
         availableNodeOptions.add(Constants.KOIOS_GUILDNET_URL);
         gqlEndpointTf = TextFieldWithAutoCompletion.create(project, availableNodeOptions, true, "");
-        nodeTypesCB = new ComboBox(new NodeType[]{NodeType.EMPTY, NodeType.KOIOS_TESTNET, NodeType.KOIOS_MAINNET, NodeType.KOIOS_CUSTOM});
+        nodeTypesCB = new ComboBox(new NodeType[]{NodeType.EMPTY, NodeType.KOIOS_PREPROD, NodeType.KOIOS_MAINNET, NodeType.KOIOS_CUSTOM});
     }
 
 }
