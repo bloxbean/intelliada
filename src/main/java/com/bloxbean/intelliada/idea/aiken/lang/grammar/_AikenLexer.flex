@@ -50,11 +50,17 @@ STRING_CONTENT=\"([^\\\\\\\"]|\\\\[^efnrt\\\"\\\\])+\"
   "opaque"                { return OPAQUE; }
   "const"                 { return CONST; }
   "todo"                  { return TODO; }
-  "assert"                { return ASSERT; }
-  "check"                { return CHECK; }
-  "test"                { return TEST; }
-  "trace"                { return TRACE; }
-  "error"                { return ERROR; }
+  "expect"                { return EXPECT; }
+  "check"                 { return CHECK; }
+  "test"                  { return TEST; }
+  "trace"                 { return TRACE; }
+  "fail"                  { return FAIL; }
+  "validator"             { return VALIDATOR; }
+  "and"                   { return AND; }
+  "or"                    { return OR; }
+  "as"                    { return AS; }
+  "via"                   { return VIA; }
+
 
   "{"                     { return LBRACE; }
   "}"                     { return RBRACE; }

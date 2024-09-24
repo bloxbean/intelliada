@@ -4,7 +4,7 @@ import com.bloxbean.intelliada.idea.aiken.configuration.AikenSDK;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.ValidationInfo;
-import com.twelvemonkeys.lang.StringUtil;
+import com.intellij.openapi.util.text.StringUtil;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;

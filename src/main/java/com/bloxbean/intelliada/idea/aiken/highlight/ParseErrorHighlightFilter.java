@@ -12,7 +12,7 @@ public class ParseErrorHighlightFilter extends HighlightErrorFilter {
     public boolean shouldHighlightErrorElement(@NotNull PsiErrorElement element) {
         Language language = element.getLanguage();
         if (language != AikenLanguage.INSTANCE)
-            return true;
+            return false;
         else
             return false;
     }

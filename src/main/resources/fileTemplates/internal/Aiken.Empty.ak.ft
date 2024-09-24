@@ -1,8 +1,6 @@
-use aiken/hash.{Blake2b_224, Hash}
-use aiken/list
-use aiken/string
-use aiken/transaction.{ScriptContext}
-use aiken/transaction/credential.{VerificationKey}
+use aiken/collection/list
+use aiken/crypto.{VerificationKeyHash}
+use cardano/transaction.{OutputReference, Transaction}
 
 pub type Datum {
 
@@ -12,6 +10,13 @@ pub type Redeemer {
 
 }
 
-pub fn spend(datum: Datum, redeemer: Redeemer, context: ScriptContext) -> Bool {
-    todo
+validator hello_world {
+    spend(
+        datum: Option<Datum>,
+        redeemer: Redeemer,
+        _own_ref: OutputReference,
+        self: Transaction
+        ) {
+       todo
+    }
 }

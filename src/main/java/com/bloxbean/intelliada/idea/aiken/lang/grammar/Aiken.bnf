@@ -30,11 +30,23 @@ tokens = [
         OPAQUE = "opaque"
         CONST = "const"
         TODO = "todo"
-        ASSERT = "assert"
+        EXPECT = "expect"
         CHECK = "check"
         TEST = "test"
         TRACE = "trace"
-        ERROR = "error"
+        FAIL = "fail"
+        VALIDATOR = "validator"
+        AND = "and"
+        OR = "or"
+        AS = "as"
+        VIA = "via"
+
+        MINT = "mint"
+        SPEND = "spend"
+        WITHDRAW = "withdraw"
+        PUBLISH = "publish"
+        VOTE = "vote"
+        PROPOSE = "propose"
 
         //check if required??
         EXTERNAL = "external"
@@ -92,10 +104,11 @@ tokens = [
     ]
 }
 
-gleamFile ::= topLevelDefinition*
+aikenFile ::= topLevelDefinition*
 private topLevelDefinition ::=
     importStatement
     | typeStatement
+    | validatorStatement
     | functionStatement
     | COMMENT
     | ([PUB] constantStatement)
@@ -117,8 +130,13 @@ importStatementElement ::= IDENTIFIER ('/' IDENTIFIER [importStatementTypes])*
 importStatementTypes ::= DOT LBRACE ((UPPER_IDENTIFIER|IDENTIFIER) [COMMA])* RBRACE
 
 // TODO improve type statement parsing
-typeStatement ::= [PUB] TYPE UPPER_IDENTIFIER LBRACE (typeStatementConstructor)* RBRACE
-typeStatementConstructor ::= UPPER_IDENTIFIER LPAREN (constructorElement)* RPAREN
+typeName ::= UPPER_IDENTIFIER
+constructorName ::= UPPER_IDENTIFIER
+typeStatement ::= [PUB] TYPE typeName ('<' IDENTIFIER '>')? LBRACE (constructorElement | (typeStatementConstructor | typeStatementConstructorNoArg)*) RBRACE
+typeStatementConstructor ::= constructorName (LBRACE|LPAREN) (constructorElement | IDENTIFIER)* (RBRACE|RPAREN)
+typeStatementConstructorNoArg ::= constructorName
+
+validatorStatement ::=  VALIDATOR IDENTIFIER [LPAREN [(constructorElement)*] RPAREN] LBRACE [innerDefinition*] RBRACE
 
 functionStatement ::= [PUB] FN IDENTIFIER LPAREN [(constructorElement)*] RPAREN [functionStatementType] LBRACE [innerDefinition*] RBRACE
 functionStatementType ::= ARROW typeIdentifier

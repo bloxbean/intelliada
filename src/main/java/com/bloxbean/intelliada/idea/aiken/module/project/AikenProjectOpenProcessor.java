@@ -53,7 +53,7 @@ public class AikenProjectOpenProcessor extends ProjectOpenProcessor {
         if(module == null)
             return null;
 
-        final ModifiableRootModel modifiableModel = ModifiableModelsProvider.SERVICE.getInstance().getModuleModifiableModel(module);
+        final ModifiableRootModel modifiableModel = ModifiableModelsProvider.getInstance().getModuleModifiableModel(module);
         ContentEntry[] contentEntries = modifiableModel.getContentEntries();
         if(contentEntries != null && contentEntries.length > 0)
             return null;

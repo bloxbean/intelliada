@@ -1,8 +1,12 @@
 package com.bloxbean.intelliada.idea.aiken.configuration;
 
+import com.intellij.openapi.util.SystemInfo;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 @Data
@@ -43,5 +47,20 @@ public class AikenSDK {
 
     public String toString() {
         return name;
+    }
+
+    public List<String> getAikenCommand() {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(getPath() + File.separator + getAikenExecutable());
+
+        return cmd;
+    }
+
+    private String getAikenExecutable() {
+        String aikenCmd = "aiken";
+        if(SystemInfo.isWindows)
+            aikenCmd = "aiken.exe";
+
+        return aikenCmd;
     }
 }

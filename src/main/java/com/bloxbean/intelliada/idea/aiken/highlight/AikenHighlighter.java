@@ -17,22 +17,35 @@ public class AikenHighlighter extends SyntaxHighlighterBase {
     private static final TextAttributesKey[] EMPTY_KEYS = new TextAttributesKey[0];
 
     private static final TokenSet KEYWORDS = TokenSet.create(
-        AikenTypes.IF,
-        AikenTypes.ELSE,
-        AikenTypes.WHEN,
-        AikenTypes.IS,
-        AikenTypes.FN,
-        AikenTypes.USE,
-        AikenTypes.LET,
-        AikenTypes.PUB,
-        AikenTypes.TYPE,
-        AikenTypes.OPAQUE,
-        AikenTypes.CONST,
-        AikenTypes.TODO,
-        AikenTypes.ASSERT,
-        AikenTypes.CHECK,
-        AikenTypes.TEST,
-        AikenTypes.ERROR
+            AikenTypes.IF,
+            AikenTypes.ELSE,
+            AikenTypes.WHEN,
+            AikenTypes.IS,
+            AikenTypes.FN,
+            AikenTypes.USE,
+            AikenTypes.LET,
+            AikenTypes.PUB,
+            AikenTypes.TYPE,
+            AikenTypes.OPAQUE,
+            AikenTypes.CONST,
+            AikenTypes.TODO,
+            AikenTypes.EXPECT,
+            AikenTypes.CHECK,
+            AikenTypes.TEST,
+            AikenTypes.TRACE,
+            AikenTypes.FAIL,
+            AikenTypes.VALIDATOR,
+            AikenTypes.AND,
+            AikenTypes.OR,
+            AikenTypes.AS,
+            AikenTypes.VIA,
+            AikenTypes.EXTERNAL,
+            AikenTypes.SPEND,
+            AikenTypes.MINT,
+            AikenTypes.WITHDRAW,
+            AikenTypes.PUBLISH,
+            AikenTypes.VOTE,
+            AikenTypes.PROPOSE
     );
 
     private static final Map<IElementType, TextAttributesKey> keys = new HashMap<>();
@@ -45,7 +58,9 @@ public class AikenHighlighter extends SyntaxHighlighterBase {
         keys.put(AikenTypes.MODULE_COMMENT, AikenColors.MODULE_COMMENT);
         keys.put(AikenTypes.STRING_CONTENT, AikenColors.STRING);
         keys.put(AikenTypes.UPPER_IDENTIFIER, AikenColors.IDENTIFIER);
-        keys.put(AikenTypes.TYPE_IDENTIFIER, AikenColors.IDENTIFIER);
+        keys.put(AikenTypes.TYPE_IDENTIFIER, AikenColors.KEYWORD);
+        keys.put(AikenTypes.TYPE_NAME, AikenColors.TYPE_NAME);
+        keys.put(AikenTypes.CONSTRUCTOR_NAME, AikenColors.KEYWORD);
     }
 
     @Override

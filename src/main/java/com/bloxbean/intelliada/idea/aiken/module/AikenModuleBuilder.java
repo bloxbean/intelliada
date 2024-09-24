@@ -1,31 +1,45 @@
 package com.bloxbean.intelliada.idea.aiken.module;
 
 import com.bloxbean.intelliada.idea.aiken.common.AikenIcons;
-import com.bloxbean.intelliada.idea.aiken.module.pkg.AikenTomlService;
-import com.bloxbean.intelliada.idea.aiken.module.ui.AikenModuleWizardStep;
+import com.bloxbean.intelliada.idea.aiken.compile.AikenCompileService;
+import com.bloxbean.intelliada.idea.aiken.compile.CompilationResultListener;
+import com.bloxbean.intelliada.idea.aiken.compile.CompileService;
+import com.bloxbean.intelliada.idea.aiken.compile.SDKNotConfigured;
+import com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationHelperService;
+import com.bloxbean.intelliada.idea.aiken.configuration.AikenSDK;
+import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
+import com.intellij.execution.process.OSProcessHandler;
 import com.intellij.ide.util.projectWizard.*;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleType;
+import com.intellij.openapi.module.ModuleUtil;
 import com.intellij.openapi.options.ConfigurationException;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.progress.Task;
+import com.intellij.openapi.progress.impl.BackgroundableProcessIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ContentEntry;
 import com.intellij.openapi.roots.ModifiableRootModel;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ui.configuration.ModulesProvider;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.IncorrectOperationException;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
 import java.io.File;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -80,18 +94,8 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
                         @Override
                         public void run() {
                             ProjectGeneratorUtil.createNewContract(module.getProject(), srcRoot, AikenContractTemplates.AK_HELLOWORLD_TEMPLATE, module.getName() + ".ak");
-//                            try {
-//                                VirtualFile test = topFolder.createChildDirectory(this, "test");
-//                                if (test != null) {
-//                                    ModifiableRootModel model = ModuleRootManager.getInstance(module).getModifiableModel();
-//                                    ContentEntry entry = findContentEntry(model, test);
-//                                    if (entry != null) {
-//                                        entry.addSourceFolder(test, true);
-//                                        model.commit();
-//                                    }
-//                                }
-//                            } catch (IOException e) {
-//                            }
+
+                            build(module);
                         }
                     });
                 }
@@ -99,9 +103,129 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
         }
     }
 
+    private static void build(@NotNull Module module) {
+        var project = module.getProject();
+        String moduleDir = ModuleUtil.getModuleDirPath(module);
+        final VirtualFile folderToRefresh = VfsUtil.findFileByIoFile(new File(moduleDir), true);
+
+        final CardanoConsole console = CardanoConsole.getConsole(project);
+        console.clearAndshow();
+
+        CompilationResultListener compilationResultListener = new CompilationResultListener() {
+            @Override
+            public void attachProcess(OSProcessHandler handler) {
+                ApplicationManager.getApplication().invokeLater(() -> {
+                    try {
+                        console.getView().attachToProcess(handler);
+                    } catch (IncorrectOperationException ex) {
+                        //This should not happen
+                        //ex.printStackTrace();
+                        console.showInfoMessage(ex.getMessage());
+                        console.dispose();
+                        console.getView().attachToProcess(handler);
+                    }
+                    handler.startNotify();
+                });
+            }
+
+            @Override
+            public void error(String message) {
+                console.showErrorMessage(message);
+            }
+
+            @Override
+            public void info(String message) {
+                console.showInfoMessage(message);
+            }
+
+            @Override
+            public void warn(String msg) {
+                console.showWarningMessage(msg);
+            }
+
+            @Override
+            public void onSuccessful(String sourceFile) {
+                console.showSuccessMessage("Build Successful");
+                if (folderToRefresh != null) {
+                    folderToRefresh.refresh(false, false);
+                }
+                IdeaUtil.showNotification(project, "Aiken Compile", "Compilation was successful", NotificationType.INFORMATION, null);
+            }
+
+            @Override
+            public void onFailure(String sourceFile, Throwable t) {
+                console.showErrorMessage(String.format("Compilation failed for %s", sourceFile), t);
+                IdeaUtil.showNotification(project, "Aiken Compile", "Compilation failed", NotificationType.ERROR, null);
+            }
+        };
+
+        Task.Backgroundable task = new Task.Backgroundable(module.getProject(), "Aiken Compile") {
+
+            @Override
+            public void run(@NotNull ProgressIndicator indicator) {
+                AikenSDK localSDK = AikenConfigurationHelperService.getCompilerLocalSDK(project);
+                CompileService compileService = null;
+                if (localSDK != null) {
+                    try {
+                        compileService = new AikenCompileService(project);
+                    } catch (SDKNotConfigured sdkNotConfigured) {
+                        Messages.showErrorDialog("Aiken SDK is not set for this module.", "Aiken Compilation");
+                        return;
+                    }
+                }
+
+                console.showInfoMessage("Start compilation ..");
+                compileService.compile(moduleDir, compilationResultListener);
+            }
+        };
+
+        ProgressManager.getInstance().runProcessWithProgressAsynchronously(task, new BackgroundableProcessIndicator(task));
+    }
+
     @Override
     public void setupRootModel(@NotNull ModifiableRootModel rootModel) throws ConfigurationException {
         rootModel.inheritSdk();
+
+        String moduleName = rootModel.getModule().getName();
+        String owner = System.getProperty("user.name");
+
+        Project project = rootModel.getProject();
+        String basePath = project.getBasePath();
+        ApplicationManager.getApplication().runWriteAction(
+                () -> {
+                    var aikenSdk = AikenConfigurationHelperService.getCompilerLocalSDK(project);
+
+                    if (aikenSdk == null) {
+                        IdeaUtil.showNotification(
+                                "Project creation",
+                                "Aiken executable not found. Please make sure Aiken is installed and added to the PATH", NotificationType.ERROR, null);
+                    }
+
+                    List<String> commands = aikenSdk.getAikenCommand();
+                    commands.add("new");
+                    commands.add(owner + "/" + moduleName);
+
+                    try {
+                        //create a temporay directory
+                        var tempDir = Files.createTempDirectory("aiken").toFile();
+                        ProcessBuilder pb = new ProcessBuilder(commands);
+                        pb.directory(tempDir);
+                        pb.redirectErrorStream(true);
+                        pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
+                        Process process = pb.start();
+                        process.waitFor();
+
+                        FileUtil.copyDirContent(new File(tempDir, moduleName), new File(basePath));
+                    } catch (Exception e) {
+                        IdeaUtil.showNotification(project,
+                                "Project creation",
+                                "Aiken executable not found. Please make sure Aiken is installed and added to the PATH",
+                                NotificationType.ERROR, e.getMessage());
+                        if (LOG.isDebugEnabled()) {
+                            LOG.error("Aiken executable not found", e);
+                        }
+                    }
+                });
 
         ContentEntry contentEntry = doAddContentEntry(rootModel);
         if (contentEntry != null) {
@@ -120,31 +244,6 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
             }
         }
 
-        String moduleName = rootModel.getModule().getName();
-        String owner = System.getProperty("user.name");
-
-        Project project = rootModel.getProject();
-        if(project != null) {
-            //Create aiken.toml
-            WriteCommandAction.runWriteCommandAction(project, () -> {
-                try {
-                    AikenTomlService.getInstance(project).createAikenToml(owner, moduleName);
-
-//                    WriteCommandAction.runWriteCommandAction(project, () -> {
-//                        ProjectGeneratorUtil.createStatefulContractFiles(project, srcRoots[0], statefulContractName,
-//                                approvalProgramName, clearStateProgramName);
-//                    });
-                } catch (Exception e) {
-                    IdeaUtil.showNotification(project,
-                            "Project creation",
-                            "aiken.toml could not be crated. Please create it " +
-                                    "manually and restart the IDE.", NotificationType.WARNING, null);
-                    if(LOG.isDebugEnabled()) {
-                        LOG.error("Unable to create aiken.toml", e);
-                    }
-                }
-            });
-        }
     }
 
     @Override
@@ -173,14 +272,4 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
         return mySourcePaths;
     }
 
-    public void setSourcePaths(List<Pair<String, String>> sourcePaths) {
-        mySourcePaths = sourcePaths != null ? new ArrayList<>(sourcePaths) : null;
-    }
-
-    public void addSourcePath(Pair<String, String> sourcePathInfo) {
-        if (mySourcePaths == null) {
-            mySourcePaths = new ArrayList<>();
-        }
-        mySourcePaths.add(sourcePathInfo);
-    }
 }

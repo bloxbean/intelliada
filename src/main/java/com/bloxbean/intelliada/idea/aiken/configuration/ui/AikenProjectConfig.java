@@ -9,7 +9,7 @@ import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.ui.ValidationInfo;
-import com.twelvemonkeys.lang.StringUtil;
+import com.intellij.openapi.util.text.StringUtil;
 
 import javax.swing.*;
 import java.util.List;

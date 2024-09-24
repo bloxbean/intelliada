@@ -3,7 +3,6 @@ package com.bloxbean.intelliada.idea.aiken.compile.action;
 
 import com.bloxbean.intelliada.idea.aiken.compile.AikenCompileService;
 import com.bloxbean.intelliada.idea.aiken.compile.CompilationResultListener;
-import com.bloxbean.intelliada.idea.aiken.compile.CompileService;
 import com.bloxbean.intelliada.idea.aiken.compile.SDKNotConfigured;
 import com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction;
 import com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationHelperService;
@@ -22,26 +21,24 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.module.Module;
-import com.intellij.openapi.module.ModuleUtil;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.progress.impl.BackgroundableProcessIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
-import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiFile;
 import com.intellij.util.IncorrectOperationException;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
+import java.util.Optional;
 
-public class AikenBuildAction extends AnAction {
-    private final static Logger LOG = Logger.getInstance(AikenBuildAction.class);
+public class AikenFormatAction extends AnAction {
+    private final static Logger LOG = Logger.getInstance(AikenFormatAction.class);
 
-    public AikenBuildAction() {
-        super(AllIcons.Actions.Compile);
+    public AikenFormatAction() {
+        super(AllIcons.Actions.ReformatCode);
     }
 
     @Override
@@ -61,7 +58,7 @@ public class AikenBuildAction extends AnAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         if (LOG.isDebugEnabled())
-            LOG.debug("Build Aiken File");
+            LOG.debug("Format Aiken File");
 
         Project project = CommonDataKeys.PROJECT.getData(e.getDataContext());
         if (project == null)
@@ -80,18 +77,17 @@ public class AikenBuildAction extends AnAction {
         AikenSDK localSDK = AikenConfigurationHelperService.getCompilerLocalSDK(project);
 
         if (localSDK == null) {
-            IdeaUtil.showNotification(project, "Compilation configuration",
-                    "Aikon SDK  is not done for this module.", NotificationType.ERROR, AikenConfigurationAction.ACTION_ID);
+            IdeaUtil.showNotification(project, "Format configuration",
+                    "Aikon SDK  is not set for this module.", NotificationType.ERROR, AikenConfigurationAction.ACTION_ID);
             return;
         }
         PsiFile psiFile = e.getData(CommonDataKeys.PSI_FILE);
         if (!(psiFile instanceof AikenFile)) {
-            Messages.showErrorDialog("Not a Aiken fille", "Aiken Compilation");
+            Messages.showErrorDialog("Not a Aiken fille", "Aiken Formatting");
             return;
         }
 
-        String moduleDir = ModuleUtil.getModuleDirPath(module);
-        final VirtualFile folderToRefresh = VfsUtil.findFileByIoFile(new File(moduleDir), true);
+        VirtualFile fileToRefresh = psiFile.getVirtualFile();
 
         CompilationResultListener compilationResultListener = new CompilationResultListener() {
             @Override
@@ -101,7 +97,6 @@ public class AikenBuildAction extends AnAction {
                         console.getView().attachToProcess(handler);
                     } catch (IncorrectOperationException ex) {
                         //This should not happen
-                        //ex.printStackTrace();
                         console.showInfoMessage(ex.getMessage());
                         console.dispose();
                         console.getView().attachToProcess(handler);
@@ -127,37 +122,38 @@ public class AikenBuildAction extends AnAction {
 
             @Override
             public void onSuccessful(String sourceFile) {
-                console.showSuccessMessage("Build Successful");
-                if (folderToRefresh != null) {
-                    folderToRefresh.refresh(false, false);
-                }
-
-                IdeaUtil.showNotification(project, "Aiken Compile", "Compilation was successful", NotificationType.INFORMATION, null);
+                ApplicationManager.getApplication().invokeLater(() -> {
+                    if (fileToRefresh != null) {
+                        fileToRefresh.refresh(false, false);
+                        System.out.println(fileToRefresh.getCanonicalPath());
+                        Optional.ofNullable(FileDocumentManager.getInstance().getDocument(fileToRefresh))
+                                .ifPresent(document -> FileDocumentManager.getInstance().reloadFromDisk(document));
+                    }
+                });
             }
 
             @Override
             public void onFailure(String sourceFile, Throwable t) {
-                console.showErrorMessage(String.format("Compilation failed for %s", sourceFile), t);
-                IdeaUtil.showNotification(project, "Aiken Compile", "Compilation failed", NotificationType.ERROR, null);
+                console.showErrorMessage(String.format("Formatting failed for %s", sourceFile), t);
+                IdeaUtil.showNotification(project, "Aiken Formatting", "Formatting failed", NotificationType.ERROR, null);
             }
         };
 
-        Task.Backgroundable task = new Task.Backgroundable(project, "Aiken Compile") {
+        Task.Backgroundable task = new Task.Backgroundable(project, "Aiken Formatting") {
 
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
-                CompileService compileService = null;
+                AikenCompileService compileService = null;
                 if (localSDK != null) {
                     try {
                         compileService = new AikenCompileService(project);
                     } catch (SDKNotConfigured sdkNotConfigured) {
-                        Messages.showErrorDialog("Aiken SDK is not set for this module.", "Aiken Compilation");
+                        Messages.showErrorDialog("Aiken SDK is not set for this module.", "Aiken Formatting");
                         return;
                     }
                 }
 
-                console.showInfoMessage("Start compilation ..");
-                compileService.compile(moduleDir, compilationResultListener);
+                compileService.format(fileToRefresh.getCanonicalPath(), compilationResultListener);
             }
         };
 

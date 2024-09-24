@@ -5,7 +5,7 @@ import com.bloxbean.intelliada.idea.aiken.util.AikenSdkUtil;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.util.SystemInfo;
-import com.twelvemonkeys.lang.StringUtil;
+import com.intellij.openapi.util.text.StringUtil;
 
 import javax.swing.*;
 import java.awt.*;

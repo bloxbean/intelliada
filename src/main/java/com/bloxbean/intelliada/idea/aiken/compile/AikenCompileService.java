@@ -31,20 +31,9 @@ public class AikenCompileService extends BaseCompileService {
 
     @Override
     public void compile(String sourceFilePath, CompilationResultListener listener) {
-//        if(!StringUtil.isEmpty(destination)) {
-//            FileUtil.createParentDirs(new File(destination));
-//        }
-
         List<String> cmd = new ArrayList<>();
         cmd.add(localSDK.getPath() + File.separator + getAikenCommand());
         cmd.add("build");
-
-        //cmd.add(sourceFilePath);
-
-//        if(destination != null) {
-//            cmd.add("-o");
-//            cmd.add(destination);
-//        }
 
         OSProcessHandler handler;
         try {
@@ -53,7 +42,6 @@ public class AikenCompileService extends BaseCompileService {
             );
 
         } catch (ExecutionException ex) {
-            //ex.printStackTrace();
             failed(listener, sourceFilePath, "Compilation failed : " + ex.getMessage(), ex);
             return;
         }
@@ -82,9 +70,49 @@ public class AikenCompileService extends BaseCompileService {
 
             }
         });
+    }
 
+    public void format(String sourceFilePath, CompilationResultListener listener) {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(localSDK.getPath() + File.separator + getAikenCommand());
+        cmd.add("fmt");
+        cmd.add(sourceFilePath);
 
-        return;
+        OSProcessHandler handler;
+        try {
+            handler = new OSProcessHandler(
+                    new GeneralCommandLine(cmd).withWorkDirectory(cwd)
+            );
+
+        } catch (ExecutionException ex) {
+            failed(listener, sourceFilePath, "Formatting failed : " + ex.getMessage(), ex);
+            return;
+        }
+
+        listener.info("Formatting Aiken file ...");
+        listener.attachProcess(handler);
+
+        handler.addProcessListener(new ProcessListener() {
+            @Override
+            public void startNotified(@NotNull ProcessEvent event) {
+
+            }
+
+            @Override
+            public void processTerminated(@NotNull ProcessEvent event) {
+                if(event.getExitCode() == 0) {
+                    listener.info("Formatting successful.");
+                    listener.onSuccessful(sourceFilePath);
+                } else {
+                    failed(listener, sourceFilePath, "Formatting failed.", new CompileException("Aiken formatting failed with error."));
+                }
+            }
+
+            @Override
+            public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
+
+            }
+        });
     }
 
     private String getAikenCommand() {

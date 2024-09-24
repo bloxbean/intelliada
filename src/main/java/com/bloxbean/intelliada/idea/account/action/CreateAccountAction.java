@@ -27,7 +27,6 @@ import com.bloxbean.intelliada.idea.account.service.AccountService;
 import com.bloxbean.intelliada.idea.account.ui.CreateAccountDialog;
 import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
-import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
 import com.intellij.icons.AllIcons;
@@ -36,8 +35,6 @@ import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.Messages;
-import com.twelvemonkeys.lang.StringUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.security.NoSuchAlgorithmException;

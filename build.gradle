@@ -17,8 +17,9 @@ buildscript {
 plugins {
     id 'java'
     id 'idea'
-    id 'org.jetbrains.intellij' version '1.3.0'
-    id "org.jetbrains.kotlin.jvm" version "1.6.10"
+    id 'org.jetbrains.intellij.platform' version '2.0.1'
+    id "org.jetbrains.kotlin.jvm" version "1.9.25"
+    id "org.jetbrains.grammarkit" version "2022.3.2.2"
 }
 
 apply plugin: "kotlin"
@@ -29,41 +30,52 @@ version '0.1.6-beta1'
 repositories {
     mavenLocal()
     mavenCentral()
+    maven { url 'https://jitpack.io' }
+    intellijPlatform {
+        defaultRepositories()
+    }
 }
 
 compileJava {
-    sourceCompatibility = '11'
-    targetCompatibility = '11'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
 }
 
-compileKotlin {
-    kotlinOptions.jvmTarget = "1.8"
-}
-compileTestKotlin {
-    kotlinOptions.jvmTarget = "1.8"
-}
+//compileKotlin {
+//    kotlinOptions.jvmTarget = "1.8"
+//}
+//compileTestKotlin {
+//    kotlinOptions.jvmTarget = "1.8"
+//}
 
 dependencies {
-    compile fileTree(include: ['*.jar'], dir: 'lib')
-    compile('com.bloxbean.cardano:cardano-client-lib:0.4.2') {
-        exclude group: 'org.slf4j', module: 'slf4j-api'
+    intellijPlatform {
+        intellijIdeaCommunity("2023.3.6")
+        plugin("com.redhat.devtools.lsp4ij:0.5.0")
+        pluginVerifier()
+        zipSigner()
+        instrumentationTools()
     }
-    compile('com.bloxbean.cardano:cardano-client-backend-blockfrost:0.4.2') {
-        exclude group: 'org.slf4j', module: 'slf4j-api'
-        exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
-    }
-    compile('com.bloxbean.cardano:cardano-client-backend-koios:0.4.2') {
-        exclude group: 'org.slf4j', module: 'slf4j-api'
-        exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
-    }
-    compile('com.moandjiezana.toml:toml4j:0.7.2')
 
+    implementation fileTree(include: ['*.jar'], dir: 'lib')
+    implementation('com.bloxbean.cardano:cardano-client-lib:0.4.3') {
+        exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation('com.bloxbean.cardano:cardano-client-backend-blockfrost:0.4.3') {
+        exclude group: 'org.slf4j', module: 'slf4j-api'
+        exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
+    }
+    implementation('com.bloxbean.cardano:cardano-client-backend-koios:0.4.3') {
+        exclude group: 'org.slf4j', module: 'slf4j-api'
+        exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
+    }
+    implementation('com.moandjiezana.toml:toml4j:0.7.2')
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.4.10")
 
     compileOnly 'org.projectlombok:lombok:1.18.20'
 
     annotationProcessor 'org.projectlombok:lombok:1.18.20'
-    testCompile group: 'junit', name: 'junit', version: '4.12'
+    testImplementation group: 'junit', name: 'junit', version: '4.12'
 }
 
 sourceSets.main.java.srcDirs('src/main/gen', 'src/main/idea')
@@ -75,13 +87,33 @@ String changeLogAsHtml() {
     renderer.render(changeLogDocument)
 }
 
-intellij {
-    version = '2021.1'
-    //type = 'IC'
-    plugins = ['java']
+grammarKit {
+    jflexRelease = "1.7.0-1"
+    grammarKitRelease = "2021.1.2"
+    generateLexer {
+        sourceFile = file('src/main/java/com/bloxbean/intelliada/idea/aiken/lang/grammar/_AikenLexer.flex')
+        targetOutputDir = file('src/main/gen/com/bloxbean/intelliada/idea/aiken/lang')
+    }
 
-    updateSinceUntilBuild = false
+    generateParser {
+        sourceFile = file('src/main/java/com/bloxbean/intelliada/idea/aiken/lang/grammar/Aiken.bnf')
+        targetRootOutputDir = file('src/main/gen')
+        pathToParser = 'com/bloxbean/intelliada/idea/aiken/lang/parser'
+        pathToPsiRoot = 'com/bloxbean/intelliada/idea/aiken/lang/psi'
+    }
 }
+
+//intellij {
+//    version = '2023.2'
+////    version = "232-EAP-SNAPSHOT"
+////    type = "IU"
+////    version = "2024.1.4"
+////    type = "IU"
+//    type = 'IC'
+//    plugins = ['java']
+//
+//    updateSinceUntilBuild = false
+//}
 patchPluginXml {
     changeNotes = changeLogAsHtml()
 }

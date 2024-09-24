@@ -18,19 +18,6 @@ public class AikenColors {
             createTextAttributesKey("String", DefaultLanguageHighlighterColors.STRING);
     public static final TextAttributesKey IDENTIFIER =
             createTextAttributesKey("Identifier//Type", DefaultLanguageHighlighterColors.CLASS_NAME);
-
-//
-//    DOC_COMMENT(AikenBundle.messagePointer("settings.Aiken.color.comment.doc"), DefaultLanguageHighlighterColors.DOC_COMMENT),
-//    MODULE_COMMENT(AikenBundle.messagePointer("settings.Aiken.color.comment.mod_doc"), DefaultLanguageHighlighterColors.LINE_COMMENT),
-//
-//    KEYWORD(AikenBundle.messagePointer("settings.Aiken.color.keyword"), DefaultLanguageHighlighterColors.KEYWORD),
-//
-//    STRING(AikenBundle.messagePointer("settings.Aiken.color.string"), DefaultLanguageHighlighterColors.STRING),
-//
-//    TYPE_IDENTIFIER(AikenBundle.messagePointer("settings.Aiken.color.identifier.type"), DefaultLanguageHighlighterColors.CLASS_NAME),
-//    ;
-//
-//    val textAttributesKey = TextAttributesKey.createTextAttributesKey("run.Aiken.$name", default)
-//    val attributesDescriptor = AttributesDescriptor(humanName, textAttributesKey)
-//    val testSeverity: HighlightSeverity = HighlightSeverity(name, HighlightSeverity.INFORMATION.myVal)
+    public static final TextAttributesKey TYPE_NAME =
+            createTextAttributesKey("TypeName", DefaultLanguageHighlighterColors.CLASS_NAME);
 }

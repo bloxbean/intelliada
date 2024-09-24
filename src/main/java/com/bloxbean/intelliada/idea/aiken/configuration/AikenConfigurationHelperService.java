@@ -32,8 +32,8 @@ public class AikenConfigurationHelperService {
             }
         }
 
-        //Check if aiken exec is there in .cargo folder
-        String aikenPath = System.getProperty("user.home") + File.separator + ".cargo" + File.separator + "bin";
+        //Check if aiken exec is there in .aiken folder
+        String aikenPath = System.getProperty("user.home") + File.separator + ".aiken" + File.separator + "bin";
         if (Path.of(aikenPath, getAikenCommand()).toFile().exists()) {
             return new AikenSDK("some id", "some aiken name", aikenPath, "0.0");
         }
