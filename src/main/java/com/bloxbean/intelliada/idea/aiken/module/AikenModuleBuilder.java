@@ -28,6 +28,7 @@ import com.intellij.openapi.roots.ModifiableRootModel;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ui.configuration.ModulesProvider;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -48,6 +49,8 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
     private static final Logger LOG = Logger.getInstance(AikenModuleBuilder.class);
 
     private List<Pair<String,String>> mySourcePaths;
+
+    private OwnerInputField ownerInputField;
 
     public AikenModuleBuilder() {
         addListener(this);
@@ -187,7 +190,9 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
         rootModel.inheritSdk();
 
         String moduleName = rootModel.getModule().getName();
-        String owner = System.getProperty("user.name");
+
+        String ownerInputFieldVal= ownerInputField.getValue();
+        String owner = ownerInputFieldVal != null? ownerInputFieldVal.trim(): System.getProperty("user.name");
 
         Project project = rootModel.getProject();
         String basePath = project.getBasePath();
@@ -248,7 +253,9 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
 
     @Override
     protected List<WizardInputField<?>> getAdditionalFields() {
-        return Collections.emptyList();
+        if (ownerInputField == null)
+            ownerInputField = new OwnerInputField("owner", System.getProperty("user.name"));
+        return Collections.singletonList(ownerInputField);
     }
 
     @Override
@@ -270,6 +277,30 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
             return paths;
         }
         return mySourcePaths;
+    }
+
+    class OwnerInputField extends WizardInputField<JTextField> {
+        private JTextField jt;
+        protected OwnerInputField(String id, String defaultValue) {
+            super(id, defaultValue);
+            jt = new JTextField();
+            jt.setText(defaultValue);
+        }
+
+        @Override
+        public @NlsContexts.Label String getLabel() {
+            return "Owner";
+        }
+
+        @Override
+        public JTextField getComponent() {
+            return jt;
+        }
+
+        @Override
+        public String getValue() {
+            return jt.getText();
+        }
     }
 
 }
