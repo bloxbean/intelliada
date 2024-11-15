@@ -3,16 +3,18 @@ package com.bloxbean.intelliada.idea.nodeint.service.impl.yaciprovider;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
-import com.bloxbean.intelliada.idea.nodeint.service.api.LogListener;
 import com.bloxbean.intelliada.idea.nodeint.service.api.model.AssetBalance;
-import junit.framework.TestCase;
+import org.junit.jupiter.api.Disabled;
 
 import java.util.List;
 
-public class YaciAccountServiceImplTest extends TestCase {
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class YaciAccountServiceImplTest {
 
     public static final String BASE_URL = "http://localhost:8080/api/v1/";
 
+    @Disabled
     public void testGetAdaBalance() throws TargetNodeNotConfigured {
         var remoteNode = new RemoteNode();
         remoteNode.setApiEndpoint(BASE_URL);
@@ -23,6 +25,7 @@ public class YaciAccountServiceImplTest extends TestCase {
         assertTrue(result.isSuccessful());
     }
 
+    @Disabled
     public void testAssets() throws TargetNodeNotConfigured, ApiCallException {
         var remoteNode = new RemoteNode();
         remoteNode.setApiEndpoint("http://localhost:8080/api/v1/");
@@ -32,21 +35,4 @@ public class YaciAccountServiceImplTest extends TestCase {
         System.out.println(assetBalances);
     }
 
-    class DummyLogListener implements LogListener {
-
-        @Override
-        public void info(String msg) {
-
-        }
-
-        @Override
-        public void error(String msg) {
-
-        }
-
-        @Override
-        public void warn(String msg) {
-
-        }
-    }
 }

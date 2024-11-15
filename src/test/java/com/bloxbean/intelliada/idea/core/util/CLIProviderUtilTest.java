@@ -1,10 +1,13 @@
 package com.bloxbean.intelliada.idea.core.util;
 
-import junit.framework.TestCase;
-import static org.junit.Assert.*;
+import org.junit.jupiter.api.Test;
 
-public class CLIProviderUtilTest extends TestCase {
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+public class CLIProviderUtilTest {
+
+    @Test
     public void testDaedalusMacMainnetPath() {
         String path = "/Applications/Daedalus Mainnet";
 
