@@ -32,9 +32,9 @@ import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
+import com.bloxbean.intelliada.idea.nodeint.service.CardanoServiceFactory;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
-import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
 import com.intellij.icons.AllIcons;
@@ -400,7 +400,7 @@ public class ListAccountDialog extends DialogWrapper {
 
                         CardanoAccountService cardanoAccountService = null;
                         try {
-                            cardanoAccountService = new AccountServiceImpl(project, new LogListenerAdapter(console));
+                            cardanoAccountService = CardanoServiceFactory.getAccountService(project, new LogListenerAdapter(console));
                         } catch (TargetNodeNotConfigured targetNodeNotConfigured) {
                             console.showErrorMessage(targetNodeNotConfigured.getMessage());
                             IdeaUtil.showNotification(project, "Node Configuration",

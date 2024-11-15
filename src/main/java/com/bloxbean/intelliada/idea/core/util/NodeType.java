@@ -6,16 +6,14 @@ import java.util.Map;
 //This node type is actually stored in the configuration
 public enum NodeType {
     EMPTY(""),
-    CARDANO_WALLET("Cardano Wallet"),
-    CARDANO_GRAPHQL("Cardano GraphQL"),
-    BLOCKFROST_TESTNET("Blockfrost Testnet"),
     BLOCKFROST_MAINNET("Blockfrost Mainnet"),
-    BLOCKFROST_PREPOD("Blockfrost Prepod"),
+    BLOCKFROST_PREPROD("Blockfrost Preprod"),
     BLOCKFROST_PREVIEW("Blockfrost Preview"),
     BLOCKFROST_CUSTOM("Blockfrost Custom"),
     KOIOS_PREPROD("Koios Preprod"),
     KOIOS_MAINNET("Koios Mainnet"),
-    KOIOS_CUSTOM("Koios Custom");
+    KOIOS_CUSTOM("Koios Custom"),
+    YaciDevKit("Yaci DevKit");
 
     private String displayName;
 

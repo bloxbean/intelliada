@@ -1,6 +1,9 @@
 package com.bloxbean.intelliada.idea.account.ui.details;
 
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
+import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
+import com.bloxbean.intelliada.idea.core.util.NodeType;
+import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
@@ -43,7 +46,17 @@ public class AccountDetailsDialog extends DialogWrapper {
 
     private void createUIComponents() {
         // TODO: place custom component creation code here
+
+        if (project != null) {
+            RemoteNode remoteNode = CardanoNodeConfigurationHelper.getTargetRemoteNode(project);
+            if (remoteNode != null) {
+                if (remoteNode.getNodeType() == NodeType.YaciDevKit) {
+                    transactionUI = new AccountTransactionsUI(project, false);
+                    return; //we don't support this yet
+                }
+            }
+        }
         //Need to initialize here because as non-null project required for JsonEditorTextField
-        transactionUI = new AccountTransactionsUI(project);
+        transactionUI = new AccountTransactionsUI(project, true);
     }
 }

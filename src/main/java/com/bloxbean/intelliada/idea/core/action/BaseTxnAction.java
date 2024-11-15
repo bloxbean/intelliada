@@ -30,7 +30,7 @@ public abstract class BaseTxnAction extends AnAction {
         fc.showSaveDialog(parent);
         File destination = fc.getSelectedFile();
 
-        if (destination.exists()) {
+        if (destination != null && destination.exists()) {
             int ret = 0;
             try {
                 ret = Messages.showYesNoCancelDialog(String.format("Already a file exists with file name %s. Do you want to overwrite?",

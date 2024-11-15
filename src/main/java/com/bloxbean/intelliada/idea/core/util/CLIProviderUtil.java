@@ -19,7 +19,7 @@ public class CLIProviderUtil {
     public static String getVersionString(String cliFolder) throws Exception {
         if (cliFolder == null) return null;
 
-        String cardanoCLICmd = getCardanoCLICommand();
+        String cardanoCLICmd = getDevKitScript();
 
         File file = new File(cliFolder);
         VirtualFile home = LocalFileSystem.getInstance().findFileByIoFile(file);
@@ -39,12 +39,12 @@ public class CLIProviderUtil {
         return null;
     }
 
-    public static String getCardanoCLICommand() {
-        String cardanoCLICmd = "cardano-cli";
+    public static String getDevKitScript() {
+        String devKitScript = "devkit.sh";
         if (SystemInfo.isWindows)
-            cardanoCLICmd = "cardano-cli.exe";
+            devKitScript = "devkit.bat";
 
-        return cardanoCLICmd;
+        return devKitScript;
     }
 
     public static String runProcessAndExit(String program, String command) throws InterruptedException, ExecutionException, IOException {
@@ -119,7 +119,7 @@ public class CLIProviderUtil {
     }
 
     private static boolean cardanoCLIExists(String path) {
-        File cli = new File(path, getCardanoCLICommand());
+        File cli = new File(path, getDevKitScript());
         return cli.exists();
     }
 

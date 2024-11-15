@@ -6,10 +6,11 @@ import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.service.api.model.AssetBalance;
 
+import java.net.URISyntaxException;
 import java.util.List;
 
 public interface CardanoAccountService {
-    public Result<Long> getAdaBalance(String address) throws ApiCallException;
+    public Result<Long> getAdaBalance(String address) throws ApiCallException, URISyntaxException;
 
     public List<AssetBalance> getBalance(String address) throws ApiCallException;
 

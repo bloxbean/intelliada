@@ -17,6 +17,10 @@ public class RemoteNode {
     private Map<String, String> headers;
     private int timeout;
 
+    //local node properties
+    private String home;
+    private String version;
+
     public RemoteNode() {
 
     }
@@ -108,6 +112,22 @@ public class RemoteNode {
         this.timeout = timeout;
     }
 
+    public String getHome() {
+        return home;
+    }
+
+    public void setHome(String home) {
+        this.home = home;
+    }
+
+    public String getVersion() {
+        return version;
+    }
+
+    public void setVersion(String version) {
+        this.version = version;
+    }
+
     public void updateValues(RemoteNode node) { //Update everything except id
         if (node == null) return;
 
@@ -120,6 +140,8 @@ public class RemoteNode {
         this.setProtocolMagic(node.getProtocolMagic());
         this.setHeaders(node.getHeaders());
         this.setTimeout(node.getTimeout());
+        this.setHome(node.getHome());
+        this.setVersion(node.getVersion());
     }
 
     @Override

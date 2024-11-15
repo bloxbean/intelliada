@@ -3,39 +3,47 @@ package com.bloxbean.intelliada.idea.aiken.action;
 import com.bloxbean.intelliada.idea.aiken.common.AikenIcons;
 import com.bloxbean.intelliada.idea.aiken.module.AikenModuleType;
 import com.bloxbean.intelliada.idea.aiken.module.pkg.AikenTomlService;
-import com.intellij.openapi.actionSystem.AnActionEvent;
-import com.intellij.openapi.actionSystem.DataContext;
-import com.intellij.openapi.actionSystem.DefaultActionGroup;
-import com.intellij.openapi.actionSystem.LangDataKeys;
+import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleType;
 import com.intellij.openapi.project.Project;
+import org.jetbrains.annotations.NotNull;
 
 public class AikenActionGroup extends DefaultActionGroup {
     @Override
-    public void update(AnActionEvent event) {
+    public void update(@NotNull AnActionEvent event) {
         Project project = event.getProject();
+        if (project == null) {
+            event.getPresentation().setVisible(false);
+            return;
+        }
 
         DataContext dataContext = event.getDataContext();
-        final Module module = LangDataKeys.MODULE.getData(dataContext);
 
-        final ModuleType moduleType = module == null ? null : ModuleType.get(module);
-        boolean isAikenModule = moduleType instanceof AikenModuleType;
+        // Wrap logic in ReadAction.nonBlocking or ReadAction.compute to move off EDT
+        boolean isAikenModule = ReadAction.compute(() -> {
+            final Module module = LangDataKeys.MODULE.getData(dataContext);
+            if (module == null) return false;
 
-        //Try to check if aiken.toml file available.
-        //For non-Aiken modules
-        if(!isAikenModule) {
-            AikenTomlService aikenTomlService = AikenTomlService.getInstance(project);
-            if (aikenTomlService != null)
-                isAikenModule = aikenTomlService.isAikenProject();
+            final ModuleType moduleType = ModuleType.get(module);
+            return moduleType instanceof AikenModuleType;
+        });
+
+        // For non-Aiken modules, check if aiken.toml is available in background
+        if (!isAikenModule) {
+            isAikenModule = ReadAction.nonBlocking(() -> {
+                AikenTomlService aikenTomlService = AikenTomlService.getInstance(project);
+                return aikenTomlService != null && aikenTomlService.isAikenProject();
+            }).executeSynchronously();
         }
 
-        if(isAikenModule) {
-            event.getPresentation().setVisible(true);
-            event.getPresentation().setIcon(AikenIcons.AIKEN_ICON);
-        } else {
-            event.getPresentation().setVisible(false);
-            event.getPresentation().setIcon(AikenIcons.AIKEN_ICON);
-        }
+        event.getPresentation().setVisible(isAikenModule);
+        event.getPresentation().setIcon(AikenIcons.AIKEN_ICON);
+    }
+
+    @Override
+    public @NotNull ActionUpdateThread getActionUpdateThread() {
+        return ActionUpdateThread.BGT;
     }
 }

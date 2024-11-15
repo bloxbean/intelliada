@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.nodeint.util;
 
 import com.bloxbean.intelliada.idea.core.util.Networks;
+import com.bloxbean.intelliada.idea.core.util.NodeType;
 import com.intellij.openapi.util.text.StringUtil;
 
 import java.util.HashMap;
@@ -12,10 +13,10 @@ public class NetworkHelper {
 
     private NetworkHelper() {
         networkTOExplorerUrlMap = new HashMap<>();
-        networkTOExplorerUrlMap.put(Networks.mainnet().getName(), "https://cexplorer.io");
-        networkTOExplorerUrlMap.put(Networks.testnet().getName(), "https://testnet.cexplorer.io");
-        networkTOExplorerUrlMap.put(Networks.prepod().getName(), "https://preprod.cexplorer.io");
-        networkTOExplorerUrlMap.put(Networks.preview().getName(), "https://preview.cexplorer.io");
+        networkTOExplorerUrlMap.put(Networks.mainnet().getName(), "https://cardanoscan.io");
+        networkTOExplorerUrlMap.put(Networks.testnet().getName(), "https://testnet.cardanoscan.io");
+        networkTOExplorerUrlMap.put(Networks.prepod().getName(), "https://preprod.cardanoscan.io");
+        networkTOExplorerUrlMap.put(Networks.preview().getName(), "https://preview.cardanoscan.io");
     }
 
     public static NetworkHelper getInstance() {
@@ -32,10 +33,13 @@ public class NetworkHelper {
         return networkTOExplorerUrlMap.get(network);
     }
 
-    public String getTxnHashUrl(String network, String txnHash) {
+    public String getTxnHashUrl(NodeType nodeType, String network, String txnHash) {
+        if (NodeType.YaciDevKit.equals(nodeType)) {
+            return "http://localhost:5173/transactions/" + txnHash;
+        }
+
         String url = getExplorerBaseUrl(network);
         if (StringUtil.isEmpty(url)) return null;
-
         return url + "/tx/" + txnHash;
     }
 

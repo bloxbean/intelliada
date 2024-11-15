@@ -5,10 +5,10 @@ import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.backend.model.metadata.MetadataJSONContent;
 import com.bloxbean.intelliada.idea.account.model.CardanoAccount;
 import com.bloxbean.intelliada.idea.common.ui.JsonEditorTextField;
+import com.bloxbean.intelliada.idea.nodeint.service.CardanoServiceFactory;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionInfoService;
-import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.TransactionInfoServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.JsonUtil;
@@ -39,8 +39,11 @@ public class AccountTransactionsUI {
     private CardanoAccount account;
     private DefaultListModel<String> txnListModel;
 
-    public AccountTransactionsUI(Project project) {
+    private boolean supported;
+
+    public AccountTransactionsUI(Project project, boolean supported) {
         this.project = project;
+        this.supported = supported;
     }
 
     public void initialize(CardanoAccount account, CardanoConsole console) {
@@ -50,6 +53,14 @@ public class AccountTransactionsUI {
 
         attachListeners();
         getRecentTransactions();
+
+        if(!supported) {
+            transactionContentTf.setText("Transaction details are not supported for the selected node type");
+            metadataEditorTf.setText("Transaction metadata are not supported for the selected node type");
+
+            transactionContentTf.setEnabled(false);
+            metadataEditorTf.setEnabled(false);
+        }
     }
 
     private void attachListeners() {
@@ -100,7 +111,7 @@ public class AccountTransactionsUI {
                         return;
 
                     try {
-                        CardanoAccountService accountService = new AccountServiceImpl(project, new LogListenerAdapter(console));
+                        CardanoAccountService accountService = CardanoServiceFactory.getAccountService(project, new LogListenerAdapter(console));
                         List<String> txnList = accountService.getRecentTransactions(address, 100, 1, OrderEnum.desc);
                         txnListModel.addAll(txnList);
                     } catch (Exception e) {
