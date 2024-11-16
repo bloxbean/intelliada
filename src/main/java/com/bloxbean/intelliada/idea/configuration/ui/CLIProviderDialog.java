@@ -11,7 +11,7 @@ import javax.swing.*;
 
 public class CLIProviderDialog extends DialogWrapper {
 
-    private CLIProviderPanel localSDKPanel;
+    private LocalYaciDevKitConfigPanel localSDKPanel;
 
     public CLIProviderDialog(Project project) {
         this(project, null);
@@ -19,7 +19,7 @@ public class CLIProviderDialog extends DialogWrapper {
 
     public CLIProviderDialog(Project project, CLIProvider provider) {
         super(project);
-        localSDKPanel = new CLIProviderPanel(provider);
+       // localSDKPanel = new LocalYaciDevKitConfigPanel(provider);
         init();
         setTitle("Cardano Installation");
     }

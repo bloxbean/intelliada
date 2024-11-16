@@ -1,12 +1,11 @@
 package com.bloxbean.intelliada.idea.util;
 
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
 
 import static com.bloxbean.intelliada.idea.util.AdaConversionUtil.LOVELACE;
-import static org.junit.Assert.*;
 
 public class JsonUtilTest {
 

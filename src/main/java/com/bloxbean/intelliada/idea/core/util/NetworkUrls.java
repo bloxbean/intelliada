@@ -7,4 +7,6 @@ public class NetworkUrls {
     public final static String BLOCKFROST_MAINNET_BASEURL = "https://cardano-mainnet.blockfrost.io/api/v0/";
     public final static String BLOCKFROST_PREPOD_BASEURL = Constants.BLOCKFROST_PREPROD_URL;
     public final static String BLOCKFROST_PREVIEW_BASEURL = Constants.BLOCKFROST_PREVIEW_URL;
+
+    public final static String YACI_DEVKIT_BASEURL = "http://localhost:8080/api/v1/";
 }

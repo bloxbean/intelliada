@@ -130,7 +130,7 @@ public class TokenMintingTransactionAction extends BaseTxnAction {
 
                     String signedTxnCbor = transactionService.exportMintTokenTransaction(mintTransaction, detailsParams, metadata);
                     SerializedTransaction serializedTransaction = SerializedTransaction.builder()
-                            .type(SerializedTransaction.TX_MARY_ERA)
+                            .type(SerializedTransaction.TX_CONWAY_ERA)
                             .description("")
                             .cborHex(signedTxnCbor).build();
 

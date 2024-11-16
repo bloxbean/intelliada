@@ -36,9 +36,15 @@ public class NodeServiceFactory {
         if (backendService != null)
             return backendService;
 
-        if (NodeType.BLOCKFROST_TESTNET.equals(remoteNode.getNodeType()) ||
-                NodeType.BLOCKFROST_MAINNET.equals(remoteNode.getNodeType()) ||
-                NodeType.BLOCKFROST_PREPOD.equals(remoteNode.getNodeType()) ||
+        if (NodeType.YaciDevKit.equals(remoteNode.getNodeType())) {
+            backendService
+                    = new BFBackendService(remoteNode.getApiEndpoint(), "Some dummy key");
+            backendServiceMap.put(remoteNode.getId(), backendService);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Backend service created for the node : " + remoteNode);
+            }
+        } else if (NodeType.BLOCKFROST_MAINNET.equals(remoteNode.getNodeType()) ||
+                NodeType.BLOCKFROST_PREPROD.equals(remoteNode.getNodeType()) ||
                 NodeType.BLOCKFROST_PREVIEW.equals(remoteNode.getNodeType()) ||
                 NodeType.BLOCKFROST_CUSTOM.equals(remoteNode.getNodeType())
         ) {

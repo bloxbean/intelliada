@@ -79,14 +79,14 @@ public class AccountListTableModel extends AbstractTableModel {
         else if (columnIndex == 1)
             return account.getAddress();
         else if (columnIndex == 2) {
-            Long balance = account.getBalance();
+            BigInteger balance = account.getBalance();
             if (balance == null)
                 return "..";
             else {
-                if (balance == 0)
+                if (balance.equals(BigInteger.ZERO))
                     return balance;
                 else {
-                    String adaValue = AdaConversionUtil.lovelaceToAdaFormatted(BigInteger.valueOf(balance));
+                    String adaValue = AdaConversionUtil.lovelaceToAdaFormatted(balance);
                     return adaValue + " ADA (" + balance + ")";
                 }
             }

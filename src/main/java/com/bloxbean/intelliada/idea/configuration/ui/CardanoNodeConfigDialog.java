@@ -15,10 +15,12 @@ public class CardanoNodeConfigDialog {
     private JPanel mainPanel;
     private JComboBox nodeTypesCB;
     private JPanel contentPanel;
+    private DevKitNodeConfigPanel devKitNodeConfigPanel;
     private RemoteNodeConfigPanel blockfrostConfigPanel;
     private KoiosNodeConfigPanel koiosNodeConfigPanel;
 
     public CardanoNodeConfigDialog(Project project, RemoteNode remoteNode) {
+        nodeTypesCB.addItem(CardanoNodeType.YaciDevKit);
         nodeTypesCB.addItem(CardanoNodeType.Blockfrost);
         nodeTypesCB.addItem(CardanoNodeType.Koios);
 
@@ -26,10 +28,12 @@ public class CardanoNodeConfigDialog {
     }
 
     public void initialize(Project project, RemoteNode remoteNode) {
+        devKitNodeConfigPanel = new DevKitNodeConfigPanel(remoteNode);
         blockfrostConfigPanel = new RemoteNodeConfigPanel(remoteNode);
         koiosNodeConfigPanel = new KoiosNodeConfigPanel(project);
 
         //contentPanel.setLayout(new CardLayout());
+        contentPanel.add(devKitNodeConfigPanel.getMainPanel(), CardanoNodeType.YaciDevKit.toString());
         contentPanel.add(blockfrostConfigPanel.getMainPanel(), CardanoNodeType.Blockfrost.toString());
         contentPanel.add(koiosNodeConfigPanel.getMainPanel(), CardanoNodeType.Koios.toString());
 
@@ -47,9 +51,15 @@ public class CardanoNodeConfigDialog {
                     remoteNode.getNodeType().equals(NodeType.KOIOS_CUSTOM)) {
                 nodeTypesCB.setSelectedItem(CardanoNodeType.Koios);
                 koiosNodeConfigPanel.setNodeData(remoteNode);
-            } else { //Default is Blocfrost
+            } else if (remoteNode.getNodeType().equals(NodeType.BLOCKFROST_MAINNET) ||
+                    remoteNode.getNodeType().equals(NodeType.BLOCKFROST_PREPROD) ||
+                    remoteNode.getNodeType().equals(NodeType.BLOCKFROST_PREVIEW) ||
+                    remoteNode.getNodeType().equals(NodeType.BLOCKFROST_CUSTOM)) {
                 nodeTypesCB.setSelectedItem(CardanoNodeType.Blockfrost); //default
                 blockfrostConfigPanel.setNodeData(remoteNode);
+            } else {
+                nodeTypesCB.setSelectedItem(CardanoNodeType.YaciDevKit);
+                devKitNodeConfigPanel.setNodeData(remoteNode);
             }
 
             nodeTypesCB.setEnabled(false);
@@ -58,7 +68,9 @@ public class CardanoNodeConfigDialog {
 
     public ValidationInfo doValidate() {
         CardanoNodeType cardanoNodeType = (CardanoNodeType) nodeTypesCB.getSelectedItem();
-        if (CardanoNodeType.Blockfrost.equals(cardanoNodeType)) {
+        if (CardanoNodeType.YaciDevKit.equals(cardanoNodeType)) {
+            return devKitNodeConfigPanel.doValidate();
+        } else if (CardanoNodeType.Blockfrost.equals(cardanoNodeType)) {
             return blockfrostConfigPanel.doValidate();
         } else if (CardanoNodeType.Koios.equals(cardanoNodeType)) {
             return koiosNodeConfigPanel.doValidate();
@@ -69,7 +81,9 @@ public class CardanoNodeConfigDialog {
 
     public NodeConfigurator getNodeConfigurator() {
         CardanoNodeType cardanoNodeType = (CardanoNodeType) nodeTypesCB.getSelectedItem();
-        if (CardanoNodeType.Blockfrost.equals(cardanoNodeType)) {
+        if (CardanoNodeType.YaciDevKit.equals(cardanoNodeType)) {
+            return devKitNodeConfigPanel;
+        } else if (CardanoNodeType.Blockfrost.equals(cardanoNodeType)) {
             return blockfrostConfigPanel;
         } else if (CardanoNodeType.Koios.equals(cardanoNodeType)) {
             return koiosNodeConfigPanel;

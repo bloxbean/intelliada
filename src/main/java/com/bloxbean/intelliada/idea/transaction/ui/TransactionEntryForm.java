@@ -10,11 +10,11 @@ import com.bloxbean.intelliada.idea.core.util.Network;
 import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
+import com.bloxbean.intelliada.idea.nodeint.service.CardanoServiceFactory;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
 import com.bloxbean.intelliada.idea.nodeint.service.api.TransactionService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.model.AssetBalance;
-import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
 import com.bloxbean.intelliada.idea.nodeint.service.impl.TransactionServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.transaction.TransactionEntryListener;
@@ -171,7 +171,7 @@ public class TransactionEntryForm {
                         return;
 
                     try {
-                        CardanoAccountService accountService = new AccountServiceImpl(project, new LogListenerAdapter(console));
+                        CardanoAccountService accountService = CardanoServiceFactory.getAccountService(project, new LogListenerAdapter(console));
                         List<AssetBalance> assetBalanceList = accountService.getBalance(senderTf.getText());
 
                         availableBalanceComboBoxModel.removeAllElements();

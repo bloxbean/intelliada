@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.toolwindow.action;
 
 import com.bloxbean.intelliada.idea.configuration.service.ConfigurationHelperService;
 import com.intellij.icons.AllIcons;
+import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.project.Project;
@@ -31,5 +32,10 @@ public class SetDefaultRemoteNodeAction extends AnAction {
     @Override
     public boolean isDumbAware() {
         return true;
+    }
+
+    @Override
+    public @NotNull ActionUpdateThread getActionUpdateThread() {
+        return ActionUpdateThread.BGT;
     }
 }

@@ -1,4 +1,4 @@
-package com.bloxbean.intelliada.idea.folding;
+package com.bloxbean.intelliada.idea.aiken.folding;
 
 import com.bloxbean.intelliada.idea.aiken.lang.psi.AikenTypes;
 import com.intellij.lang.BracePair;

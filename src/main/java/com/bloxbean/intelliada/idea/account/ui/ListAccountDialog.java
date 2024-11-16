@@ -32,9 +32,9 @@ import com.bloxbean.intelliada.idea.core.util.NetworkUtil;
 import com.bloxbean.intelliada.idea.core.util.Networks;
 import com.bloxbean.intelliada.idea.nodeint.CardanoNodeConfigurationHelper;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
+import com.bloxbean.intelliada.idea.nodeint.service.CardanoServiceFactory;
 import com.bloxbean.intelliada.idea.nodeint.service.api.CardanoAccountService;
 import com.bloxbean.intelliada.idea.nodeint.service.api.LogListenerAdapter;
-import com.bloxbean.intelliada.idea.nodeint.service.impl.AccountServiceImpl;
 import com.bloxbean.intelliada.idea.toolwindow.CardanoConsole;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
 import com.intellij.icons.AllIcons;
@@ -67,6 +67,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -400,7 +401,7 @@ public class ListAccountDialog extends DialogWrapper {
 
                         CardanoAccountService cardanoAccountService = null;
                         try {
-                            cardanoAccountService = new AccountServiceImpl(project, new LogListenerAdapter(console));
+                            cardanoAccountService = CardanoServiceFactory.getAccountService(project, new LogListenerAdapter(console));
                         } catch (TargetNodeNotConfigured targetNodeNotConfigured) {
                             console.showErrorMessage(targetNodeNotConfigured.getMessage());
                             IdeaUtil.showNotification(project, "Node Configuration",
@@ -420,7 +421,7 @@ public class ListAccountDialog extends DialogWrapper {
                             }
 
                             try {
-                                Result<Long> result = cardanoAccountService.getAdaBalance(account.getAddress());
+                                Result<BigInteger> result = cardanoAccountService.getAdaBalance(account.getAddress());
 
                                 if (result.isSuccessful()) {
                                     progressIndicator.setFraction(counter++ / tableModel.getAccounts().size());
@@ -428,7 +429,7 @@ public class ListAccountDialog extends DialogWrapper {
                                         break;
                                     }
 
-                                    Long balance = result.getValue();
+                                    BigInteger balance = result.getValue();
                                     if (result.getValue() != null) {
                                         account.setBalance(balance);
                                     }

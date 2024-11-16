@@ -1,11 +1,10 @@
 package com.bloxbean.intelliada.idea.configuration.common;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class HeaderParserUtilTest {
 
@@ -15,8 +14,8 @@ public class HeaderParserUtilTest {
         Map<String, String> map = HeaderParserUtil.parseHeaders(str);
 
         System.out.println(map);
-        assertThat(map.get("key1"), is("value1"));
-        assertThat(map.get("key2"), is("value%$_@="));
-        assertThat(map.get("key3"), is("Hello world"));
+        assertThat(map.get("key1")).isEqualTo("value1");
+        assertThat(map.get("key2")).isEqualTo("value%$_@=");
+        assertThat(map.get("key3")).isEqualTo("Hello world");
     }
 }

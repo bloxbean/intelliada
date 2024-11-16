@@ -35,7 +35,7 @@ public class AccountServiceImpl extends NodeBaseService implements CardanoAccoun
     }
 
     @Override
-    public Result<Long> getAdaBalance(String address) {
+    public Result<BigInteger> getAdaBalance(String address) {
 
         LedgerAccount account;
         AddressContent addressContent = null;

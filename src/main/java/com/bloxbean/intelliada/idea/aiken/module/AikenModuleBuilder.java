@@ -96,7 +96,7 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
                     ApplicationManager.getApplication().runWriteAction(new Runnable() {
                         @Override
                         public void run() {
-                            ProjectGeneratorUtil.createNewContract(module.getProject(), srcRoot, AikenContractTemplates.AK_HELLOWORLD_TEMPLATE, module.getName() + ".ak");
+                            ProjectGeneratorUtil.createNewContract(module.getProject(), srcRoot, AikenContractTemplates.AK_HELLOWORLD_TEMPLATE, module.getName().toLowerCase() + ".ak");
 
                             build(module);
                         }
@@ -189,10 +189,10 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
     public void setupRootModel(@NotNull ModifiableRootModel rootModel) throws ConfigurationException {
         rootModel.inheritSdk();
 
-        String moduleName = rootModel.getModule().getName();
+        String moduleName = rootModel.getModule().getName().toLowerCase();
 
         String ownerInputFieldVal= ownerInputField.getValue();
-        String owner = ownerInputFieldVal != null? ownerInputFieldVal.trim(): System.getProperty("user.name");
+        String owner = ownerInputFieldVal != null? ownerInputFieldVal.trim().toLowerCase(): System.getProperty("user.name").toLowerCase();
 
         Project project = rootModel.getProject();
         String basePath = project.getBasePath();

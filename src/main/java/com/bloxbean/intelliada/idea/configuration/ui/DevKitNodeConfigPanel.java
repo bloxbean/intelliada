@@ -24,32 +24,28 @@ import java.awt.*;
 import java.util.Map;
 import java.util.UUID;
 
-//Config panel for Blockfrost api
-public class RemoteNodeConfigPanel implements NodeConfigurator {
+//Config panel for YaciDevKit api
+public class DevKitNodeConfigPanel implements NodeConfigurator {
     private JPanel mainPanel;
     private JTextField nameTf;
     private JButton testConnectionBtn;
     private JComboBox nodeTypesCB;
-    private JTextField authKey;
-    private JLabel authKeyLabel;
-    private JTextField networkTf;
-    private JTextField networkIdTf;
     private JTextField protocolMagicTf;
     private JTextField apiEndpointTf;
     private JLabel connectionTestLabel;
     private boolean newConfig = true;
 
-    public RemoteNodeConfigPanel() {
+    public DevKitNodeConfigPanel() {
         this(null);
     }
 
-    public RemoteNodeConfigPanel(RemoteNode node) {
+    public DevKitNodeConfigPanel(RemoteNode node) {
         super();
 
-        initialize();
+        initialize(node);
     }
 
-    private void initialize() {
+    private void initialize(RemoteNode node) {
         handleNodeTypeSelection();
 
         testConnectionBtn.addActionListener(e -> {
@@ -64,48 +60,22 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
             nameTf.setText(node.getName());
             nodeTypesCB.setSelectedItem(node.getNodeType());
             apiEndpointTf.setText(node.getApiEndpoint());
-            authKey.setText(node.getAuthKey());
-            networkTf.setText(node.getNetwork());
-            networkIdTf.setText(node.getNetworkId());
+//            authKey.setText(node.getAuthKey());
+//            networkTf.setText(node.getNetwork());
+//            networkIdTf.setText(node.getNetworkId());
             protocolMagicTf.setText(node.getProtocolMagic());
         }
     }
 
     private void handleNodeTypeSelection() {
         nodeTypesCB.addActionListener(e -> {
-            if (NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())
-                    || NodeType.BLOCKFROST_PREPROD.equals(nodeTypesCB.getSelectedItem())
-                    || NodeType.BLOCKFROST_PREVIEW.equals(nodeTypesCB.getSelectedItem())
-                    || NodeType.BLOCKFROST_CUSTOM.equals(nodeTypesCB.getSelectedItem())
-            ) {
-                apiEndpointTf.setEnabled(false);
-                authKeyLabel.setText("Project Id");
-
-                if (NodeType.BLOCKFROST_MAINNET.equals(nodeTypesCB.getSelectedItem())) {
-                    apiEndpointTf.setText(NetworkUrls.BLOCKFROST_MAINNET_BASEURL);
-                    setNetwork(Networks.mainnet());
-                } else if (NodeType.BLOCKFROST_PREPROD.equals(nodeTypesCB.getSelectedItem())) {
-                    apiEndpointTf.setText(NetworkUrls.BLOCKFROST_PREPOD_BASEURL);
-                    setNetwork(Networks.prepod());
-                } else if (NodeType.BLOCKFROST_PREVIEW.equals(nodeTypesCB.getSelectedItem())) {
-                    apiEndpointTf.setText(NetworkUrls.BLOCKFROST_PREVIEW_BASEURL);
-                    setNetwork(Networks.preview());
-                } else if (NodeType.BLOCKFROST_CUSTOM.equals(nodeTypesCB.getSelectedItem())) {
-                    apiEndpointTf.setEnabled(true);
-                    setNetwork(Networks.testnet());
-                }
-
-            } else {
+                apiEndpointTf.setText(NetworkUrls.YACI_DEVKIT_BASEURL);
                 apiEndpointTf.setEnabled(true);
-                authKeyLabel.setText("Auth Key");
-            }
         });
     }
 
     private void setNetwork(Network network) {
         if (network != null) {
-            networkTf.setText(network.getName());
-            networkIdTf.setText(network.getNetworkId());
             protocolMagicTf.setText(network.getProtocolMagic());
         }
     }
@@ -121,10 +91,6 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
 
         if (StringUtil.isEmpty(getApiEndpoint())) {
             return new ValidationInfo("Please enter a valid api endpoint url", apiEndpointTf);
-        }
-
-        if (getApiEndpoint().contains("blockfrost.io") && StringUtil.isEmpty(getAuthKey())) {
-            return new ValidationInfo("Please enter a valid project id", authKey);
         }
 
         return null;
@@ -143,19 +109,20 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
     }
 
     public String getAuthKey() {
-        return authKey.getText();
+        return "dummy key";
     }
 
     public NodeType getNodeType() {
-        return (NodeType) nodeTypesCB.getSelectedItem();
+        return NodeType.YaciDevKit;
     }
 
     public String getNetwork() {
-        return networkTf.getText();
+        return "devkit_network";
     }
 
     public String getNetworkId() {
-        return networkIdTf.getText();
+        return "devkit_network_id";
+        //return networkIdTf.getText();
     }
 
     public String getProtocolMagic() {
@@ -182,10 +149,10 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
                 remoteNode.setId(UUID.randomUUID().toString()); //Some random id
                 remoteNode.setName(getName());
                 remoteNode.setApiEndpoint(getApiEndpoint());
-                remoteNode.setAuthKey(getAuthKey());
+//                remoteNode.setAuthKey(getAuthKey());
                 remoteNode.setNodeType(getNodeType());
                 remoteNode.setProtocolMagic(getProtocolMagic());
-                remoteNode.setNetworkId(getNetworkId());
+               // remoteNode.setNetworkId(getNetworkId());
 
                 LogListener logListener = new LogListener() {
                     @Override
@@ -207,19 +174,19 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
                 try {
                     //First remove
                     NetworkInfoService networkService = new NetworkServiceImpl(remoteNode, logListener);
-                    Result result = networkService.testAndGetNetworkInfo();
+                    Long currentSlot = networkService.getCurrentSlot();
 
-                    if (result.isSuccessful()) {
+                    if (currentSlot != null && currentSlot > 0) {
                         connectionTestLabel.setForeground(Color.black);
                         connectionTestLabel.setText("Successfully connected !!!");
                     } else {
                         connectionTestLabel.setForeground(Color.red);
-                        String response = result.getResponse();
-                        if (response != null && response.length() > 30)
-                            response = response.substring(0, 27) + "...";
+//                        String response = result.getResponse();
+//                        if (response != null && response.length() > 30)
+//                            response = response.substring(0, 27) + "...";
 
-                        connectionTestLabel.setText("Could not connect to node : " + response);
-                        connectionTestLabel.setToolTipText(result.getResponse());
+                        connectionTestLabel.setText("Could not connect to node " );
+//                        connectionTestLabel.setToolTipText(result.getResponse());
                     }
                 } catch (Exception exception) {
                     connectionTestLabel.setText("Could not connect to node. Reason: " + exception.getMessage());
@@ -232,10 +199,6 @@ public class RemoteNodeConfigPanel implements NodeConfigurator {
 
     private void createUIComponents() {
         // TODO: place custom component creation code here
-        nodeTypesCB = new ComboBox(new NodeType[]{NodeType.EMPTY,
-                NodeType.BLOCKFROST_PREPROD,
-                NodeType.BLOCKFROST_PREVIEW,
-                NodeType.BLOCKFROST_MAINNET
-        });
+        nodeTypesCB = new ComboBox(new NodeType[]{NodeType.YaciDevKit});
     }
 }

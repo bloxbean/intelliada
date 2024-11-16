@@ -11,7 +11,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class SerializedTransaction {
-    public final static String TX_MARY_ERA = "Tx MaryEra";
+    public final static String TX_CONWAY_ERA = "Tx ConwayEra";
     private String type;
     private String description = "";
     private String cborHex;
