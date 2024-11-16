@@ -1,16 +1,22 @@
 package com.bloxbean.intelliada.idea.nodeint.service.impl;
 
-import com.bloxbean.cardano.client.api.helper.model.TransactionResult;
+import com.bloxbean.cardano.client.account.Account;
+import com.bloxbean.cardano.client.api.exception.ApiException;
+import com.bloxbean.cardano.client.api.model.Amount;
 import com.bloxbean.cardano.client.api.model.Result;
+import com.bloxbean.cardano.client.api.util.AssetUtil;
 import com.bloxbean.cardano.client.backend.model.Block;
+import com.bloxbean.cardano.client.exception.CborSerializationException;
+import com.bloxbean.cardano.client.function.helper.SignerProviders;
 import com.bloxbean.cardano.client.metadata.Metadata;
+import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
+import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.client.transaction.model.MintTransaction;
 import com.bloxbean.cardano.client.transaction.model.PaymentTransaction;
 import com.bloxbean.cardano.client.transaction.model.TransactionDetailsParams;
 import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.transaction.spec.MultiAsset;
 import com.bloxbean.cardano.client.transaction.spec.Transaction;
-import com.bloxbean.cardano.client.util.AssetUtil;
 import com.bloxbean.cardano.client.util.HexUtil;
 import com.bloxbean.intelliada.idea.nodeint.exception.ApiCallException;
 import com.bloxbean.intelliada.idea.nodeint.exception.TargetNodeNotConfigured;
@@ -24,9 +30,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
-
-import static com.bloxbean.intelliada.idea.util.AdaConversionUtil.ADA_SYMBOL;
 
 public class TransactionServiceImpl extends NodeBaseService implements TransactionService {
 
@@ -51,7 +54,7 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
     }
 
     @Override
-    public String transfer(List<PaymentTransaction> transactions, TransactionDetailsParams detailsParams, Metadata metadata)
+    public String transfer(PaymentTransaction paymentTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
             throws ApiCallException {
 
         logListener.info("Starting payment transaction ...");
@@ -66,51 +69,74 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
             detailsParams.setTtl(calculatedTtl);
         }
 
+        var transaction = buildTransaction(paymentTransaction, detailsParams, metadata);
         try {
-            int count = 1;
-            for (PaymentTransaction paymentTransaction : transactions) {
-                if (paymentTransaction.getFee() == null || paymentTransaction.getFee().equals(BigInteger.ZERO)) { //Calculate fee
-                    logListener.info("Calculate fee ...");
-                    BigInteger fee = null;
-                    fee = backendService.getFeeCalculationService().calculateFee(paymentTransaction, detailsParams, metadata);
-                    logListener.info("Estimated fee for transaction " + count++ + " : "
-                            + AdaConversionUtil.lovelaceToAdaFormatted(fee) + " " + ADA_SYMBOL);
-                    paymentTransaction.setFee(fee);
-                }
-            }
-        } catch (Exception e) {
-            throw new ApiCallException("Fee calculation failed", e);
-        }
+            var result = backendService.getTransactionService().submitTransaction(transaction.serialize());
 
-        try {
-            printTransactionRequests(transactions);
-
-            Result<TransactionResult> result = backendService.getTransactionHelperService().transfer(transactions, detailsParams, metadata);
-            try {
-                byte[] txnCborBytes = result.getValue().getSignedTxn();
-                Transaction transaction = Transaction.deserialize(txnCborBytes);
-                logListener.info("Transaction Request: " + JsonUtil.getPrettyJson(transaction));
-            } catch (Exception e) {
-                logListener.warn("Transaction de-serialization error", e);
-            }
             if (result.isSuccessful()) {
                 logListener.info("Transaction submitted successfully");
-                logListener.info("Transaction id: " + result.getValue().getTransactionId());
+                logListener.info("Transaction id: " + result.getValue());
 
-                waitForTransaction(result.getValue().getTransactionId());
-                return result.getValue().getTransactionId();
+                waitForTransaction(result.getValue());
+                return result.getValue();
             } else {
                 logListener.error("Transaction failed");
                 logListener.error(result.toString());
                 throw new ApiCallException("Transaction failed. " + result.getResponse());
             }
+        } catch (ApiException e) {
+            throw new RuntimeException(e);
+        } catch (CborSerializationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Transaction buildTransaction(PaymentTransaction paymentTransaction, TransactionDetailsParams detailsParams,
+                                         Metadata metadata) throws ApiCallException {
+        try {
+            Tx tx = new Tx();
+
+            if (paymentTransaction.getUtxosToInclude() != null && paymentTransaction.getUtxosToInclude().size() > 0)
+                tx.collectFrom(paymentTransaction.getUtxosToInclude());
+
+            tx.payToAddress(paymentTransaction.getReceiver(), new Amount(paymentTransaction.getUnit(), paymentTransaction.getAmount()));
+            tx.from(paymentTransaction.getSender().baseAddress());
+
+            if (metadata != null)
+                tx.attachMetadata(metadata);
+
+            var txContext = new QuickTxBuilder(backendService)
+                    .compose(tx)
+                    .withSigner(SignerProviders.signerFrom(paymentTransaction.getSender()));
+
+            //Additional accounts
+            for (Account account : paymentTransaction.getAdditionalWitnessAccounts()) {
+                txContext.withSigner(SignerProviders.signerFrom(account));
+            }
+
+
+            txContext = txContext.preBalanceTx((context, transaction) -> {
+                if (detailsParams.getTtl() != 0)
+                    transaction.getBody().setTtl(detailsParams.getTtl());
+
+                if (detailsParams.getValidityStartInterval() != 0)
+                    transaction.getBody().setValidityStartInterval(detailsParams.getValidityStartInterval());
+            });
+
+            txContext.withTxInspector(transaction -> {
+                logListener.info(JsonUtil.getPrettyJson(transaction));
+            });
+
+            return txContext.buildAndSign();
+
+
         } catch (Exception e) {
-            throw new ApiCallException("Transaction failed", e);
+            throw new ApiCallException("Transaction build failed", e);
         }
     }
 
     @Override
-    public String exportSignedTransaction(List<PaymentTransaction> transactions, TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException {
+    public String exportSignedTransaction(PaymentTransaction paymentTransaction, TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException {
         logListener.info("Creating transaction ...");
         printRemoteNodeDetails();
         //Calculate ttl
@@ -123,27 +149,12 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
             detailsParams.setTtl(calculatedTtl);
         }
 
-        try {
-            int count = 1;
-            for (PaymentTransaction paymentTransaction : transactions) {
-                if (paymentTransaction.getFee() == null || paymentTransaction.getFee().equals(BigInteger.ZERO)) { //Calculate fee
-                    logListener.info("Calculate fee ...");
-                    BigInteger fee = null;
-                    fee = backendService.getFeeCalculationService().calculateFee(paymentTransaction, detailsParams, metadata);
-                    logListener.info("Estimated fee for transaction " + count++ + " : "
-                            + AdaConversionUtil.lovelaceToAdaFormatted(fee) + " " + ADA_SYMBOL);
-                    paymentTransaction.setFee(fee);
-                }
-            }
-        } catch (Exception e) {
-            throw new ApiCallException("Fee calculation failed", e);
-        }
+        var transaction = buildTransaction(paymentTransaction, detailsParams, metadata);
 
         try {
-            printTransactionRequests(transactions);
+            printTransactionRequests(paymentTransaction);
 
-            String signedCborHex = backendService.getTransactionHelperService().getTransactionBuilder()
-                    .createSignedTransaction(transactions, detailsParams, metadata);
+            String signedCborHex = transaction.serializeToHex();
             if (StringUtil.isEmpty(signedCborHex))
                 throw new ApiCallException("Export transaction failed.");
             else
@@ -168,34 +179,18 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
         }
 
         try {
-            int count = 1;
-            logListener.info("Calculate fee ...");
-            BigInteger fee = null;
-            fee = backendService.getFeeCalculationService().calculateFee(mintTransaction, detailsParams, metadata);
-            logListener.info("Estimated fee for transaction " + count++ + " : "
-                    + AdaConversionUtil.lovelaceToAdaFormatted(fee) + " " + ADA_SYMBOL);
-            mintTransaction.setFee(fee);
-        } catch (Exception e) {
-            throw new ApiCallException("Fee calculation failed", e);
-        }
-
-        try {
             printTokenMintRequest(mintTransaction);
 
-            Result<TransactionResult> result = backendService.getTransactionHelperService().mintToken(mintTransaction, detailsParams, metadata);
-            try {
-                byte[] txnCborBytes = result.getValue().getSignedTxn();
-                Transaction transaction = Transaction.deserialize(txnCborBytes);
-                logListener.info("Transaction Request: " + JsonUtil.getPrettyJson(transaction));
-            } catch (Exception e) {
-                logListener.warn("Transaction de-serialization error", e);
-            }
+            var transaction = buildMintTransaction(mintTransaction, detailsParams, metadata);
+
+            var result = backendService.getTransactionService().submitTransaction(transaction.serialize());
+
             if (result.isSuccessful()) {
                 logListener.info("Transaction submitted successfully");
-                logListener.info("Transaction id: " + result.getValue().getTransactionId());
+                logListener.info("Transaction id: " + result.getValue());
 
-                waitForTransaction(result.getValue().getTransactionId());
-                return result.getValue().getTransactionId();
+                waitForTransaction(result.getValue());
+                return result.getValue();
             } else {
                 logListener.error("Transaction failed");
                 logListener.error(result.toString());
@@ -204,6 +199,48 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
         } catch (Exception e) {
             throw new ApiCallException("Transaction failed", e);
         }
+    }
+
+    private Transaction buildMintTransaction(MintTransaction mintTransaction, TransactionDetailsParams detailsParams, Metadata metadata) {
+        Tx tx = new Tx();
+
+        if (mintTransaction.getUtxosToInclude() != null && mintTransaction.getUtxosToInclude().size() > 0)
+            tx.collectFrom(mintTransaction.getUtxosToInclude());
+
+        for (MultiAsset multiAsset : mintTransaction.getMintAssets()) {
+            tx.mintAssets(mintTransaction.getPolicy().getPolicyScript(), multiAsset.getAssets(), mintTransaction.getReceiver());
+        }
+
+        if (metadata != null)
+            tx.attachMetadata(metadata);
+
+        tx.from(mintTransaction.getSender().baseAddress());
+
+        var txContext = new QuickTxBuilder(backendService)
+                .compose(tx)
+                .withSigner(SignerProviders.signerFrom(mintTransaction.getSender()))
+                .withSigner(SignerProviders.signerFrom(mintTransaction.getPolicy()));
+
+        //Additional accounts
+        if (mintTransaction.getAdditionalWitnessAccounts() != null && mintTransaction.getAdditionalWitnessAccounts().size() > 0) {
+            for (Account account : mintTransaction.getAdditionalWitnessAccounts()) {
+                txContext.withSigner(SignerProviders.signerFrom(account));
+            }
+        }
+
+        txContext = txContext.preBalanceTx((context, transaction) -> {
+            if (detailsParams.getTtl() != 0)
+                transaction.getBody().setTtl(detailsParams.getTtl());
+
+            if (detailsParams.getValidityStartInterval() != 0)
+                transaction.getBody().setValidityStartInterval(detailsParams.getValidityStartInterval());
+        });
+
+        txContext.withTxInspector(transaction -> {
+            logListener.info(JsonUtil.getPrettyJson(transaction));
+        });
+
+        return txContext.buildAndSign();
     }
 
     @Override
@@ -220,23 +257,12 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
             detailsParams.setTtl(calculatedTtl);
         }
 
-        try {
-            int count = 1;
-            logListener.info("Calculate fee ...");
-            BigInteger fee = null;
-            fee = backendService.getFeeCalculationService().calculateFee(mintTransaction, detailsParams, metadata);
-            logListener.info("Estimated fee for transaction " + count++ + " : "
-                    + AdaConversionUtil.lovelaceToAdaFormatted(fee) + " " + ADA_SYMBOL);
-            mintTransaction.setFee(fee);
-        } catch (Exception e) {
-            throw new ApiCallException("Fee calculation failed", e);
-        }
+        var transaction = buildMintTransaction(mintTransaction, detailsParams, metadata);
 
         try {
             printTokenMintRequest(mintTransaction);
 
-            String signedCborHex = backendService.getTransactionHelperService()
-                    .getTransactionBuilder().createSignedMintTransaction(mintTransaction, detailsParams, metadata);
+            String signedCborHex = transaction.serializeToHex();
             if (StringUtil.isEmpty(signedCborHex))
                 throw new ApiCallException("Export transaction failed.");
             else
@@ -246,16 +272,12 @@ public class TransactionServiceImpl extends NodeBaseService implements Transacti
         }
     }
 
-    private void printTransactionRequests(List<PaymentTransaction> transactions) {
-        int count = 1;
-        for (PaymentTransaction transaction : transactions) {
-            logListener.info("\nTransaction - " + count++);
-            logListener.info("Sender   : " + transaction.getSender());
-            logListener.info("Receiver : " + transaction.getReceiver());
-            logListener.info("Unit     : " + transaction.getUnit());
-            logListener.info("Amount   : " + transaction.getAmount());
-            logListener.info("-------------------------------------------\n");
-        }
+    private void printTransactionRequests(PaymentTransaction transaction) {
+        logListener.info("Sender   : " + transaction.getSender());
+        logListener.info("Receiver : " + transaction.getReceiver());
+        logListener.info("Unit     : " + transaction.getUnit());
+        logListener.info("Amount   : " + transaction.getAmount());
+        logListener.info("-------------------------------------------\n");
     }
 
     private void printTokenMintRequest(MintTransaction mintTransaction) {

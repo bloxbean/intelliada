@@ -108,7 +108,7 @@ public class NodeBaseService {
                     }
                     return;
                 } else {
-                    logListener.printWait(count + " sec - " + " Waiting for transaction to be mined.");
+                    logListener.printWait(count + " sec - " + " Waiting for transaction to be included in a block...");
                 }
 
                 count++;

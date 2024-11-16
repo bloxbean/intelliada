@@ -40,7 +40,7 @@ public class NetworkHelper {
 
         String url = getExplorerBaseUrl(network);
         if (StringUtil.isEmpty(url)) return null;
-        return url + "/tx/" + txnHash;
+        return url + "/transaction/" + txnHash;
     }
 
 }

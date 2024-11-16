@@ -14,10 +14,10 @@ public interface TransactionService {
     BigInteger calculateFee(PaymentTransaction paymentTransaction, TransactionDetailsParams detailsParams, Metadata metadata)
             throws ApiCallException;
 
-    String transfer(List<PaymentTransaction> transactions,
+    String transfer(PaymentTransaction transactions,
                            TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
 
-    String exportSignedTransaction(List<PaymentTransaction> transactions,
+    String exportSignedTransaction(PaymentTransaction transactions,
                                           TransactionDetailsParams detailsParams, Metadata metadata) throws ApiCallException;
 
 

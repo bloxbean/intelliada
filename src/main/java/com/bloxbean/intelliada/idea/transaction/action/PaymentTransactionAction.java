@@ -32,7 +32,6 @@ import com.intellij.openapi.util.text.StringUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigInteger;
-import java.util.Arrays;
 import java.util.List;
 
 public class PaymentTransactionAction extends BaseTxnAction {
@@ -91,18 +90,17 @@ public class PaymentTransactionAction extends BaseTxnAction {
             return;
         }
 
-        List<PaymentTransaction> paymentTransactions = Arrays.asList(paymentTransaction);
         RequestMode requestMode = dialog.getRequestMode();
 
         if (requestMode == null || requestMode.equals(RequestMode.TRANSACTION)) {
-            createAndExecuteTransferTransaction(project, detailsParams, console, logListenerAdapter, metadata, paymentTransactions);
+            createAndExecuteTransferTransaction(project, detailsParams, console, logListenerAdapter, metadata, paymentTransaction);
         } else if (requestMode.equals(RequestMode.EXPORT_SIGNED)) {
             String exportFile = getExportFileLocation(project, dialog.getContentPanel());
-            createAndExportSignedTransaction(project, exportFile, detailsParams, console, logListenerAdapter, metadata, paymentTransactions);
+            createAndExportSignedTransaction(project, exportFile, detailsParams, console, logListenerAdapter, metadata, paymentTransaction);
         }
     }
 
-    private void createAndExecuteTransferTransaction(Project project, TransactionDetailsParams detailsParams, CardanoConsole console, LogListenerAdapter logListenerAdapter, Metadata metadata, List<PaymentTransaction> paymentTransactions) {
+    private void createAndExecuteTransferTransaction(Project project, TransactionDetailsParams detailsParams, CardanoConsole console, LogListenerAdapter logListenerAdapter, Metadata metadata, PaymentTransaction paymentTransaction) {
         Task.Backgroundable task = new Task.Backgroundable(project, "Payment Transaction") {
 
             @Override
@@ -112,7 +110,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
                 try {
                     TransactionService transactionService = new TransactionServiceImpl(project, logListenerAdapter);
 
-                    String txnId = transactionService.transfer(paymentTransactions, detailsParams, metadata);
+                    String txnId = transactionService.transfer(paymentTransaction, detailsParams, metadata);
                     console.showSuccessMessage("Transaction executed successfully with id : " + txnId);
                     IdeaUtil.showNotification(project, getTitle(),
                             String.format("%s was successful", getTxnCommand()), NotificationType.INFORMATION, null);
@@ -125,7 +123,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
         ProgressManager.getInstance().runProcessWithProgressAsynchronously(task, new BackgroundableProcessIndicator(task));
     }
 
-    private void createAndExportSignedTransaction(Project project, String exportFile, TransactionDetailsParams detailsParams, CardanoConsole console, LogListenerAdapter logListenerAdapter, Metadata metadata, List<PaymentTransaction> paymentTransactions) {
+    private void createAndExportSignedTransaction(Project project, String exportFile, TransactionDetailsParams detailsParams, CardanoConsole console, LogListenerAdapter logListenerAdapter, Metadata metadata, PaymentTransaction paymentTransaction) {
         Task.Backgroundable task = new Task.Backgroundable(project, "Export Transaction") {
 
             @Override
@@ -135,7 +133,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
                 try {
                     TransactionService transactionService = new TransactionServiceImpl(project, logListenerAdapter);
 
-                    String signedTxnCbor = transactionService.exportSignedTransaction(paymentTransactions, detailsParams, metadata);
+                    String signedTxnCbor = transactionService.exportSignedTransaction(paymentTransaction, detailsParams, metadata);
 
                     if (StringUtil.isEmpty(signedTxnCbor)) {
                         console.showErrorMessage("Export transaction failed. Please verify all the inputs");
@@ -145,7 +143,7 @@ public class PaymentTransactionAction extends BaseTxnAction {
                     }
 
                     SerializedTransaction serializedTransaction = SerializedTransaction.builder()
-                            .type(SerializedTransaction.TX_MARY_ERA)
+                            .type(SerializedTransaction.TX_CONWAY_ERA)
                             .description("")
                             .cborHex(signedTxnCbor).build();
 

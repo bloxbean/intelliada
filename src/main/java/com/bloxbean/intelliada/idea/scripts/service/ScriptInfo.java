@@ -62,7 +62,7 @@ public class ScriptInfo {
     public void setScript(NativeScript script) {
         this.script = script;
         try {
-            scriptCbor = HexUtil.encodeHexString(this.script.serialize());
+            scriptCbor = HexUtil.encodeHexString(this.script.serializeScriptBody());
         } catch (CborSerializationException e) {
             e.printStackTrace();
         }
@@ -71,7 +71,7 @@ public class ScriptInfo {
     public String getScriptCbor() {
         if (scriptCbor == null && script != null) {
             try {
-                scriptCbor = HexUtil.encodeHexString(this.script.serialize());
+                scriptCbor = HexUtil.encodeHexString(this.script.serializeScriptBody());
             } catch (CborSerializationException e) {
                 e.printStackTrace();
             }
