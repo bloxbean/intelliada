@@ -17,6 +17,7 @@ import com.bloxbean.intelliada.idea.nodeint.service.impl.yaciprovider.model.Addr
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.intellij.openapi.project.Project;
 
+import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -38,7 +39,7 @@ public class YaciAccountServiceImpl extends YaciBaseService implements CardanoAc
     }
 
     @Override
-    public Result<Long> getAdaBalance(String address) {
+    public Result<BigInteger> getAdaBalance(String address) {
         try {
             String apiUrl = baseUrl + "addresses/" + address + "/balance";
             HttpClient client = HttpClient.newHttpClient();

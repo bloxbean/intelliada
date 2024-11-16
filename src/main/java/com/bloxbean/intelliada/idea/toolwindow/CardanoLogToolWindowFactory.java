@@ -1,9 +1,13 @@
 package com.bloxbean.intelliada.idea.toolwindow;
 
+import com.bloxbean.intelliada.idea.common.CardanoIcons;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import javax.swing.*;
 
 public class CardanoLogToolWindowFactory implements ToolWindowFactory {
     public final static String CARDANO_LOG_WINDOW_ID = "Cardano Log";
@@ -29,6 +33,11 @@ public class CardanoLogToolWindowFactory implements ToolWindowFactory {
     @Override
     public void init(@NotNull ToolWindow toolWindow) {
 
+    }
+
+    @Override
+    public @Nullable Icon getIcon() {
+        return CardanoIcons.CARDANO_ICON_16x16;
     }
 
     @Override

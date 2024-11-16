@@ -67,6 +67,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -420,7 +421,7 @@ public class ListAccountDialog extends DialogWrapper {
                             }
 
                             try {
-                                Result<Long> result = cardanoAccountService.getAdaBalance(account.getAddress());
+                                Result<BigInteger> result = cardanoAccountService.getAdaBalance(account.getAddress());
 
                                 if (result.isSuccessful()) {
                                     progressIndicator.setFraction(counter++ / tableModel.getAccounts().size());
@@ -428,7 +429,7 @@ public class ListAccountDialog extends DialogWrapper {
                                         break;
                                     }
 
-                                    Long balance = result.getValue();
+                                    BigInteger balance = result.getValue();
                                     if (result.getValue() != null) {
                                         account.setBalance(balance);
                                     }

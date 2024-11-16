@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.account.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import java.math.BigInteger;
 import java.util.Objects;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -9,7 +10,7 @@ public class CardanoAccount {
     private String name;
     private String address;
     private String mnemonic;
-    private Long balance;
+    private BigInteger balance;
     private boolean isReadOnly;
 
     public CardanoAccount() {
@@ -54,11 +55,11 @@ public class CardanoAccount {
         this.mnemonic = mnemonic;
     }
 
-    public Long getBalance() {
+    public BigInteger getBalance() {
         return balance;
     }
 
-    public void setBalance(Long balance) {
+    public void setBalance(BigInteger balance) {
         this.balance = balance;
     }
 
