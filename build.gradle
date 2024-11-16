@@ -25,7 +25,7 @@ plugins {
 apply plugin: "kotlin"
 
 group 'com.bloxbean'
-version '0.1.6-beta1'
+version '0.2.0-beta1'
 
 repositories {
     mavenLocal()
