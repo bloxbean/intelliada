@@ -1,9 +1,9 @@
 package com.bloxbean.intelliada.idea.aiken.configuration;
 
+import com.bloxbean.intelliada.idea.aiken.common.AikenIcons;
 import com.bloxbean.intelliada.idea.aiken.configuration.service.AikenProjectState;
 import com.bloxbean.intelliada.idea.aiken.configuration.ui.AikenProjectConfigurationDialog;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
-import com.intellij.icons.AllIcons;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
@@ -14,7 +14,7 @@ public class AikenConfigurationAction extends AnAction {
     public static final String ACTION_ID = AikenConfigurationAction.class.getName();
 
     public AikenConfigurationAction() {
-        super(AllIcons.Ide.Notification.Gear);
+        super(AikenIcons.AIKEN_ICON);
     }
 
     @Override

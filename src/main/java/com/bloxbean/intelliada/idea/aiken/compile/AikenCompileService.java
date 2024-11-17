@@ -57,7 +57,7 @@ public class AikenCompileService extends BaseCompileService {
 
             @Override
             public void processTerminated(@NotNull ProcessEvent event) {
-                if(event.getExitCode() == 0) {
+                if(event.getExitCode() == 0 || (SystemInfo.isWindows && event.getExitCode() <= 0)) { //Workaround as exit code for successful build on Windows is returned as a negative value
                     listener.info("Compilation successful.");
                     listener.onSuccessful(sourceFilePath);
                 } else {

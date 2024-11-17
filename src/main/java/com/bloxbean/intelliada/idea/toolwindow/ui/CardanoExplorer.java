@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.toolwindow.ui;
 
 import com.bloxbean.intelliada.idea.account.action.AccountListAction;
+import com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction;
 import com.bloxbean.intelliada.idea.configuration.action.*;
 import com.bloxbean.intelliada.idea.configuration.model.CLIProvider;
 import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
@@ -189,6 +190,8 @@ public class CardanoExplorer extends SimpleToolWindowPanel implements DataProvid
         scriptGroup.add(new ListScriptsAction());
 
         group.add(scriptGroup);
+        group.add(new Separator());
+        group.add(new AikenConfigurationAction());
 
         final ActionToolbar actionToolBar = ActionManager.getInstance().createActionToolbar(ActionPlaces.ANT_EXPLORER_TOOLBAR, group, true);
         actionToolBar.setTargetComponent(this);
