@@ -25,7 +25,7 @@ plugins {
 apply plugin: "kotlin"
 
 group 'com.bloxbean'
-version '0.2.0-beta1'
+version '0.2.0-beta2'
 
 repositories {
     mavenLocal()
@@ -44,6 +44,7 @@ compileJava {
 dependencies {
     intellijPlatform {
         intellijIdeaCommunity("2024.2")
+//        pycharmProfessional("2024.2")
         plugin("com.redhat.devtools.lsp4ij:0.5.0")
         pluginVerifier()
         zipSigner()
