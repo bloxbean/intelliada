@@ -33,24 +33,11 @@ network.
 * Blockfrost integration
     * Integrates with Blockfrost Cardano Api
 
-### Supported IntelliJ version \(2021.1 and above\)
+### Supported IntelliJ version \(2024.2 and above\)
 
 * IntelliJ IDEA
 * PyCharm
-* GoLand
 * WebStorm
-* PhpStorm
-
-### Supported Operating Systems
-
-The plugin uses [cardano-client-lib ](https://github.com/bloxbean/cardano-client-lib/)which is only supported on the
-following Operating systems.
-
-* Apple MacOS \(Intel and Apple Silicon\)
-* Linux \(x86\_64\) \(Ubuntu 18.04 and above or compatible ...\)
-* Windows 64bits \(x86\_64\)
-
-For any other operating systems, please create a request [here](https://github.com/bloxbean/cardano-client-lib/issues).
 
 ### **Installation**
 
