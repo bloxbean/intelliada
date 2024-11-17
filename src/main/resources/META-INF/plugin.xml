@@ -50,9 +50,10 @@
         <highlightErrorFilter
                 implementation="com.bloxbean.intelliada.idea.aiken.highlight.ParseErrorHighlightFilter" />
 
-<!--        <moduleType id="Aiken_Module" implementationClass="com.bloxbean.intelliada.idea.aiken.module.AikenModuleType"/>-->
+        <!-- For IntelliJ IDEA -->
         <moduleBuilder builderClass="com.bloxbean.intelliada.idea.aiken.module.AikenModuleBuilder"/>
 
+        <!-- For other IDEs -->
         <projectOpenProcessor implementation="com.bloxbean.intelliada.idea.aiken.module.project.AikenProjectOpenProcessor"/>
         <directoryProjectGenerator implementation="com.bloxbean.intelliada.idea.aiken.module.project.AikenDirectoryProjectGenerator" order="first"/>
 

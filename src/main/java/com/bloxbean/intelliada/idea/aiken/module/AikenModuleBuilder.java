@@ -73,7 +73,7 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
 
     @Override
     public String getPresentableName() {
-        return "Aiken Smart Contract";
+        return "Aiken";
     }
 
     @Override
@@ -106,7 +106,7 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
         }
     }
 
-    private static void build(@NotNull Module module) {
+    public static void build(@NotNull Module module) {
         var project = module.getProject();
         String moduleDir = ModuleUtil.getModuleDirPath(module);
         final VirtualFile folderToRefresh = VfsUtil.findFileByIoFile(new File(moduleDir), true);
@@ -204,11 +204,14 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
                         IdeaUtil.showNotification(
                                 "Project creation",
                                 "Aiken executable not found. Please make sure Aiken is installed and added to the PATH", NotificationType.ERROR, null);
+                        return;
                     }
+
+                    String aikenModuleName = moduleName != null? moduleName.toLowerCase(): moduleName;
 
                     List<String> commands = aikenSdk.getAikenCommand();
                     commands.add("new");
-                    commands.add(owner + "/" + moduleName);
+                    commands.add(owner + "/" + aikenModuleName);
 
                     try {
                         //create a temporay directory
@@ -220,7 +223,7 @@ public class AikenModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
                         Process process = pb.start();
                         process.waitFor();
 
-                        FileUtil.copyDirContent(new File(tempDir, moduleName), new File(basePath));
+                        FileUtil.copyDirContent(new File(tempDir, aikenModuleName), new File(basePath));
                     } catch (Exception e) {
                         IdeaUtil.showNotification(project,
                                 "Project creation",
