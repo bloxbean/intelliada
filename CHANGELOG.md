@@ -1,3 +1,6 @@
+### 0.2.0-beta2
+- Aiken Language Support
+- Yaci DevKit Integration
 ### 0.1.5
 
 - Support for Cardano-graphql
