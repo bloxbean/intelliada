@@ -100,23 +100,29 @@ public class JulcVmBridge {
         if (initialized) return;
         initialized = true;
 
+        // Ensure JulcCompilerBridge is initialized first (we reuse its classloader)
+        JulcCompilerBridge.initialize();
+
         initCompiler();
         initVm();
     }
 
     private static void initCompiler() {
         try {
-            Path jar = resolveJar(COMPILER_JAR);
-            if (jar == null) {
-                LOG.info("julc-compiler-all.jar not found");
-                return;
+            // Reuse JulcCompilerBridge's classloader to share types (especially Program)
+            compilerClassLoader = JulcCompilerBridge.julcClassLoader;
+            if (compilerClassLoader == null) {
+                // Fallback: create our own classloader
+                Path jar = resolveJar(COMPILER_JAR);
+                if (jar == null) {
+                    LOG.info("julc-compiler-all.jar not found for VmBridge");
+                    return;
+                }
+                compilerClassLoader = new URLClassLoader(new URL[]{jar.toUri().toURL()}, null);
             }
-
-            compilerClassLoader = new URLClassLoader(new URL[]{jar.toUri().toURL()}, null);
 
             julcCompilerClass = compilerClassLoader.loadClass("com.bloxbean.cardano.julc.compiler.JulcCompiler");
             Class<?> compileResultClass = compilerClassLoader.loadClass("com.bloxbean.cardano.julc.compiler.CompileResult");
-            Class<?> diagnosticClass = compilerClassLoader.loadClass("com.bloxbean.cardano.julc.compiler.error.CompilerDiagnostic");
 
             compileMethod = julcCompilerClass.getMethod("compile", String.class);
             hasErrorsMethod = compileResultClass.getMethod("hasErrors");
@@ -127,9 +133,9 @@ public class JulcVmBridge {
             uplcFormattedMethod = compileResultClass.getMethod("uplcFormatted");
 
             compilerAvailable = true;
-            LOG.info("julc-compiler bridge initialized from: " + jar);
+            LOG.info("julc VmBridge compiler initialized (shared classloader: " + (JulcCompilerBridge.julcClassLoader != null) + ")");
         } catch (Exception e) {
-            LOG.info("julc-compiler bridge not available: " + e.getMessage());
+            LOG.info("julc VmBridge compiler not available: " + e.getMessage());
         }
     }
 

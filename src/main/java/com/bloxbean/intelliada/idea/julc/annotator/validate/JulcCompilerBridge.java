@@ -34,7 +34,7 @@ public class JulcCompilerBridge {
 
     private static volatile boolean initialized = false;
     private static volatile boolean available = false;
-    private static URLClassLoader julcClassLoader;
+    static URLClassLoader julcClassLoader; // Package-visible for JulcVmBridge
 
     // Reflected classes and methods
     private static Class<?> staticJavaParserClass;
