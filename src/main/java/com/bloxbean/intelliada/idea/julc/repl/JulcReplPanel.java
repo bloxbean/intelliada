@@ -110,9 +110,9 @@ public class JulcReplPanel {
         }
 
         try {
+            // Check if julc version supports repl command (added in 0.1.0-pre11+)
             List<String> cmd = sdk.getJulcCommand();
             cmd.add("repl");
-            cmd.add("--no-jline");
 
             GeneralCommandLine commandLine = new GeneralCommandLine(cmd);
             commandLine.setWorkDirectory(project.getBasePath());

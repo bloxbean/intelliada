@@ -106,13 +106,24 @@ public class JulcExecutionTracePanel {
 
     private void runCurrentFile() {
         VirtualFile[] files = FileEditorManager.getInstance(project).getSelectedFiles();
-        if (files.length == 0) return;
-
-        VirtualFile file = files[0];
-        if (!"java".equalsIgnoreCase(file.getExtension())) return;
-
+        boolean hasFiles = files.length > 0;
+        String fileName = hasFiles ? files[0].getName() : "none";
+        boolean isJava = hasFiles && "java".equalsIgnoreCase(files[0].getExtension());
         JulcTomlService tomlService = JulcTomlService.getInstance(project);
-        if (tomlService == null || !tomlService.isJulcProject()) return;
+        boolean isJulc = tomlService != null && tomlService.isJulcProject();
+
+        // Debug
+        try {
+            java.nio.file.Files.writeString(java.nio.file.Path.of("/tmp/julc-trace-debug.log"),
+                java.time.LocalDateTime.now() + " runCurrentFile: hasFiles=" + hasFiles + " file=" + fileName
+                + " isJava=" + isJava + " isJulc=" + isJulc + " project=" + project.getName() + "\n",
+                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Exception ignored) {}
+
+        if (!hasFiles) return;
+        VirtualFile file = files[0];
+        if (!isJava) return;
+        if (!isJulc) return;
 
         resultLabel.setText("Compiling...");
         resultLabel.setForeground(new Color(200, 150, 0));
@@ -157,8 +168,24 @@ public class JulcExecutionTracePanel {
                 // Evaluate
                 indicator.setText("Evaluating...");
                 JulcVmBridge.EvalInfo evalInfo = null;
-                if (JulcVmBridge.isVmAvailable()) {
+                boolean vmReady = JulcVmBridge.isVmAvailable();
+                // Debug to file
+                try {
+                    java.nio.file.Files.writeString(
+                        java.nio.file.Path.of("/tmp/julc-trace-debug.log"),
+                        java.time.LocalDateTime.now() + " vmReady=" + vmReady
+                            + " program=" + (compileInfo.program != null ? compileInfo.program.getClass().getName() : "null")
+                            + " compilerAvail=" + JulcVmBridge.isCompilerAvailable() + "\n",
+                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                } catch (Exception ignored) {}
+                if (vmReady) {
                     evalInfo = JulcVmBridge.evaluate(compileInfo.program);
+                    try {
+                        java.nio.file.Files.writeString(
+                            java.nio.file.Path.of("/tmp/julc-trace-debug.log"),
+                            java.time.LocalDateTime.now() + " evalInfo=" + (evalInfo != null ? "success=" + evalInfo.success : "null") + "\n",
+                            java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                    } catch (Exception ignored) {}
                 }
 
                 // Record budget delta
