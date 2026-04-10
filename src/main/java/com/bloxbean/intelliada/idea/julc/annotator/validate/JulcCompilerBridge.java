@@ -57,7 +57,7 @@ public class JulcCompilerBridge {
         initialized = true;
 
         try {
-            Path compilerJar = resolveJar(COMPILER_JAR);
+            Path compilerJar = resolveJarPath(COMPILER_JAR);
             if (compilerJar == null) {
                 LOG.info("julc-compiler-all.jar not found. Using local validators.");
                 return;
@@ -140,8 +140,9 @@ public class JulcCompilerBridge {
 
     /**
      * Resolve JAR path: check user override dir first, then plugin lib/julc/.
+     * Package-visible so JulcVmBridge can reuse.
      */
-    private static Path resolveJar(String jarName) {
+    static Path resolveJarPath(String jarName) {
         // 1. Check user override: ~/.intelliada/julc-libs/
         Path userJar = Path.of(USER_LIB_DIR, jarName);
         if (Files.exists(userJar)) {
@@ -149,30 +150,52 @@ public class JulcCompilerBridge {
             return userJar;
         }
 
-        // 2. Check plugin bundle: <plugin-install>/lib/julc/
+        // 2. Check plugin bundle via PluginManagerCore
         try {
             IdeaPluginDescriptor plugin = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID));
             if (plugin != null) {
-                Path pluginJar = plugin.getPluginPath().resolve("lib").resolve("julc").resolve(jarName);
+                Path pluginPath = plugin.getPluginPath();
+                LOG.info("julc bridge: plugin path = " + pluginPath);
+
+                Path pluginJar = pluginPath.resolve("lib").resolve("julc").resolve(jarName);
                 if (Files.exists(pluginJar)) {
                     return pluginJar;
                 }
-                // Also check direct lib/ (sandbox layout)
-                pluginJar = plugin.getPluginPath().resolve("julc").resolve(jarName);
+
+                pluginJar = pluginPath.resolve("julc").resolve(jarName);
                 if (Files.exists(pluginJar)) {
                     return pluginJar;
                 }
             }
         } catch (Exception e) {
-            LOG.debug("Could not resolve plugin path: " + e.getMessage());
+            LOG.info("julc bridge: plugin path resolution error: " + e.getMessage());
         }
 
-        // 3. Check working directory (development mode)
+        // 3. Locate via classloader — find our own JAR and look for lib/julc/ next to it
+        try {
+            var url = JulcCompilerBridge.class.getProtectionDomain().getCodeSource().getLocation();
+            if (url != null) {
+                Path ourJar = Path.of(url.toURI());
+                // Our class is in plugins/intelliada/lib/intelliada-xxx.jar
+                // Shadow JARs are in plugins/intelliada/lib/julc/
+                Path libDir = ourJar.getParent(); // lib/
+                Path pluginJar = libDir.resolve("julc").resolve(jarName);
+                LOG.info("julc bridge: classloader-based check: " + pluginJar);
+                if (Files.exists(pluginJar)) {
+                    return pluginJar;
+                }
+            }
+        } catch (Exception e) {
+            LOG.info("julc bridge: classloader resolution error: " + e.getMessage());
+        }
+
+        // 4. Check working directory (development mode)
         Path devJar = Path.of("lib", "julc", jarName);
         if (Files.exists(devJar)) {
             return devJar;
         }
 
+        LOG.info("julc bridge: " + jarName + " not found in any location");
         return null;
     }
 

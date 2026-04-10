@@ -294,25 +294,7 @@ public class JulcVmBridge {
     }
 
     private static Path resolveJar(String jarName) {
-        // 1. User override
-        Path userJar = Path.of(USER_LIB_DIR, jarName);
-        if (Files.exists(userJar)) return userJar;
-
-        // 2. Plugin bundle
-        try {
-            IdeaPluginDescriptor plugin = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID));
-            if (plugin != null) {
-                Path pluginJar = plugin.getPluginPath().resolve("lib").resolve("julc").resolve(jarName);
-                if (Files.exists(pluginJar)) return pluginJar;
-                pluginJar = plugin.getPluginPath().resolve("julc").resolve(jarName);
-                if (Files.exists(pluginJar)) return pluginJar;
-            }
-        } catch (Exception e) { /* ignore */ }
-
-        // 3. Development mode (working directory)
-        Path devJar = Path.of("lib", "julc", jarName);
-        if (Files.exists(devJar)) return devJar;
-
-        return null;
+        // Use the same resolution logic as JulcCompilerBridge
+        return JulcCompilerBridge.resolveJarPath(jarName);
     }
 }
