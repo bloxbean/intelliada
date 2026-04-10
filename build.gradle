@@ -17,9 +17,9 @@ buildscript {
 plugins {
     id 'java'
     id 'idea'
-    id 'org.jetbrains.intellij.platform' version '2.11.0'
+    id 'org.jetbrains.intellij.platform' version '2.14.0'
     id "org.jetbrains.kotlin.jvm" version "2.1.10"
-    id "org.jetbrains.grammarkit" version "2022.3.2.2"
+    id "org.jetbrains.intellij.platform.grammarkit" version "2.14.0"
 }
 
 group 'com.bloxbean'
@@ -34,20 +34,11 @@ repositories {
     }
 }
 
-compileJava {
-    sourceCompatibility = '21'
-    targetCompatibility = '21'
-}
-
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity("2025.1.1")
-//        pycharmProfessional("2025.1")
+        intellijIdea("2026.1")
         bundledPlugin("com.intellij.java")
         plugin("com.redhat.devtools.lsp4ij:0.10.0")
-        pluginVerifier()
-        zipSigner()
-        instrumentationTools()
     }
 
     implementation fileTree(include: ['*.jar'], dir: 'lib')
@@ -66,7 +57,7 @@ dependencies {
 
     implementation 'org.json:json:20240303'
 
-    // JavaParser for julc SubsetValidator (inline error highlighting)
+    // JavaParser for julc SubsetValidator (inline error highlighting fallback)
     implementation 'com.github.javaparser:javaparser-core:3.26.3'
 
     compileOnly 'org.projectlombok:lombok:1.18.34'
@@ -91,24 +82,25 @@ String changeLogAsHtml() {
     renderer.render(changeLogDocument)
 }
 
-grammarKit {
-    jflexRelease = "1.7.0-1"
-    grammarKitRelease = "2021.1.2"
-    generateLexer {
-        sourceFile = file('src/main/java/com/bloxbean/intelliada/idea/aiken/lang/grammar/_AikenLexer.flex')
-        targetOutputDir = file('src/main/gen/com/bloxbean/intelliada/idea/aiken/lang')
-    }
+// GrammarKit tasks (bundled with platform plugin 2.12+)
+generateLexer {
+    sourceFile = file('src/main/java/com/bloxbean/intelliada/idea/aiken/lang/grammar/_AikenLexer.flex')
+    targetOutputDir = file('src/main/gen/com/bloxbean/intelliada/idea/aiken/lang')
+}
 
-    generateParser {
-        sourceFile = file('src/main/java/com/bloxbean/intelliada/idea/aiken/lang/grammar/Aiken.bnf')
-        targetRootOutputDir = file('src/main/gen')
-        pathToParser = 'com/bloxbean/intelliada/idea/aiken/lang/parser'
-        pathToPsiRoot = 'com/bloxbean/intelliada/idea/aiken/lang/psi'
-    }
+generateParser {
+    sourceFile = file('src/main/java/com/bloxbean/intelliada/idea/aiken/lang/grammar/Aiken.bnf')
+    targetRootOutputDir = file('src/main/gen')
+    pathToParser = 'com/bloxbean/intelliada/idea/aiken/lang/parser'
+    pathToPsiRoot = 'com/bloxbean/intelliada/idea/aiken/lang/psi'
+}
+
+test {
+    failOnNoDiscoveredTests = false
 }
 
 patchPluginXml {
     changeNotes = changeLogAsHtml()
-    sinceBuild = "251"
+    sinceBuild = "261"
     untilBuild = provider {null}
 }

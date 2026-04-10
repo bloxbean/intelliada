@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.julc.annotator;
 
 import com.bloxbean.intelliada.idea.julc.annotator.fix.ReplaceNullWithOptionalFix;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcApiValidator;
+import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcCompilerBridge;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcDiagnostic;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcSubsetValidator;
 import com.bloxbean.intelliada.idea.julc.module.pkg.JulcTomlService;
@@ -77,17 +78,22 @@ public class JulcExternalAnnotator extends ExternalAnnotator<JulcExternalAnnotat
         if (input == null) return null;
 
         try {
-            CompilationUnit cu = StaticJavaParser.parse(input.text);
-
             List<JulcDiagnostic> diagnostics = new ArrayList<>();
 
-            // Layer 1: Language subset validation
-            JulcSubsetValidator subsetValidator = new JulcSubsetValidator();
-            diagnostics.addAll(subsetValidator.validate(cu));
+            // Try real julc-compiler via runtime classloader (JBR 25+ only)
+            if (JulcCompilerBridge.isAvailable()) {
+                diagnostics.addAll(JulcCompilerBridge.validate(input.text));
+            } else {
+                // Fallback: local JavaParser-based subset validator
+                CompilationUnit cu = StaticJavaParser.parse(input.text);
+                JulcSubsetValidator subsetValidator = new JulcSubsetValidator();
+                diagnostics.addAll(subsetValidator.validate(cu));
+            }
 
-            // Layer 2: API allowlist validation
+            // API allowlist validation (always runs — not in julc-compiler)
+            CompilationUnit cu2 = StaticJavaParser.parse(input.text);
             JulcApiValidator apiValidator = new JulcApiValidator();
-            diagnostics.addAll(apiValidator.validate(cu));
+            diagnostics.addAll(apiValidator.validate(cu2));
 
             return diagnostics;
         } catch (Exception e) {
