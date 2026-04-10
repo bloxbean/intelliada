@@ -97,14 +97,15 @@ test {
 }
 
 // Copy julc shadow JARs to plugin sandbox for runtime classloader
+// These go in julc-runtime/ (NOT lib/) to avoid IntelliJ classloader scanning them
 tasks.named('prepareSandbox') {
     doLast {
-        def julcLibDir = file("lib/julc")
-        if (julcLibDir.exists()) {
-            def targetDir = new File(it.destinationDir, "${rootProject.name}/lib/julc")
+        def julcRuntimeDir = file("julc-runtime")
+        if (julcRuntimeDir.exists()) {
+            def targetDir = new File(it.destinationDir, "${rootProject.name}/julc-runtime")
             targetDir.mkdirs()
             copy {
-                from julcLibDir
+                from julcRuntimeDir
                 into targetDir
                 include '*.jar'
             }

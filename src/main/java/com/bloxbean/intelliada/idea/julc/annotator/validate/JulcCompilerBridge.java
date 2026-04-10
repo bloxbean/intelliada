@@ -157,12 +157,14 @@ public class JulcCompilerBridge {
                 Path pluginPath = plugin.getPluginPath();
                 LOG.info("julc bridge: plugin path = " + pluginPath);
 
-                Path pluginJar = pluginPath.resolve("lib").resolve("julc").resolve(jarName);
+                // julc-runtime/ is outside lib/ to avoid IntelliJ classloader scanning
+                Path pluginJar = pluginPath.resolve("julc-runtime").resolve(jarName);
                 if (Files.exists(pluginJar)) {
                     return pluginJar;
                 }
 
-                pluginJar = pluginPath.resolve("julc").resolve(jarName);
+                // Legacy paths
+                pluginJar = pluginPath.resolve("lib").resolve("julc").resolve(jarName);
                 if (Files.exists(pluginJar)) {
                     return pluginJar;
                 }
@@ -171,15 +173,15 @@ public class JulcCompilerBridge {
             LOG.info("julc bridge: plugin path resolution error: " + e.getMessage());
         }
 
-        // 3. Locate via classloader — find our own JAR and look for lib/julc/ next to it
+        // 3. Locate via classloader — find our own JAR and look for julc-runtime/ next to lib/
         try {
             var url = JulcCompilerBridge.class.getProtectionDomain().getCodeSource().getLocation();
             if (url != null) {
                 Path ourJar = Path.of(url.toURI());
                 // Our class is in plugins/intelliada/lib/intelliada-xxx.jar
-                // Shadow JARs are in plugins/intelliada/lib/julc/
-                Path libDir = ourJar.getParent(); // lib/
-                Path pluginJar = libDir.resolve("julc").resolve(jarName);
+                // Shadow JARs are in plugins/intelliada/julc-runtime/
+                Path pluginDir = ourJar.getParent().getParent(); // plugins/intelliada/
+                Path pluginJar = pluginDir.resolve("julc-runtime").resolve(jarName);
                 LOG.info("julc bridge: classloader-based check: " + pluginJar);
                 if (Files.exists(pluginJar)) {
                     return pluginJar;
@@ -190,7 +192,7 @@ public class JulcCompilerBridge {
         }
 
         // 4. Check working directory (development mode)
-        Path devJar = Path.of("lib", "julc", jarName);
+        Path devJar = Path.of("julc-runtime", jarName);
         if (Files.exists(devJar)) {
             return devJar;
         }
