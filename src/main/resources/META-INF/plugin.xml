@@ -155,23 +155,13 @@
         <!-- julc script size warning banner -->
         <editorNotificationProvider implementation="com.bloxbean.intelliada.idea.julc.editor.JulcScriptSizeNotificationProvider"/>
 
-        <!-- julc UPLC Preview tool window -->
-        <toolWindow id="julc UPLC"
+        <!-- julc Tool Window (Trace + UPLC + REPL tabs) -->
+        <toolWindow id="julc"
                     anchor="bottom"
-                    factoryClass="com.bloxbean.intelliada.idea.julc.editor.JulcUplcPreviewToolWindowFactory"/>
-
-        <!-- julc Execution Trace tool window -->
-        <toolWindow id="julc Trace"
-                    anchor="bottom"
-                    factoryClass="com.bloxbean.intelliada.idea.julc.trace.JulcTraceToolWindowFactory"/>
+                    factoryClass="com.bloxbean.intelliada.idea.julc.editor.JulcToolWindowFactory"/>
 
         <!-- julc Live Templates -->
         <defaultLiveTemplates file="/liveTemplates/julc.xml"/>
-
-        <!-- julc REPL Tool Window -->
-        <toolWindow id="julc REPL"
-                    anchor="bottom"
-                    factoryClass="com.bloxbean.intelliada.idea.julc.repl.JulcReplToolWindowFactory"/>
 
         <!-- Yano Status Bar Widget -->
         <statusBarWidgetFactory id="YanoDevnetStatus"

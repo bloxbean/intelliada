@@ -198,9 +198,11 @@ public class JulcVmBridge {
                 program = programMethod.invoke(result);
             }
 
+            LOG.info("julc VmBridge compile: hasErrors=" + hasErrors + ", size=" + sizeBytes
+                    + ", program=" + (program != null ? program.getClass().getName() : "null"));
             return new CompileInfo(hasErrors, diagnostics, sizeBytes, parameterized, uplcText, program);
         } catch (Exception e) {
-            LOG.debug("julc compile failed: " + e.getMessage());
+            LOG.warn("julc compile failed: " + e.getMessage(), e);
             return null;
         }
     }
@@ -209,6 +211,7 @@ public class JulcVmBridge {
      * Evaluate a compiled program using the julc VM.
      */
     public static EvalInfo evaluate(Object program) {
+        LOG.info("julc VmBridge evaluate: vmAvailable=" + vmAvailable + ", program=" + (program != null ? program.getClass().getName() : "null"));
         if (!vmAvailable || program == null) return null;
 
         try {
