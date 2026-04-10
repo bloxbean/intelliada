@@ -148,6 +148,23 @@
         <codeInsight.lineMarkerProvider language="JAVA"
                    implementationClass="com.bloxbean.intelliada.idea.julc.annotator.JulcLineMarkerProvider"/>
 
+        <!-- julc script size annotation (live size next to @Validator) -->
+        <annotator language="JAVA"
+                   implementationClass="com.bloxbean.intelliada.idea.julc.editor.JulcScriptSizeAnnotator"/>
+
+        <!-- julc script size warning banner -->
+        <editorNotificationProvider implementation="com.bloxbean.intelliada.idea.julc.editor.JulcScriptSizeNotificationProvider"/>
+
+        <!-- julc UPLC Preview tool window -->
+        <toolWindow id="julc UPLC"
+                    anchor="bottom"
+                    factoryClass="com.bloxbean.intelliada.idea.julc.editor.JulcUplcPreviewToolWindowFactory"/>
+
+        <!-- julc Execution Trace tool window -->
+        <toolWindow id="julc Trace"
+                    anchor="bottom"
+                    factoryClass="com.bloxbean.intelliada.idea.julc.trace.JulcTraceToolWindowFactory"/>
+
         <!-- julc Live Templates -->
         <defaultLiveTemplates file="/liveTemplates/julc.xml"/>
 
@@ -236,6 +253,11 @@
         <action id="com.bloxbean.intelliada.idea.julc.compile.action.JulcCheckAction"
                 class="com.bloxbean.intelliada.idea.julc.compile.action.JulcCheckAction"
                 text="Run Tests" description="Run julc Tests">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup"/>
+        </action>
+        <action id="com.bloxbean.intelliada.idea.julc.run.JulcRunValidatorAction"
+                class="com.bloxbean.intelliada.idea.julc.run.JulcRunValidatorAction"
+                text="Run Validator" description="Compile and evaluate validator locally">
             <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup"/>
         </action>
         <action id="com.bloxbean.intelliada.idea.julc.action.DeployValidatorAction"
