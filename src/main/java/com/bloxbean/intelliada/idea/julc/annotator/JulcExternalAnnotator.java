@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.julc.annotator;
 
+import com.bloxbean.intelliada.idea.julc.annotator.fix.ReplaceNullWithOptionalFix;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcApiValidator;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcDiagnostic;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcSubsetValidator;
@@ -128,10 +129,16 @@ public class JulcExternalAnnotator extends ExternalAnnotator<JulcExternalAnnotat
                 tooltip += "\n\nSuggestion: " + diag.suggestion();
             }
 
-            holder.newAnnotation(severity, diag.message())
+            var builder = holder.newAnnotation(severity, diag.message())
                     .range(range)
-                    .tooltip(tooltip)
-                    .create();
+                    .tooltip(tooltip);
+
+            // Attach quick fixes for specific diagnostics
+            if (diag.message().contains("null is not supported")) {
+                builder = builder.withFix(new ReplaceNullWithOptionalFix(range));
+            }
+
+            builder.create();
         }
     }
 

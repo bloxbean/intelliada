@@ -140,6 +140,10 @@
         <annotator language="JAVA"
                    implementationClass="com.bloxbean.intelliada.idea.julc.annotator.JulcOnchainLibraryAnnotator"/>
 
+        <!-- julc gutter icons for validators, entrypoints, params, libraries -->
+        <codeInsight.lineMarkerProvider language="JAVA"
+                   implementationClass="com.bloxbean.intelliada.idea.julc.annotator.JulcLineMarkerProvider"/>
+
         <!-- julc Live Templates -->
         <defaultLiveTemplates file="/liveTemplates/julc.xml"/>
 

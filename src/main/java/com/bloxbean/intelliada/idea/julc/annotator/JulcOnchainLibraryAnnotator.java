@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.julc.annotator;
 
+import com.bloxbean.intelliada.idea.julc.annotator.fix.AddOnchainLibraryFix;
 import com.bloxbean.intelliada.idea.julc.module.pkg.JulcTomlService;
 import com.intellij.lang.annotation.AnnotationHolder;
 import com.intellij.lang.annotation.Annotator;
@@ -87,6 +88,7 @@ public class JulcOnchainLibraryAnnotator implements Annotator {
                                 "Class <code>" + qualifiedName + "</code> is called from a validator but is not annotated with <code>@OnchainLibrary</code>.<br/>" +
                                 "julc will not compile this class for on-chain use.<br/><br/>" +
                                 "<b>Fix:</b> Add <code>@OnchainLibrary</code> annotation to <code>" + targetClass.getName() + "</code></html>")
+                        .withFix(new AddOnchainLibraryFix(targetClass))
                         .create();
             }
         } else if (isFromJar(targetClass)) {
