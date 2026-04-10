@@ -99,6 +99,22 @@ test {
     failOnNoDiscoveredTests = false
 }
 
+// Copy julc shadow JARs to plugin sandbox for runtime classloader
+tasks.named('prepareSandbox') {
+    doLast {
+        def julcLibDir = file("lib/julc")
+        if (julcLibDir.exists()) {
+            def targetDir = new File(it.destinationDir, "${rootProject.name}/lib/julc")
+            targetDir.mkdirs()
+            copy {
+                from julcLibDir
+                into targetDir
+                include '*.jar'
+            }
+        }
+    }
+}
+
 patchPluginXml {
     changeNotes = changeLogAsHtml()
     sinceBuild = "261"
