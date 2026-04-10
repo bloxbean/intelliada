@@ -13,7 +13,9 @@ public enum NodeType {
     KOIOS_PREPROD("Koios Preprod"),
     KOIOS_MAINNET("Koios Mainnet"),
     KOIOS_CUSTOM("Koios Custom"),
-    YaciDevKit("Yaci DevKit");
+    YaciDevKit("Yaci DevKit"),
+    LocalYaciDevKit("Local Yaci DevKit"),
+    Yano("Yano Devnet");
 
     private String displayName;
 

@@ -37,6 +37,7 @@ public class ConfigurationHelperService {
             node.setProtocolMagic(nodeConfigDialog.getNodeConfigurator().getProtocolMagic());
             node.setHeaders(nodeConfigDialog.getNodeConfigurator().getHeaders());
             node.setTimeout(nodeConfigDialog.getNodeConfigurator().getTimeout());
+            node.setHome(nodeConfigDialog.getNodeConfigurator().getHome());
 
             if (remoteNode == null) {
                 stateService.addRemoteNode(node);

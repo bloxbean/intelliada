@@ -12,6 +12,8 @@
     <rowspec value="center:max(d;4px):noGrow"/>
     <rowspec value="top:3dlu:noGrow"/>
     <rowspec value="center:max(d;4px):noGrow"/>
+    <rowspec value="top:3dlu:noGrow"/>
+    <rowspec value="fill:d:grow"/>
     <colspec value="fill:d:noGrow"/>
     <colspec value="left:4dlu:noGrow"/>
     <colspec value="fill:max(d;4px):noGrow"/>
@@ -20,11 +22,11 @@
     <colspec value="left:4dlu:noGrow"/>
     <colspec value="fill:d:grow"/>
     <constraints>
-      <xy x="20" y="20" width="750" height="330"/>
+      <xy x="20" y="20" width="750" height="450"/>
     </constraints>
     <properties>
-      <minimumSize width="750" height="330"/>
-      <preferredSize width="750" height="330"/>
+      <minimumSize width="750" height="450"/>
+      <preferredSize width="750" height="450"/>
     </properties>
     <border type="none" title="Cardano Node"/>
     <children>
@@ -133,6 +135,15 @@
         <properties>
           <text value=""/>
         </properties>
+      </component>
+      <component id="9a5f3" class="javax.swing.JPanel" binding="localDevKitPanel">
+        <constraints>
+          <grid row="12" column="0" row-span="1" col-span="7" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
+          <forms defaultalign-horz="false" defaultalign-vert="false"/>
+        </constraints>
+        <properties/>
+        <border type="none"/>
+        <children/>
       </component>
     </children>
   </grid>

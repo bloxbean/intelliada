@@ -20,7 +20,8 @@ public class CardanoServiceFactory {
             throw new TargetNodeNotConfigured("Please select a default node first");
         }
 
-        if (remoteNode.getNodeType() == NodeType.YaciDevKit) {
+        if (remoteNode.getNodeType() == NodeType.YaciDevKit
+                || remoteNode.getNodeType() == NodeType.Yano) {
             return new YaciAccountServiceImpl(remoteNode, logListener);
         } else {
             return new AccountServiceImpl(project, logListener);

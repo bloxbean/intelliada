@@ -17,12 +17,10 @@ buildscript {
 plugins {
     id 'java'
     id 'idea'
-    id 'org.jetbrains.intellij.platform' version '2.1.0'
-    id "org.jetbrains.kotlin.jvm" version "1.9.25"
+    id 'org.jetbrains.intellij.platform' version '2.11.0'
+    id "org.jetbrains.kotlin.jvm" version "2.1.10"
     id "org.jetbrains.grammarkit" version "2022.3.2.2"
 }
-
-apply plugin: "kotlin"
 
 group 'com.bloxbean'
 version '0.2.0-beta2'
@@ -43,9 +41,10 @@ compileJava {
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity("2024.2")
-//        pycharmProfessional("2024.2")
-        plugin("com.redhat.devtools.lsp4ij:0.5.0")
+        intellijIdeaCommunity("2025.1.1")
+//        pycharmProfessional("2025.1")
+        bundledPlugin("com.intellij.java")
+        plugin("com.redhat.devtools.lsp4ij:0.10.0")
         pluginVerifier()
         zipSigner()
         instrumentationTools()
@@ -64,9 +63,11 @@ dependencies {
         exclude group: 'com.bloxbean.cardano', module: 'cardano-client-lib'
     }
     implementation('com.moandjiezana.toml:toml4j:0.7.2')
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.4.10")
 
     implementation 'org.json:json:20240303'
+
+    // JavaParser for julc SubsetValidator (inline error highlighting)
+    implementation 'com.github.javaparser:javaparser-core:3.26.3'
 
     compileOnly 'org.projectlombok:lombok:1.18.34'
 
@@ -108,6 +109,6 @@ grammarKit {
 
 patchPluginXml {
     changeNotes = changeLogAsHtml()
-    sinceBuild = "242"
+    sinceBuild = "251"
     untilBuild = provider {null}
 }

@@ -13,6 +13,7 @@
     <!-- please see https://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
     <depends>com.redhat.devtools.lsp4ij</depends>
     <depends>com.intellij.modules.lang</depends>
 
@@ -74,8 +75,86 @@
                 language="Aiken"
                 implementationClass="com.redhat.devtools.lsp4ij.features.signatureHelp.LSPParameterInfoHandler"/>
 
+        <!-- Import completions should come first to take priority -->
+        <completion.contributor implementationClass="com.bloxbean.intelliada.idea.aiken.completion.AikenImportCompletionContributor"
+                                        id="com.bloxbean.intelliada.idea.aiken.completion.AikenImportCompletionContributor" language="Aiken" order="first"/>
+
+        <completion.contributor implementationClass="com.bloxbean.intelliada.idea.aiken.completion.AikenSimpleImportCompletionContributor"
+                                        id="com.bloxbean.intelliada.idea.aiken.completion.AikenSimpleImportCompletionContributor" language="Aiken" order="first"/>
+
         <completion.contributor implementationClass="com.redhat.devtools.lsp4ij.features.completion.LSPCompletionContributor"
                                         id="com.redhat.devtools.lsp4ij.features.completion.LSPCompletionContributor" language="Aiken"/>
+
+        <completion.contributor implementationClass="com.bloxbean.intelliada.idea.aiken.completion.AikenCompletionContributor"
+                                        id="com.bloxbean.intelliada.idea.aiken.completion.AikenCompletionContributor" language="Aiken"/>
+
+        <completion.contributor implementationClass="com.bloxbean.intelliada.idea.aiken.completion.AikenTypeAwareCompletionContributor"
+                                        id="com.bloxbean.intelliada.idea.aiken.completion.AikenTypeAwareCompletionContributor" language="Aiken"/>
+
+        <completion.contributor implementationClass="com.bloxbean.intelliada.idea.aiken.completion.AikenCrossFileCompletionContributor"
+                                        id="com.bloxbean.intelliada.idea.aiken.completion.AikenCrossFileCompletionContributor" language="Aiken"/>
+
+        <completion.contributor implementationClass="com.bloxbean.intelliada.idea.aiken.completion.AikenValidatorCompletionContributor"
+                                        id="com.bloxbean.intelliada.idea.aiken.completion.AikenValidatorCompletionContributor" language="Aiken"/>
+
+        <completion.contributor implementationClass="com.bloxbean.intelliada.idea.aiken.completion.AikenChainAwareCompletionContributor"
+                                        id="com.bloxbean.intelliada.idea.aiken.completion.AikenChainAwareCompletionContributor" language="Aiken"/>
+
+        <!-- File-based index for symbol indexing -->
+        <fileBasedIndex implementation="com.bloxbean.intelliada.idea.aiken.index.AikenSymbolIndex"/>
+
+        <!-- Reference contributor for stdlib navigation -->
+        <psi.referenceContributor implementation="com.bloxbean.intelliada.idea.aiken.reference.AikenStdlibReferenceContributor" order="before lsp"/>
+        
+        <!-- Goto declaration handler for direct Ctrl+Click navigation -->
+        <gotoDeclarationHandler implementation="com.bloxbean.intelliada.idea.aiken.navigation.AikenGotoDeclarationHandler" order="first"/>
+        
+        <!-- Line marker provider for stdlib navigation -->
+        <codeInsight.lineMarkerProvider language="Aiken" implementationClass="com.bloxbean.intelliada.idea.aiken.navigation.AikenStdlibLineMarkerProvider"/>
+        
+        <!-- Service for stdlib file resolution -->
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.aiken.service.AikenStdlibService"/>
+        
+        <!-- Service for dynamic package discovery -->
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.aiken.service.AikenPackageService"/>
+
+        <!-- julc SDK/Project Configuration -->
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.julc.configuration.service.JulcSDKState"/>
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.julc.configuration.service.JulcProjectState"/>
+        <projectService serviceImplementation="com.bloxbean.intelliada.idea.julc.module.pkg.JulcTomlService"/>
+
+        <!-- julc Module Builder (IntelliJ IDEA) -->
+        <moduleBuilder builderClass="com.bloxbean.intelliada.idea.julc.module.JulcModuleBuilder"/>
+
+        <!-- julc Project Detection -->
+        <projectOpenProcessor implementation="com.bloxbean.intelliada.idea.julc.module.project.JulcProjectOpenProcessor"/>
+
+        <!-- Yano Lifecycle Service -->
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.nodeint.yano.YanoLifecycleService"/>
+
+        <!-- julc External Annotator (inline errors for unsupported Java in validators) -->
+        <externalAnnotator language="JAVA"
+                           implementationClass="com.bloxbean.intelliada.idea.julc.annotator.JulcExternalAnnotator"/>
+
+        <!-- julc @OnchainLibrary cross-file check (PSI-based) -->
+        <annotator language="JAVA"
+                   implementationClass="com.bloxbean.intelliada.idea.julc.annotator.JulcOnchainLibraryAnnotator"/>
+
+        <!-- julc Live Templates -->
+        <defaultLiveTemplates file="/liveTemplates/julc.xml"/>
+
+        <!-- julc REPL Tool Window -->
+        <toolWindow id="julc REPL"
+                    anchor="bottom"
+                    factoryClass="com.bloxbean.intelliada.idea.julc.repl.JulcReplToolWindowFactory"/>
+
+        <!-- Yano Status Bar Widget -->
+        <statusBarWidgetFactory implementation="com.bloxbean.intelliada.idea.nodeint.yano.ui.YanoStatusBarWidgetFactory"/>
+
+        <!-- Yano Devnet Tool Window -->
+        <toolWindow id="Yano Devnet"
+                    anchor="right"
+                    factoryClass="com.bloxbean.intelliada.idea.nodeint.yano.ui.YanoDevnetToolWindowFactory"/>
 
         <lang.commenter
                 language="Aiken"
@@ -123,9 +202,47 @@
                 description="Format Aiken Code">
             <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" />
         </action>
+        <action id="com.bloxbean.intelliada.idea.aiken.action.TestStdlibNavigationAction" class="com.bloxbean.intelliada.idea.aiken.action.TestStdlibNavigationAction" text="Test Stdlib Navigation"
+                description="Test Stdlib Navigation">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" />
+        </action>
         <action id="com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction" class="com.bloxbean.intelliada.idea.aiken.configuration.AikenConfigurationAction" text="Configuration"
                 description="Configure Aiken">
             <add-to-group group-id="com.bloxbean.intelliada.idea.aiken.action.AikenActionGroup" anchor="last"/>
+        </action>
+        <!-- julc Action Group -->
+        <group id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup"
+               class="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup"
+               popup="true"
+               text="julc" description="julc Smart Contracts">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </group>
+
+        <action id="com.bloxbean.intelliada.idea.julc.compile.action.JulcBuildAction"
+                class="com.bloxbean.intelliada.idea.julc.compile.action.JulcBuildAction"
+                text="Build" description="Build julc Project">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup" anchor="first"/>
+        </action>
+        <action id="com.bloxbean.intelliada.idea.julc.compile.action.JulcCheckAction"
+                class="com.bloxbean.intelliada.idea.julc.compile.action.JulcCheckAction"
+                text="Run Tests" description="Run julc Tests">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup"/>
+        </action>
+        <action id="com.bloxbean.intelliada.idea.julc.action.DeployValidatorAction"
+                class="com.bloxbean.intelliada.idea.julc.action.DeployValidatorAction"
+                text="Deploy Validator" description="Deploy a compiled validator to devnet">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup"/>
+        </action>
+        <action id="com.bloxbean.intelliada.idea.julc.blueprint.JulcBlueprintAction"
+                class="com.bloxbean.intelliada.idea.julc.blueprint.JulcBlueprintAction"
+                text="View Blueprint" description="View compiled validator blueprint">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup"/>
+        </action>
+        <action id="com.bloxbean.intelliada.idea.julc.configuration.JulcConfigurationAction"
+                class="com.bloxbean.intelliada.idea.julc.configuration.JulcConfigurationAction"
+                text="Configuration" description="Configure julc">
+            <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup" anchor="last"/>
         </action>
     </actions>
     <applicationListeners>

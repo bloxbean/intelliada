@@ -4,7 +4,12 @@ import com.bloxbean.intelliada.idea.configuration.model.RemoteNode;
 import com.bloxbean.intelliada.idea.core.util.CLIProviderUtil;
 import com.bloxbean.intelliada.idea.core.util.NodeType;
 import com.bloxbean.intelliada.idea.nodeint.devkit.DevKitDownloader;
+import com.bloxbean.intelliada.idea.nodeint.devkit.DevKitLifecycleService;
+import com.bloxbean.intelliada.idea.nodeint.devkit.DevKitProcessManager;
+import com.bloxbean.intelliada.idea.nodeint.devkit.DevKitStatusMonitor;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.util.text.StringUtil;
 
@@ -32,6 +37,10 @@ public class LocalYaciDevKitConfigPanel implements NodeConfigurator {
     private JTextField restEndpointTf;
     private JTextField protocolMagicTf;
     private JTextField homeTf;
+    private JButton startDevKitBtn;
+    private JButton stopDevKitBtn;
+    private JLabel statusLabel;
+    private DevKitStatusMonitor statusMonitor;
 
     public LocalYaciDevKitConfigPanel() {
         this(null);
@@ -56,20 +65,40 @@ public class LocalYaciDevKitConfigPanel implements NodeConfigurator {
         });
 
         initializeListeners();
+        initializeStatusMonitoring();
     }
 
     private void initializeListeners() {
         installDevKitBtn.addActionListener(e -> {
-            //Install Yaci DevKit
-            //TODO
-            //Download the latest Yaci Devkit zip and extract it to the selected folder
-            //fomr https://github.com/bloxbean/yaci-devkit/releases
-
             String path = homeTf.getText();
-
             Path installDir = Paths.get(path + File.separator + "yaci-devkit");
             DevKitDownloader devKitDownloader = new DevKitDownloader(installDir);
             devKitDownloader.installSDK();
+        });
+
+        startDevKitBtn.addActionListener(e -> {
+            Project project = getCurrentProject();
+            if (project != null) {
+                String devKitHome = homeTf.getText();
+                DevKitLifecycleService.getInstance().startDevKit(project, devKitHome)
+                    .thenAccept(success -> {
+                        if (success) {
+                            SwingUtilities.invokeLater(() -> updateButtonStates());
+                        }
+                    });
+            }
+        });
+
+        stopDevKitBtn.addActionListener(e -> {
+            Project project = getCurrentProject();
+            if (project != null) {
+                DevKitLifecycleService.getInstance().stopDevKit(project)
+                    .thenAccept(success -> {
+                        if (success) {
+                            SwingUtilities.invokeLater(() -> updateButtonStates());
+                        }
+                    });
+            }
         });
     }
 
@@ -199,6 +228,98 @@ public class LocalYaciDevKitConfigPanel implements NodeConfigurator {
 
     public JTextField getHomeTf() {
         return homeTf;
+    }
+
+    private void initializeStatusMonitoring() {
+        Project project = getCurrentProject();
+        if (project != null) {
+            DevKitLifecycleService service = DevKitLifecycleService.getInstance();
+            statusMonitor = service.getStatusMonitor(project);
+            
+            if (statusMonitor != null) {
+                statusMonitor.addStatusChangeListener(new DevKitStatusMonitor.StatusChangeListener() {
+                    @Override
+                    public void onStatusChanged(DevKitProcessManager.DevKitStatus oldStatus, DevKitProcessManager.DevKitStatus newStatus) {
+                        SwingUtilities.invokeLater(() -> updateStatusDisplay());
+                    }
+                    
+                    @Override
+                    public void onHealthChanged(boolean healthy) {
+                        SwingUtilities.invokeLater(() -> updateStatusDisplay());
+                    }
+                });
+            }
+        }
+        
+        updateStatusDisplay();
+        updateButtonStates();
+    }
+
+    private void updateStatusDisplay() {
+        Project project = getCurrentProject();
+        if (project != null) {
+            DevKitLifecycleService service = DevKitLifecycleService.getInstance();
+            DevKitProcessManager.DevKitStatus status = service.getDevKitStatus(project);
+            
+            if (statusLabel != null) {
+                String displayText = getStatusDisplayText(status);
+                statusLabel.setText(displayText);
+                statusLabel.setForeground(getStatusColor(status));
+            }
+        }
+    }
+
+    private void updateButtonStates() {
+        Project project = getCurrentProject();
+        if (project != null) {
+            DevKitLifecycleService service = DevKitLifecycleService.getInstance();
+            DevKitProcessManager.DevKitStatus status = service.getDevKitStatus(project);
+            
+            if (startDevKitBtn != null) {
+                startDevKitBtn.setEnabled(status == DevKitProcessManager.DevKitStatus.STOPPED);
+            }
+            
+            if (stopDevKitBtn != null) {
+                stopDevKitBtn.setEnabled(status == DevKitProcessManager.DevKitStatus.RUNNING);
+            }
+        }
+    }
+
+    private String getStatusDisplayText(DevKitProcessManager.DevKitStatus status) {
+        switch (status) {
+            case STOPPED:
+                return "Stopped";
+            case STARTING:
+                return "Starting...";
+            case RUNNING:
+                return "Running";
+            case STOPPING:
+                return "Stopping...";
+            case ERROR:
+                return "Error";
+            default:
+                return "Unknown";
+        }
+    }
+
+    private Color getStatusColor(DevKitProcessManager.DevKitStatus status) {
+        switch (status) {
+            case RUNNING:
+                return Color.GREEN.darker();
+            case STARTING:
+            case STOPPING:
+                return Color.ORANGE.darker();
+            case ERROR:
+                return Color.RED;
+            case STOPPED:
+            default:
+                return Color.GRAY;
+        }
+    }
+
+    private Project getCurrentProject() {
+        Project[] projects = ProjectManager.getInstance().getOpenProjects();
+        return projects.length > 0 ? projects[0] : null;
     }
 
 }

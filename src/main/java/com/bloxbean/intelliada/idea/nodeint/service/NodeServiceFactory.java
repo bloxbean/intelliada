@@ -36,7 +36,14 @@ public class NodeServiceFactory {
         if (backendService != null)
             return backendService;
 
-        if (NodeType.YaciDevKit.equals(remoteNode.getNodeType())) {
+        if (NodeType.Yano.equals(remoteNode.getNodeType())) {
+            backendService
+                    = new BFBackendService(remoteNode.getApiEndpoint(), "Yano dummy key");
+            backendServiceMap.put(remoteNode.getId(), backendService);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Backend service created for the node : " + remoteNode);
+            }
+        } else if (NodeType.YaciDevKit.equals(remoteNode.getNodeType())) {
             backendService
                     = new BFBackendService(remoteNode.getApiEndpoint(), "Some dummy key");
             backendServiceMap.put(remoteNode.getId(), backendService);

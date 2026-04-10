@@ -1,0 +1,45 @@
+<templateSet group="julc">
+    <template name="julcspend" value="@SpendingValidator&#10;public class $NAME$ {&#10;    public record $DATUM_TYPE$(/* fields */) {}&#10;&#10;    @Entrypoint&#10;    public static boolean validate($DATUM_TYPE$ datum, PlutusData redeemer, ScriptContext ctx) {&#10;        TxInfo txInfo = ctx.txInfo();&#10;        $END$&#10;        return true;&#10;    }&#10;}"
+               description="julc SpendingValidator" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="fileNameWithoutExtension()" defaultValue="" alwaysStopAt="true"/>
+        <variable name="DATUM_TYPE" expression="" defaultValue="&quot;MyDatum&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="JAVA_DECLARATION" value="true"/>
+        </context>
+    </template>
+
+    <template name="julcmint" value="@MintingValidator&#10;public class $NAME$ {&#10;    @Entrypoint&#10;    public static boolean validate(PlutusData redeemer, ScriptContext ctx) {&#10;        TxInfo txInfo = ctx.txInfo();&#10;        $END$&#10;        return true;&#10;    }&#10;}"
+               description="julc MintingValidator" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="fileNameWithoutExtension()" defaultValue="" alwaysStopAt="true"/>
+        <context>
+            <option name="JAVA_DECLARATION" value="true"/>
+        </context>
+    </template>
+
+    <template name="julcmulti" value="@MultiValidator&#10;public class $NAME$ {&#10;    public sealed interface $REDEEMER$ permits $VARIANT1$, $VARIANT2$ {}&#10;    public record $VARIANT1$() implements $REDEEMER$ {}&#10;    public record $VARIANT2$() implements $REDEEMER$ {}&#10;&#10;    @Entrypoint(purpose = Purpose.MINT)&#10;    public static boolean mint(PlutusData redeemer, ScriptContext ctx) {&#10;        $END$&#10;        return true;&#10;    }&#10;&#10;    @Entrypoint(purpose = Purpose.SPEND)&#10;    public static boolean spend(Optional&lt;PlutusData&gt; datum, $REDEEMER$ redeemer, ScriptContext ctx) {&#10;        return true;&#10;    }&#10;}"
+               description="julc MultiValidator (mint + spend)" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="fileNameWithoutExtension()" defaultValue="" alwaysStopAt="true"/>
+        <variable name="REDEEMER" expression="" defaultValue="&quot;MyAction&quot;" alwaysStopAt="true"/>
+        <variable name="VARIANT1" expression="" defaultValue="&quot;ActionA&quot;" alwaysStopAt="true"/>
+        <variable name="VARIANT2" expression="" defaultValue="&quot;ActionB&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="JAVA_DECLARATION" value="true"/>
+        </context>
+    </template>
+
+    <template name="julcentry" value="@Entrypoint&#10;public static boolean validate($PARAMS$) {&#10;    $END$&#10;    return true;&#10;}"
+               description="julc @Entrypoint method" toReformat="true" toShortenFQNames="true">
+        <variable name="PARAMS" expression="" defaultValue="&quot;PlutusData redeemer, ScriptContext ctx&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="JAVA_DECLARATION" value="true"/>
+        </context>
+    </template>
+
+    <template name="julctest" value="@Test&#10;public static boolean $NAME$() {&#10;    $END$&#10;    return true;&#10;}"
+               description="julc test method" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;testMyValidator&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="JAVA_DECLARATION" value="true"/>
+        </context>
+    </template>
+</templateSet>
