@@ -57,9 +57,6 @@ dependencies {
 
     implementation 'org.json:json:20240303'
 
-    // JavaParser for julc SubsetValidator (inline error highlighting fallback)
-    implementation 'com.github.javaparser:javaparser-core:3.26.3'
-
     compileOnly 'org.projectlombok:lombok:1.18.34'
 
     annotationProcessor 'org.projectlombok:lombok:1.18.34'

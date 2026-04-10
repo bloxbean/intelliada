@@ -132,9 +132,13 @@
         <!-- Yano Lifecycle Service -->
         <applicationService serviceImplementation="com.bloxbean.intelliada.idea.nodeint.yano.YanoLifecycleService"/>
 
-        <!-- julc External Annotator (inline errors for unsupported Java in validators) -->
+        <!-- julc External Annotator — SubsetValidator via runtime classloader bridge -->
         <externalAnnotator language="JAVA"
                            implementationClass="com.bloxbean.intelliada.idea.julc.annotator.JulcExternalAnnotator"/>
+
+        <!-- julc API blocklist — PSI-based import checking -->
+        <annotator language="JAVA"
+                   implementationClass="com.bloxbean.intelliada.idea.julc.annotator.JulcApiAnnotator"/>
 
         <!-- julc @OnchainLibrary cross-file check (PSI-based) -->
         <annotator language="JAVA"
