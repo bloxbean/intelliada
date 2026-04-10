@@ -172,6 +172,7 @@ public class JulcVmBridge {
      * Compile Java source to UPLC using the real julc compiler.
      */
     public static CompileInfo compile(String source) {
+        if (!initialized) initialize();
         if (!compilerAvailable) return null;
 
         try {
@@ -211,6 +212,7 @@ public class JulcVmBridge {
      * Evaluate a compiled program using the julc VM.
      */
     public static EvalInfo evaluate(Object program) {
+        if (!initialized) initialize();
         LOG.info("julc VmBridge evaluate: vmAvailable=" + vmAvailable + ", program=" + (program != null ? program.getClass().getName() : "null"));
         if (!vmAvailable || program == null) return null;
 
