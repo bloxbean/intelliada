@@ -4,6 +4,8 @@ import com.bloxbean.intelliada.idea.julc.common.JulcIcons;
 import com.bloxbean.intelliada.idea.julc.configuration.JulcConfigurationHelperService;
 import com.bloxbean.intelliada.idea.julc.configuration.JulcDownloader;
 import com.bloxbean.intelliada.idea.julc.configuration.JulcSDK;
+import com.bloxbean.intelliada.idea.julc.configuration.service.JulcSDKState;
+import com.bloxbean.intelliada.idea.julc.util.JulcSdkUtil;
 import com.bloxbean.intelliada.idea.util.IdeaUtil;
 import com.intellij.ide.util.projectWizard.ModuleBuilder;
 import com.intellij.ide.util.projectWizard.ModuleBuilderListener;
@@ -24,30 +26,34 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ContentEntry;
 import com.intellij.openapi.roots.ModifiableRootModel;
 import com.intellij.openapi.roots.ui.configuration.ModulesProvider;
-import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
-import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VfsUtil;
+import com.intellij.openapi.vfs.VirtualFile;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
+import java.awt.*;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 
 public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderListener {
     private static final Logger LOG = Logger.getInstance(JulcModuleBuilder.class);
+    private static final ProjectSystemId GRADLE_SYSTEM_ID = new ProjectSystemId("GRADLE");
 
+    private JulcSdkInputField sdkField;
     private TemplateInputField templateField;
     private TextInputField groupField;
-    private TextInputField artifactField;
     private TextInputField packageField;
 
     public JulcModuleBuilder() {
@@ -55,36 +61,24 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
     }
 
     @Override
-    public String getBuilderId() {
-        return "Julc";
-    }
+    public String getBuilderId() { return "Julc"; }
 
     @Override
-    public Icon getNodeIcon() {
-        return JulcIcons.JULC_ICON;
-    }
+    public Icon getNodeIcon() { return JulcIcons.JULC_ICON; }
 
     @Override
-    public String getDescription() {
-        return "julc - Write Cardano Smart Contracts in Java";
-    }
+    public String getDescription() { return "julc - Write Cardano Smart Contracts in Java"; }
 
     @Override
-    public String getPresentableName() {
-        return "julc";
-    }
+    public String getPresentableName() { return "julc"; }
 
     @Override
-    public String getGroupName() {
-        return "julc";
-    }
+    public String getGroupName() { return "julc"; }
 
     @Override
     public ModuleWizardStep[] createWizardSteps(com.intellij.ide.util.projectWizard.WizardContext wizardContext, ModulesProvider modulesProvider) {
         return new ModuleWizardStep[]{};
     }
-
-    private static final ProjectSystemId GRADLE_SYSTEM_ID = new ProjectSystemId("GRADLE");
 
     @Override
     public void moduleCreated(@NotNull Module module) {
@@ -93,26 +87,20 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
         if (basePath == null) return;
 
         ApplicationManager.getApplication().invokeLater(() -> {
-            // Refresh VFS so IntelliJ sees all scaffolded files
             VirtualFile baseDir = LocalFileSystem.getInstance().refreshAndFindFileByPath(basePath);
             if (baseDir != null) {
                 VfsUtil.markDirtyAndRefresh(false, true, true, baseDir);
             }
 
-            // Explicitly link and import as Gradle project
             try {
-                VirtualFile buildFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(
-                        basePath + "/build.gradle");
+                VirtualFile buildFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(basePath + "/build.gradle");
                 if (buildFile != null) {
                     ExternalProjectsManagerImpl.getInstance(project).runWhenInitialized(() -> {
                         try {
-                            ExternalSystemUtil.refreshProject(
-                                    basePath,
-                                    new ImportSpecBuilder(project, GRADLE_SYSTEM_ID)
-                            );
+                            ExternalSystemUtil.refreshProject(basePath, new ImportSpecBuilder(project, GRADLE_SYSTEM_ID));
                             LOG.info("Triggered Gradle import for julc project at " + basePath);
                         } catch (Exception e) {
-                            LOG.warn("Gradle import trigger failed. Please import manually via 'Load Gradle Project' notification.", e);
+                            LOG.warn("Gradle import trigger failed", e);
                         }
                     });
                 }
@@ -129,43 +117,27 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
         String moduleName = rootModel.getModule().getName().toLowerCase();
         String template = templateField != null ? templateField.getValue() : "gradle";
         String group = groupField != null ? groupField.getValue() : "com.example";
-        String artifact = artifactField != null ? artifactField.getValue() : moduleName;
         String pkg = packageField != null ? packageField.getValue() : group;
+
+        // Get SDK from the wizard field
+        JulcSDK sdk = sdkField != null ? sdkField.getResolvedSDK() : null;
+        if (sdk == null) {
+            sdk = JulcConfigurationHelperService.getCompilerLocalSDK(rootModel.getProject());
+        }
+
+        if (sdk == null) {
+            throw new ConfigurationException(
+                    "julc CLI is not configured. Please select or download a julc SDK in the wizard.",
+                    "julc SDK Required");
+        }
 
         Project project = rootModel.getProject();
         String basePath = project.getBasePath();
 
+        // Save SDK to state for future use
+        final JulcSDK finalSdk = sdk;
         ApplicationManager.getApplication().runWriteAction(() -> {
-            JulcSDK sdk = JulcConfigurationHelperService.getCompilerLocalSDK(project);
-
-            if (sdk == null) {
-                // Offer to download julc CLI
-                int result = Messages.showYesNoDialog(
-                        "julc CLI is not configured. Would you like to download it now?",
-                        "julc CLI Not Found",
-                        "Download", "Cancel", Messages.getQuestionIcon());
-
-                if (result == Messages.YES) {
-                    // Choose install directory
-                    JFileChooser fc = new JFileChooser();
-                    fc.setDialogTitle("Select julc installation directory");
-                    fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-                    String defaultDir = System.getProperty("user.home") + File.separator + ".julc";
-                    fc.setSelectedFile(new File(defaultDir));
-
-                    if (fc.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-                        Path installDir = fc.getSelectedFile().toPath();
-                        JulcDownloader downloader = new JulcDownloader(installDir);
-                        downloader.install();
-                        IdeaUtil.showNotification(project, "julc",
-                                "julc CLI is being downloaded. Please re-create the project after download completes.",
-                                NotificationType.INFORMATION, null);
-                    }
-                }
-                return;
-            }
-
-            scaffoldWithCli(sdk, basePath, moduleName, template, group, artifact, pkg, project);
+            scaffoldWithCli(finalSdk, basePath, moduleName, template, group, pkg, project);
         });
 
         ContentEntry contentEntry = doAddContentEntry(rootModel);
@@ -182,13 +154,8 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
         }
     }
 
-    /**
-     * Scaffold project using julc CLI's "new" command.
-     * This generates proper build files, Gradle/Maven wrappers, and starter code.
-     */
     private void scaffoldWithCli(JulcSDK sdk, String basePath, String moduleName,
-                                  String template, String group, String artifact,
-                                  String pkg, Project project) {
+                                  String template, String group, String pkg, Project project) {
         List<String> commands = sdk.getJulcCommand();
         commands.add("new");
         commands.add(moduleName);
@@ -196,8 +163,6 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
         commands.add(template);
         commands.add("--group");
         commands.add(group);
-        commands.add("--artifact");
-        commands.add(artifact);
         commands.add("--package");
         commands.add(pkg);
 
@@ -215,15 +180,12 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
                         "julc new exited with code " + exitCode, NotificationType.WARNING, null);
             }
 
-            // Copy scaffolded project to basePath
             File srcDir = new File(tempDir, moduleName);
             if (srcDir.exists()) {
                 FileUtil.copyDirContent(srcDir, new File(basePath));
             } else {
-                // Some versions may scaffold directly into tempDir
                 FileUtil.copyDirContent(tempDir, new File(basePath));
             }
-
         } catch (Exception e) {
             IdeaUtil.showNotification(project, "Project creation",
                     "Failed to create julc project: " + e.getMessage(),
@@ -234,19 +196,19 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
 
     @Override
     protected List<WizardInputField<?>> getAdditionalFields() {
+        if (sdkField == null) {
+            sdkField = new JulcSdkInputField("julcSdk");
+        }
         if (templateField == null) {
             templateField = new TemplateInputField("template", "gradle");
         }
         if (groupField == null) {
             groupField = new TextInputField("group", "com.example", "Group ID");
         }
-        if (artifactField == null) {
-            artifactField = new TextInputField("artifact", "", "Artifact ID");
-        }
         if (packageField == null) {
             packageField = new TextInputField("package", "com.example", "Package");
         }
-        return Arrays.asList(templateField, groupField, artifactField, packageField);
+        return Arrays.asList(sdkField, templateField, groupField, packageField);
     }
 
     @Override
@@ -269,8 +231,197 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
             new File(testPath).mkdirs();
             paths.add(Pair.create(mainPath, ""));
         }
-
         return paths;
+    }
+
+    // ========== Custom Wizard Fields ==========
+
+    /**
+     * julc SDK selector field shown in the project wizard.
+     * User must select or download a julc SDK before proceeding.
+     */
+    static class JulcSdkInputField extends WizardInputField<JPanel> {
+        private JPanel panel;
+        private JTextField pathTf;
+        private JLabel statusLabel;
+        private JulcSDK resolvedSdk;
+
+        protected JulcSdkInputField(String id) {
+            super(id, "");
+            buildPanel();
+            // Try to auto-detect existing SDK
+            autoDetect();
+        }
+
+        private void buildPanel() {
+            panel = new JPanel(new GridBagLayout());
+            GridBagConstraints c = new GridBagConstraints();
+            c.insets = new Insets(2, 2, 2, 2);
+            c.anchor = GridBagConstraints.WEST;
+
+            pathTf = new JTextField(25);
+            TextFieldWithBrowseButton browse = new TextFieldWithBrowseButton(pathTf, e -> {
+                JFileChooser fc = new JFileChooser();
+                fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                fc.setDialogTitle("Select folder containing 'julc' executable");
+                if (fc.showDialog(panel, "Select") == JFileChooser.APPROVE_OPTION) {
+                    pathTf.setText(fc.getSelectedFile().getAbsolutePath());
+                    validatePath();
+                }
+            });
+            c.gridx = 0; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1.0;
+            panel.add(browse, c);
+
+            JButton downloadBtn = new JButton("Download");
+            downloadBtn.addActionListener(e -> downloadJulc());
+            c.gridx = 1; c.fill = GridBagConstraints.NONE; c.weightx = 0;
+            panel.add(downloadBtn, c);
+
+            statusLabel = new JLabel(" ");
+            statusLabel.setFont(statusLabel.getFont().deriveFont(Font.ITALIC, 11f));
+            c.gridx = 0; c.gridy = 1; c.gridwidth = 2; c.fill = GridBagConstraints.HORIZONTAL;
+            panel.add(statusLabel, c);
+
+            pathTf.addActionListener(e -> validatePath());
+            pathTf.addFocusListener(new java.awt.event.FocusAdapter() {
+                @Override
+                public void focusLost(java.awt.event.FocusEvent e) {
+                    validatePath();
+                }
+            });
+        }
+
+        private void autoDetect() {
+            // Check existing SDKs
+            List<JulcSDK> sdks = JulcSDKState.getInstance().getSdks();
+            if (!sdks.isEmpty()) {
+                JulcSDK sdk = sdks.get(0);
+                pathTf.setText(sdk.getPath());
+                resolvedSdk = sdk;
+                statusLabel.setText("Using: " + sdk.getName() + " (" + sdk.getVersion() + ")");
+                statusLabel.setForeground(new Color(0, 128, 0));
+                return;
+            }
+
+            // Check common locations
+            String[] fallbacks = {
+                    System.getProperty("user.home") + "/.julc/bin",
+                    "/usr/local/bin"
+            };
+            String exe = JulcSdkUtil.getJulcExecutable();
+            for (String dir : fallbacks) {
+                if (new File(dir, exe).exists()) {
+                    pathTf.setText(dir);
+                    validatePath();
+                    return;
+                }
+            }
+
+            // Check ~/.intelliada/julc-cli/ (our download location)
+            String downloadBase = System.getProperty("user.home") + "/.intelliada/julc-cli";
+            String foundDir = JulcDownloader.findJulcBinDir(Path.of(downloadBase));
+            if (foundDir != null) {
+                pathTf.setText(foundDir);
+                validatePath();
+                return;
+            }
+
+            statusLabel.setText("No julc found. Browse to installation or click Download.");
+            statusLabel.setForeground(Color.GRAY);
+        }
+
+        private void validatePath() {
+            String path = pathTf.getText().trim();
+            if (path.isEmpty()) {
+                resolvedSdk = null;
+                statusLabel.setText("Select julc installation path");
+                statusLabel.setForeground(Color.GRAY);
+                return;
+            }
+
+            String exe = JulcSdkUtil.getJulcExecutable();
+            if (!new File(path, exe).exists()) {
+                // Maybe path includes the executable itself
+                File f = new File(path);
+                if (f.isFile() && f.getName().startsWith("julc")) {
+                    path = f.getParent();
+                    pathTf.setText(path);
+                }
+                if (!new File(path, exe).exists()) {
+                    resolvedSdk = null;
+                    statusLabel.setText("'julc' not found in this directory");
+                    statusLabel.setForeground(Color.RED);
+                    return;
+                }
+            }
+
+            // Try to get version
+            String version = "unknown";
+            try {
+                version = JulcSdkUtil.getVersionString(path);
+            } catch (Exception ex) {
+                // ignore
+            }
+
+            final String resolvedPath = path;
+            resolvedSdk = new JulcSDK(UUID.randomUUID().toString(), "julc", resolvedPath, version != null ? version : "unknown");
+
+            // Save to SDK state for persistence
+            JulcSDKState state = JulcSDKState.getInstance();
+            boolean exists = state.getSdks().stream().anyMatch(s -> s.getPath().equals(resolvedPath));
+            if (!exists) {
+                state.addSdk(resolvedSdk);
+            }
+
+            statusLabel.setText("julc " + (version != null ? version : "") + " — " + resolvedPath);
+            statusLabel.setForeground(new Color(0, 128, 0));
+        }
+
+        private void downloadJulc() {
+            String defaultDir = System.getProperty("user.home") + File.separator + ".intelliada" + File.separator + "julc-cli";
+            JFileChooser fc = new JFileChooser();
+            fc.setDialogTitle("Select download directory for julc CLI");
+            fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+            fc.setSelectedFile(new File(defaultDir));
+
+            if (fc.showSaveDialog(panel) != JFileChooser.APPROVE_OPTION) return;
+
+            Path installDir = fc.getSelectedFile().toPath();
+            statusLabel.setText("Downloading julc...");
+            statusLabel.setForeground(new Color(200, 150, 0));
+
+            JulcDownloader downloader = new JulcDownloader(installDir);
+            downloader.setOnComplete(() -> {
+                String binDir = JulcDownloader.findJulcBinDir(installDir);
+                if (binDir != null) {
+                    SwingUtilities.invokeLater(() -> {
+                        pathTf.setText(binDir);
+                        validatePath();
+                    });
+                } else {
+                    SwingUtilities.invokeLater(() -> {
+                        statusLabel.setText("Download complete. Browse to the julc executable directory.");
+                        statusLabel.setForeground(new Color(200, 150, 0));
+                    });
+                }
+            });
+            downloader.install();
+        }
+
+        public JulcSDK getResolvedSDK() {
+            return resolvedSdk;
+        }
+
+        @Override
+        public @NlsContexts.Label String getLabel() { return "julc SDK"; }
+
+        @Override
+        public JPanel getComponent() { return panel; }
+
+        @Override
+        public String getValue() {
+            return pathTf.getText();
+        }
     }
 
     static class TemplateInputField extends WizardInputField<JComboBox<String>> {
@@ -283,19 +434,13 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
         }
 
         @Override
-        public @NlsContexts.Label String getLabel() {
-            return "Template";
-        }
+        public @NlsContexts.Label String getLabel() { return "Template"; }
 
         @Override
-        public JComboBox<String> getComponent() {
-            return combo;
-        }
+        public JComboBox<String> getComponent() { return combo; }
 
         @Override
-        public String getValue() {
-            return (String) combo.getSelectedItem();
-        }
+        public String getValue() { return (String) combo.getSelectedItem(); }
     }
 
     static class TextInputField extends WizardInputField<JTextField> {
@@ -309,18 +454,12 @@ public class JulcModuleBuilder extends ModuleBuilder implements ModuleBuilderLis
         }
 
         @Override
-        public @NlsContexts.Label String getLabel() {
-            return label;
-        }
+        public @NlsContexts.Label String getLabel() { return label; }
 
         @Override
-        public JTextField getComponent() {
-            return textField;
-        }
+        public JTextField getComponent() { return textField; }
 
         @Override
-        public String getValue() {
-            return textField.getText();
-        }
+        public String getValue() { return textField.getText(); }
     }
 }
