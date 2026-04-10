@@ -217,7 +217,15 @@ public class JulcVmBridge {
         if (!vmAvailable || program == null) return null;
 
         try {
-            Object vm = vmCreateMethod.invoke(null);
+            // Set thread context classloader so ServiceLoader.load() finds JulcVmProvider
+            ClassLoader originalCL = Thread.currentThread().getContextClassLoader();
+            Thread.currentThread().setContextClassLoader(vmClassLoader);
+            Object vm;
+            try {
+                vm = vmCreateMethod.invoke(null);
+            } finally {
+                Thread.currentThread().setContextClassLoader(originalCL);
+            }
             Object evalResult = evaluateMethod.invoke(vm, program);
 
             String className = evalResult.getClass().getSimpleName();
@@ -260,7 +268,7 @@ public class JulcVmBridge {
 
             return new EvalInfo(success, cpu, mem, traces, errorMessage);
         } catch (Exception e) {
-            LOG.debug("julc VM evaluation failed: " + e.getMessage());
+            LOG.warn("julc VM evaluation failed: " + e.getMessage(), e);
             return null;
         }
     }
