@@ -200,6 +200,7 @@ public class JulcVmBridge {
             }
 
             LOG.info("julc VmBridge compile: hasErrors=" + hasErrors + ", size=" + sizeBytes
+                    + ", sourceLen=" + source.length()
                     + ", program=" + (program != null ? program.getClass().getName() : "null"));
             return new CompileInfo(hasErrors, diagnostics, sizeBytes, parameterized, uplcText, program);
         } catch (Exception e) {

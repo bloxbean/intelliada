@@ -126,6 +126,9 @@ public class JulcExecutionTracePanel {
             return;
         }
 
+        // Save all documents before compile to ensure latest content
+        FileDocumentManager.getInstance().saveAllDocuments();
+
         resultLabel.setText("Compiling...");
         resultLabel.setForeground(new Color(200, 150, 0));
         traceArea.setText("");
