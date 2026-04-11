@@ -241,12 +241,14 @@ public class JulcVmBridge {
                 Method consumedMethod = evalResult.getClass().getMethod("consumed");
                 Object budget = consumedMethod.invoke(evalResult);
                 if (budget != null) {
-                    Method cpuMethod = budget.getClass().getMethod("cpu");
-                    Method memMethod = budget.getClass().getMethod("mem");
+                    Method cpuMethod = budget.getClass().getMethod("cpuSteps");
+                    Method memMethod = budget.getClass().getMethod("memoryUnits");
                     cpu = (long) cpuMethod.invoke(budget);
                     mem = (long) memMethod.invoke(budget);
                 }
-            } catch (Exception ex) { /* budget not available */ }
+            } catch (Exception ex) {
+                LOG.debug("Budget extraction failed: " + ex.getMessage());
+            }
 
             // Extract traces
             try {
