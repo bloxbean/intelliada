@@ -126,6 +126,16 @@ public class JulcExecutionTracePanel {
             return;
         }
 
+        // Read document text on EDT (has unsaved edits) before spawning background task
+        Document doc = FileDocumentManager.getInstance().getDocument(file);
+        final String source = doc != null ? doc.getText() : null;
+
+        if (source == null || source.isBlank()) {
+            resultLabel.setText("Cannot read file content");
+            resultLabel.setForeground(Color.RED);
+            return;
+        }
+
         resultLabel.setText("Compiling...");
         resultLabel.setForeground(new Color(200, 150, 0));
         traceArea.setText("");
@@ -134,13 +144,7 @@ public class JulcExecutionTracePanel {
         ProgressManager.getInstance().run(new Task.Backgroundable(project, "Running julc Validator with Trace...") {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
-                String source = ApplicationManager.getApplication().runReadAction(
-                        (com.intellij.openapi.util.Computable<String>) () -> {
-                            Document doc = FileDocumentManager.getInstance().getDocument(file);
-                            return doc != null ? doc.getText() : null;
-                        });
-
-                if (source == null || !JulcVmBridge.isCompilerAvailable()) {
+                if (!JulcVmBridge.isCompilerAvailable()) {
                     SwingUtilities.invokeLater(() -> {
                         resultLabel.setText("Cannot compile — julc compiler not available");
                         resultLabel.setForeground(Color.RED);
