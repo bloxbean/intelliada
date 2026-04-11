@@ -26,4 +26,8 @@ public interface NodeConfigurator {
     Map<String, String> getHeaders();
 
     public int getTimeout();
+    
+    default String getHome() {
+        return null;
+    }
 }

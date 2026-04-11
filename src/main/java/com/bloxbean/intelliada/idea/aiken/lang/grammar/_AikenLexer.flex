@@ -30,7 +30,9 @@ UPPER_IDENTIFIER=[A-Z][_0-9a-zA-Z]*
 COMMENT="//"([^\n]*)?
 DOC_COMMENT="///"([^\n]*)?
 MODULE_COMMENT="////"([^\n]*)?
-NUMBER=[0-9]*
+NUMBER=[0-9]+
+HEX_NUMBER=0x[0-9a-fA-F]+
+BYTE_STRING=#\"([^\\\\\\\\\\\\\\\\\\\"\\\\\\\\]|\\\\\\\\\\\\\\\\[^efnrt\\\\\\\"\\\\\\\\\\\\\\\\])*\"
 STRING_CONTENT=\"([^\\\\\\\"]|\\\\[^efnrt\\\"\\\\])+\"
 
 %%
@@ -60,6 +62,7 @@ STRING_CONTENT=\"([^\\\\\\\"]|\\\\[^efnrt\\\"\\\\])+\"
   "or"                    { return OR; }
   "as"                    { return AS; }
   "via"                   { return VIA; }
+  "benchmark"             { return BENCHMARK; }
 
 
   "{"                     { return LBRACE; }
@@ -69,12 +72,23 @@ STRING_CONTENT=\"([^\\\\\\\"]|\\\\[^efnrt\\\"\\\\])+\"
   "("                     { return LPAREN; }
   ")"                     { return RPAREN; }
   ":"                     { return COLON; }
+  ";"                     { return SEMICOLON; }
+  "?"                     { return QUESTION; }
+  "#"                     { return HASH; }
   ","                     { return COMMA; }
   "="                     { return EQ; }
   "=="                    { return EQEQ; }
+  "!="                    { return NE; }
+  "<="                    { return LE; }
+  ">="                    { return GE; }
   "!"                     { return BANG; }
   "+"                     { return PLUS; }
   "-"                     { return MINUS; }
+  "+."                    { return PLUSDOT; }
+  "-."                    { return MINUSDOT; }
+  "*."                    { return STARDOT; }
+  "/."                    { return SLASHDOT; }
+  "%"                     { return PERCENT; }
   "||"                    { return OR; }
   "&&"                    { return AND; }
   "<"                     { return LT; }
@@ -86,15 +100,19 @@ STRING_CONTENT=\"([^\\\\\\\"]|\\\\[^efnrt\\\"\\\\])+\"
   ".."                    { return DOTDOT; }
   "=>"                    { return FAT_ARROW; }
   "->"                    { return ARROW; }
+  "<-"                    { return BACK_ARROW; }
   "\""                    { return QUOTE; }
   "|>"                    { return PIPE; }
+  "|"                     { return BITWISE_OR; }
 
   {IDENTIFIER}            { return IDENTIFIER; }
   {UPPER_IDENTIFIER}      { return UPPER_IDENTIFIER; }
   {COMMENT}               { return COMMENT; }
   {DOC_COMMENT}           { return DOC_COMMENT; }
   {MODULE_COMMENT}        { return MODULE_COMMENT; }
+  {HEX_NUMBER}            { return HEX_NUMBER; }
   {NUMBER}                { return NUMBER; }
+  {BYTE_STRING}           { return BYTE_STRING; }
   {STRING_CONTENT}        { return STRING_CONTENT; }
 
 }

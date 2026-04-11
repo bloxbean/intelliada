@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templateSet group="Aiken">
+  <template name="fn" value="fn $NAME$($PARAMS$) -> $RETURN_TYPE$ {&#10;  $BODY$&#10;}" description="Function definition" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;function_name&quot;" alwaysStopAt="true" />
+    <variable name="PARAMS" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true" />
+    <variable name="RETURN_TYPE" expression="" defaultValue="&quot;Bool&quot;" alwaysStopAt="true" />
+    <variable name="BODY" expression="" defaultValue="&quot;todo&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="validator" value="validator $NAME$ {&#10;  $PURPOSE$($DATUM$, $REDEEMER$, $CONTEXT$) {&#10;    $BODY$&#10;  }&#10;}" description="Validator definition" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;my_validator&quot;" alwaysStopAt="true" />
+    <variable name="PURPOSE" expression="" defaultValue="&quot;spend&quot;" alwaysStopAt="true" />
+    <variable name="DATUM" expression="" defaultValue="&quot;datum&quot;" alwaysStopAt="true" />
+    <variable name="REDEEMER" expression="" defaultValue="&quot;redeemer&quot;" alwaysStopAt="true" />
+    <variable name="CONTEXT" expression="" defaultValue="&quot;context&quot;" alwaysStopAt="true" />
+    <variable name="BODY" expression="" defaultValue="&quot;True&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="test" value="test $NAME$() {&#10;  $BODY$&#10;}" description="Test definition" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;test_name&quot;" alwaysStopAt="true" />
+    <variable name="BODY" expression="" defaultValue="&quot;True&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="when" value="when $VALUE$ is {&#10;  $PATTERN$ -> $RESULT$&#10;}" description="When expression" toReformat="true" toShortenFQNames="true">
+    <variable name="VALUE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <variable name="PATTERN" expression="" defaultValue="&quot;pattern&quot;" alwaysStopAt="true" />
+    <variable name="RESULT" expression="" defaultValue="&quot;result&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="if" value="if $CONDITION$ {&#10;  $THEN$&#10;} else {&#10;  $ELSE$&#10;}" description="If expression" toReformat="true" toShortenFQNames="true">
+    <variable name="CONDITION" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true" />
+    <variable name="THEN" expression="" defaultValue="&quot;true_branch&quot;" alwaysStopAt="true" />
+    <variable name="ELSE" expression="" defaultValue="&quot;false_branch&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="type" value="type $NAME$ {&#10;  $CONSTRUCTOR$($FIELDS$)&#10;}" description="Type definition" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;MyType&quot;" alwaysStopAt="true" />
+    <variable name="CONSTRUCTOR" expression="" defaultValue="&quot;Constructor&quot;" alwaysStopAt="true" />
+    <variable name="FIELDS" expression="" defaultValue="&quot;field: Type&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="use" value="use $MODULE$.{$EXPORTS$}" description="Import statement" toReformat="true" toShortenFQNames="true">
+    <variable name="MODULE" expression="" defaultValue="&quot;aiken/list&quot;" alwaysStopAt="true" />
+    <variable name="EXPORTS" expression="" defaultValue="&quot;length, map, filter&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="let" value="let $NAME$ = $VALUE$" description="Let binding" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;variable_name&quot;" alwaysStopAt="true" />
+    <variable name="VALUE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="expect" value="expect $PATTERN$ = $VALUE$" description="Expect statement" toReformat="true" toShortenFQNames="true">
+    <variable name="PATTERN" expression="" defaultValue="&quot;Some(result)&quot;" alwaysStopAt="true" />
+    <variable name="VALUE" expression="" defaultValue="&quot;some_function()&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+</templateSet>

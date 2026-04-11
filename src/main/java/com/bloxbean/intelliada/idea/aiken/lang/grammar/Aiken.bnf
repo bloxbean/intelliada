@@ -40,6 +40,7 @@ tokens = [
         OR = "or"
         AS = "as"
         VIA = "via"
+        BENCHMARK = "benchmark"
 
         MINT = "mint"
         SPEND = "spend"
@@ -59,7 +60,9 @@ tokens = [
         DOC_COMMENT = "regexp:///([^\n]*)?"
         MODULE_COMMENT = "regexp:////([^\n]*)?"
 
-        NUMBER = "regexp:[0-9]*"
+        NUMBER = "regexp:[0-9]+"
+        HEX_NUMBER = "regexp:0x[0-9a-fA-F]+"
+        BYTE_STRING = "regexp:#\"([^\\\\\\\\\\\\\\\\\\\"\\\\\\\\]|\\\\\\\\\\\\\\\\[^efnrt\\\\\\\"\\\\\\\\\\\\\\\\])*\""
         STRING_CONTENT = "regexp:\"([^\\\\\\\"]|\\\\[^efnrt\\\"\\\\])+\"" // TODO improve matching for string content
 
         // Chars
@@ -71,16 +74,27 @@ tokens = [
         RPAREN      =  ')'
 
         COLON       =  ':'
+        SEMICOLON   =  ';'
+        QUESTION    =  '?'
+        HASH        =  '#'
 
         COMMA       =  ','
 
         EQ          =  '='
         EQEQ        =  '=='
+        NE          =  '!='
+        LE          =  '<='
+        GE          =  '>='
 
         BANG        =  '!'
 
         PLUS        =  '+'
         MINUS       =  '-'
+        PLUSDOT     =  '+.'
+        MINUSDOT    =  '-.'
+        STARDOT     =  '*.'
+        SLASHDOT    =  '/.'
+        PERCENT     =  '%'
 
         OR          =  '||'
         AND         =  '&&'
@@ -97,10 +111,12 @@ tokens = [
 
         FAT_ARROW   =  '=>'
         ARROW       =  '->'
+        BACK_ARROW  =  '<-'
 
         QUOTE       =  '"'
 
         PIPE        =  '|>'
+        BITWISE_OR  =  '|'
     ]
 }
 
@@ -110,7 +126,11 @@ private topLevelDefinition ::=
     | typeStatement
     | validatorStatement
     | functionStatement
+    | testStatement
+    | benchmarkStatement
     | COMMENT
+    | DOC_COMMENT
+    | MODULE_COMMENT
     | ([PUB] constantStatement)
 
 private innerDefinition ::=
@@ -145,7 +165,31 @@ variableStatement ::= LET IDENTIFIER EQ variableValue
 constantStatement ::= CONST IDENTIFIER EQ variableValue
 
 // TODO parse value inside string
-variableValue ::= functionCall | UPPER_IDENTIFIER | typeIdentifier | IDENTIFIER | NUMBER | STRING_CONTENT
+variableValue ::= whenExpression | ifExpression | functionCall | listExpression | tupleExpression | recordExpression | UPPER_IDENTIFIER | typeIdentifier | IDENTIFIER | NUMBER | HEX_NUMBER | BYTE_STRING | STRING_CONTENT | booleanLiteral
+
+booleanLiteral ::= "True" | "False"
+
+listExpression ::= LBRACK [variableValue (COMMA variableValue)*] RBRACK
+
+tupleExpression ::= LPAREN variableValue (COMMA variableValue)+ RPAREN
+
+recordExpression ::= UPPER_IDENTIFIER LBRACE [recordField (COMMA recordField)*] RBRACE
+recordField ::= IDENTIFIER COLON variableValue
+
+ifExpression ::= IF variableValue LBRACE [innerDefinition*] RBRACE [ELSE LBRACE [innerDefinition*] RBRACE]
+
+whenExpression ::= WHEN variableValue IS LBRACE whenClause* RBRACE
+whenClause ::= pattern ARROW variableValue
+
+pattern ::= IDENTIFIER | UPPER_IDENTIFIER | listPattern | tuplePattern | recordPattern | literalPattern
+listPattern ::= LBRACK [pattern (COMMA pattern)*] RBRACK
+tuplePattern ::= LPAREN pattern (COMMA pattern)+ RPAREN
+recordPattern ::= UPPER_IDENTIFIER LBRACE [patternField (COMMA patternField)*] RBRACE
+patternField ::= IDENTIFIER [COLON pattern]
+literalPattern ::= NUMBER | HEX_NUMBER | STRING_CONTENT | BYTE_STRING | booleanLiteral
+
+testStatement ::= TEST IDENTIFIER LBRACE [innerDefinition*] RBRACE
+benchmarkStatement ::= BENCHMARK IDENTIFIER LBRACE [innerDefinition*] RBRACE
 
 functionCall ::= [IDENTIFIER DOT] IDENTIFIER LPAREN [functionCallParam*] RPAREN [PIPE functionCall]
 functionCallParam ::= ((IDENTIFIER COLON variableValue) | variableValue)[COMMA]

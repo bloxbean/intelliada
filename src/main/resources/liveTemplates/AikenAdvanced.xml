@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templateSet group="Aiken Advanced">
+  <!-- Validator Templates -->
+  <template name="spend_validator" value="validator $NAME$ {&#10;  spend(datum: $DATUM_TYPE$, redeemer: $REDEEMER_TYPE$, context: ScriptContext) {&#10;    let ScriptContext { tx_info, purpose } = context&#10;    &#10;    expect Spend(output_reference) = purpose&#10;    expect Some(input) = find_input(tx_info.inputs, output_reference)&#10;    &#10;    $LOGIC$&#10;  }&#10;}" description="Spend validator template" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;my_spend_validator&quot;" alwaysStopAt="true" />
+    <variable name="DATUM_TYPE" expression="" defaultValue="&quot;Data&quot;" alwaysStopAt="true" />
+    <variable name="REDEEMER_TYPE" expression="" defaultValue="&quot;Data&quot;" alwaysStopAt="true" />
+    <variable name="LOGIC" expression="" defaultValue="&quot;True&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="mint_validator" value="validator $NAME$ {&#10;  mint(redeemer: $REDEEMER_TYPE$, context: ScriptContext) {&#10;    let ScriptContext { tx_info, purpose } = context&#10;    &#10;    expect Mint(policy_id) = purpose&#10;    let own_policy_id = own_currency_symbol(context)&#10;    &#10;    $LOGIC$&#10;  }&#10;}" description="Mint validator template" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;my_mint_validator&quot;" alwaysStopAt="true" />
+    <variable name="REDEEMER_TYPE" expression="" defaultValue="&quot;Data&quot;" alwaysStopAt="true" />
+    <variable name="LOGIC" expression="" defaultValue="&quot;True&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <!-- Pattern Matching Templates -->
+  <template name="expect_some" value="expect Some($VAR$) = $EXPRESSION$" description="Expect Some pattern" toReformat="true" toShortenFQNames="true">
+    <variable name="VAR" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <variable name="EXPRESSION" expression="" defaultValue="&quot;option_value&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="expect_ok" value="expect Ok($VAR$) = $EXPRESSION$" description="Expect Ok pattern" toReformat="true" toShortenFQNames="true">
+    <variable name="VAR" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <variable name="EXPRESSION" expression="" defaultValue="&quot;result_value&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="when_option" value="when $VALUE$ is {&#10;  Some($VAR$) -> $SOME_CASE$&#10;  None -> $NONE_CASE$&#10;}" description="When Option pattern" toReformat="true" toShortenFQNames="true">
+    <variable name="VALUE" expression="" defaultValue="&quot;option_value&quot;" alwaysStopAt="true" />
+    <variable name="VAR" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <variable name="SOME_CASE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <variable name="NONE_CASE" expression="" defaultValue="&quot;fail&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="when_result" value="when $VALUE$ is {&#10;  Ok($VAR$) -> $OK_CASE$&#10;  Error($ERR$) -> $ERROR_CASE$&#10;}" description="When Result pattern" toReformat="true" toShortenFQNames="true">
+    <variable name="VALUE" expression="" defaultValue="&quot;result_value&quot;" alwaysStopAt="true" />
+    <variable name="VAR" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <variable name="ERR" expression="" defaultValue="&quot;error&quot;" alwaysStopAt="true" />
+    <variable name="OK_CASE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <variable name="ERROR_CASE" expression="" defaultValue="&quot;fail&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <!-- Cardano-specific Templates -->
+  <template name="find_input" value="expect Some($INPUT$) = find_input($TX_INFO$.inputs, $OUTPUT_REF$)" description="Find input pattern" toReformat="true" toShortenFQNames="true">
+    <variable name="INPUT" expression="" defaultValue="&quot;input&quot;" alwaysStopAt="true" />
+    <variable name="TX_INFO" expression="" defaultValue="&quot;tx_info&quot;" alwaysStopAt="true" />
+    <variable name="OUTPUT_REF" expression="" defaultValue="&quot;output_reference&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="find_output" value="expect Some($OUTPUT$) = find_output($TX_INFO$.outputs, $ADDRESS$)" description="Find output pattern" toReformat="true" toShortenFQNames="true">
+    <variable name="OUTPUT" expression="" defaultValue="&quot;output&quot;" alwaysStopAt="true" />
+    <variable name="TX_INFO" expression="" defaultValue="&quot;tx_info&quot;" alwaysStopAt="true" />
+    <variable name="ADDRESS" expression="" defaultValue="&quot;address&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="value_check" value="let $VALUE_VAR$ = value_sent_to($TX_INFO$.outputs, $ADDRESS$)&#10;expect $VALUE_VAR$ >= $MIN_VALUE$" description="Value check pattern" toReformat="true" toShortenFQNames="true">
+    <variable name="VALUE_VAR" expression="" defaultValue="&quot;sent_value&quot;" alwaysStopAt="true" />
+    <variable name="TX_INFO" expression="" defaultValue="&quot;tx_info&quot;" alwaysStopAt="true" />
+    <variable name="ADDRESS" expression="" defaultValue="&quot;recipient_address&quot;" alwaysStopAt="true" />
+    <variable name="MIN_VALUE" expression="" defaultValue="&quot;min_ada&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <!-- Test Templates -->
+  <template name="test_spend" value="test $TEST_NAME$() {&#10;  let datum = $DATUM$&#10;  let redeemer = $REDEEMER$&#10;  let context = placeholder_context()&#10;  &#10;  $VALIDATOR$(datum, redeemer, context)&#10;}" description="Spend validator test" toReformat="true" toShortenFQNames="true">
+    <variable name="TEST_NAME" expression="" defaultValue="&quot;test_spend_success&quot;" alwaysStopAt="true" />
+    <variable name="DATUM" expression="" defaultValue="&quot;test_datum&quot;" alwaysStopAt="true" />
+    <variable name="REDEEMER" expression="" defaultValue="&quot;test_redeemer&quot;" alwaysStopAt="true" />
+    <variable name="VALIDATOR" expression="" defaultValue="&quot;my_validator.spend&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="test_prop" value="test $TEST_NAME$(datum via $DATUM_GEN$, redeemer via $REDEEMER_GEN$) {&#10;  let context = placeholder_context()&#10;  &#10;  $VALIDATOR$(datum, redeemer, context)&#10;}" description="Property-based test" toReformat="true" toShortenFQNames="true">
+    <variable name="TEST_NAME" expression="" defaultValue="&quot;test_property&quot;" alwaysStopAt="true" />
+    <variable name="DATUM_GEN" expression="" defaultValue="&quot;any()&quot;" alwaysStopAt="true" />
+    <variable name="REDEEMER_GEN" expression="" defaultValue="&quot;any()&quot;" alwaysStopAt="true" />
+    <variable name="VALIDATOR" expression="" defaultValue="&quot;my_validator.spend&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <!-- Type Definition Templates -->
+  <template name="datum_type" value="type $NAME$ {&#10;  $CONSTRUCTOR$ {&#10;    $FIELD1$: $TYPE1$,&#10;    $FIELD2$: $TYPE2$,&#10;  }&#10;}" description="Datum type definition" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;MyDatum&quot;" alwaysStopAt="true" />
+    <variable name="CONSTRUCTOR" expression="" defaultValue="&quot;MyDatum&quot;" alwaysStopAt="true" />
+    <variable name="FIELD1" expression="" defaultValue="&quot;owner&quot;" alwaysStopAt="true" />
+    <variable name="TYPE1" expression="" defaultValue="&quot;VerificationKeyHash&quot;" alwaysStopAt="true" />
+    <variable name="FIELD2" expression="" defaultValue="&quot;amount&quot;" alwaysStopAt="true" />
+    <variable name="TYPE2" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="redeemer_type" value="type $NAME$ {&#10;  $ACTION1$&#10;  $ACTION2$ { $PARAM$: $TYPE$ }&#10;}" description="Redeemer type definition" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="&quot;MyRedeemer&quot;" alwaysStopAt="true" />
+    <variable name="ACTION1" expression="" defaultValue="&quot;Claim&quot;" alwaysStopAt="true" />
+    <variable name="ACTION2" expression="" defaultValue="&quot;Update&quot;" alwaysStopAt="true" />
+    <variable name="PARAM" expression="" defaultValue="&quot;new_value&quot;" alwaysStopAt="true" />
+    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <!-- Utility Templates -->
+  <template name="trace_debug" value="trace @&quot;$MESSAGE$&quot;: $VALUE$" description="Debug trace" toReformat="true" toShortenFQNames="true">
+    <variable name="MESSAGE" expression="" defaultValue="&quot;Debug&quot;" alwaysStopAt="true" />
+    <variable name="VALUE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+
+  <template name="list_fold" value="list.fold($LIST$, $INITIAL$, fn(acc, item) { $LOGIC$ })" description="List fold operation" toReformat="true" toShortenFQNames="true">
+    <variable name="LIST" expression="" defaultValue="&quot;items&quot;" alwaysStopAt="true" />
+    <variable name="INITIAL" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true" />
+    <variable name="LOGIC" expression="" defaultValue="&quot;acc + item&quot;" alwaysStopAt="true" />
+    <context>
+      <option name="AIKEN" value="true" />
+    </context>
+  </template>
+</templateSet>
