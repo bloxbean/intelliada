@@ -169,6 +169,11 @@ reads:
    - **Testnet:** anything more requires the review modal.
    - **Mainnet:** anything more is refused.
 9. **`is_valid`:** the flag is `true`.
+10. **The transaction is the requested call:**
+    - its script inputs and redeemers are those of the requested deployment, instance or object, and method, as JOUST's wallet verifier checks them (`verify.js:260-301`);
+    - its outputs to the contract go to that deployment's address.
+
+    Because of I16, the redeemer comparison uses the host's `describe`/H4 metadata for the call (the redeemer index and constructor tag), never IntelliAda's own Plutus encoding (CDX-2, round 2).
 
 **Signing** uses CCL 0.6.2's `TransactionSigner.sign(byte[], HdKeyPair)` (F35).
 - It adds a vkey witness over the body bytes as received, and IntelliAda never re-encodes the body.
@@ -197,7 +202,9 @@ When it appears depends on the network class:
 
 ### D13a. The account model (new in r2; Q12 decided)
 
-- **A new account store in IntelliJ's `PasswordSafe`.** Each account is tagged with **one network class**: `devnet`, `testnet` or `mainnet`, and is created fresh or imported **for that class only**. The run panel uses only this store.
+- **A new account store in IntelliJ's `PasswordSafe`.** Each account is tagged with **one network class**: `devnet`, `testnet` or `mainnet`. The run panel uses only this store.
+  - **`devnet` accounts are only ever created fresh** (or are the genesis constants), never imported. ADR-004 §2 states the assumption behind them: a class controls which keys IntelliAda offers and uses, and cannot make a key worthless elsewhere. Devnet keys are therefore safe only if they are used only on devnets, and a fresh key is the only kind IntelliAda can vouch for (CDX-20).
+  - **`testnet` and `mainnet` accounts** may be created fresh or imported, **for that class only**.
 - **Legacy accounts.** They are migrated by an explicit action, which also starts fixing #10, and are never offered on mainnet.
 - **Class tags hold everywhere** (I12):
   - every account chooser in IntelliAda hides accounts of another class, including today's `addr_test` filter (F9);
@@ -364,6 +371,7 @@ These invariant numbers continue ADR-004's. This ADR also relies on ADR-004's I1
 ### M5: mainnet (D14a)
 
 - **Entry gates:**
+  - **Decide the default signing path for mainnet** (SEC-13). On Linux and Windows, `PasswordSafe` does not keep keys from same-user project code, and the run panel always runs project code. Lean: on those platforms mainnet defaults to **Export unsigned transaction** and external signing, with `PasswordSafe` signing as an explicit per-account opt-in. On macOS the Keychain's per-application access control applies, and it should be verified.
   - M3 has exited on preprod and preview.
   - D13a's `PasswordSafe` store is shipped and legacy migration is done (#10).
   - Every I23 negative case passes on testnets.
@@ -437,3 +445,7 @@ Each delegated decision is tracked for the maintainer's ratification in ADR-004 
   - **Advisor consult changes** (decisions L14 and L17):
     - H10 now states the property and leaves the mechanism to JOUST (reverse RPC, or ADR-0015's snapshot-and-`Need` loop), with a closed vocabulary and caps; `chain/evaluate` is optional.
     - D13: the validity horizon is measured in slots from the bound node's tip (15 min, or 2 h for exports); the fee cap is 3 ADA on every class, as a setting with a hard ceiling; check 8 allows a creation's locked lovelace (per JOUST `verify.js`); the full value of the collateral inputs counts when `total_collateral` is absent; an escalation always shows the modal.
+- **d2** (2026-11-19): carries round 2 of PR #9.
+  - D13a: `devnet` accounts are fresh only (CDX-20).
+  - D13 check 10: bind the transaction to the requested call (the CDX-2 note).
+  - M5 gate: decide the default signing path for mainnet (SEC-13).
