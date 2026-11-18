@@ -1,6 +1,6 @@
 # ADR-004: JOUST support in IntelliAda
 
-**Status:** Proposed (r3)
+**Status:** Proposed (r4)
 
 **Date:** 2026-11-18. Revised 2026-11-19.
 
@@ -139,7 +139,7 @@ Where each kind of fact was checked:
 **Trust boundaries.** The IDE JVM ↔ `joust-lsp` (a Node child on stdio) ↔ the project's dev host (a JVM or Node child on stdio, D11) ↔ the node (HTTP or HTTPS) ↔ the project's files.
 
 **What IntelliAda must never do:**
-- **T1.** Run or load project-supplied code when a project is opened, indexed, synced or changed on disk. That rules out any Gradle task, wrapper, `npm`, `node_modules` code, dev host or project engine. **Exception:** with the user's per-project consent (D5), opening a `.jsc` loads that project's two engine files into the user-installed `joust-lsp`.
+- **T1.** Run or load project-supplied code when a project is opened, indexed, synced or changed on disk. That rules out any Gradle task, wrapper, `npm`, `node_modules` code, dev host or project engine. **Exception (not in M1):** once a `joust-lsp` with engine pins exists (D5, ADR-0021 amendment item f), and with the user's per-project consent, the server may load that project's **consented and pinned** engine pairs. In M1 there is no exception.
   - The only process that may start without a click is the user-installed `joust-lsp`, when a `.jsc` file is opened.
   - IntelliJ's own Gradle import in a trusted project is IntelliJ's behaviour, not IntelliAda's; I1 is scoped to what IntelliAda starts or loads.
 - **T2.** Run project-supplied code in a project IntelliJ does not trust, even on request.
@@ -213,7 +213,9 @@ Never on open, sync, indexing or a file event (T1).
   - the client's `workspaceFolders()` override, for the `workspace/workspaceFolders` request;
   - every `workspace/didChangeWorkspaceFolders` notification. IntelliAda sends only in-base changes, or none.
 
-  A module or `includeBuild` outside the project can then never be analysed or become an engine folder.
+  A module or `includeBuild` outside the project is then never discovered as a workspace root and never becomes an engine folder. A file outside the project that the user opens explicitly is still analysed, but only in advisory mode (`select.js:449-452`), which runs no project code (CDX-24).
+
+  LSP4IJ 0.10.0 sends no `didChangeWorkspaceFolders` at all: the jar does not reference the change-event classes. The third path is therefore guarded by design rather than by an existing hook, and every LSP4IJ upgrade (Q11) must re-check whether it sends them and that IntelliAda filters them (SEC-16b).
 - **Enablement** (`LanguageServerEnablementSupport`, as for Aiken): the server is enabled only when D4's paths are set and valid. Otherwise opening a `.jsc` shows one notification with **Configure JOUST…** and starts nothing.
 - **Commands (M1),** all of which answer any client (F15) and write nothing:
   - **Restart analysis** (`joust/restartAnalysis`).
@@ -231,7 +233,7 @@ alone. **In M1–M3 the client accepts no edit and renders no server text as HTM
    - **Enabled:** only I5's read-only set (diagnostics, IntelliAda's own hover from item 6, definition, declaration, type definition, implementation, references and usages, document highlight, document and workspace symbols, folding, selection range, semantic tokens, progress).
    - **Disabled** (`isEnabled` → `false`): every other `LSPClientFeatures` feature, including completion, code action, code lens, document link, document colour, formatting, on-type formatting, rename, inlay hint, signature help and call or type hierarchy (F11).
    - **A guard test** lists `LSPClientFeatures`' `set…Feature` methods and fails on any feature it does not know. So a new feature in a future LSP4IJ is reviewed and classified before it can be enabled.
-2. **`registerCapability` filtered.** It is overridden to accept only I5's read-only set: diagnostics, hover, definition, references, document symbol, folding, selection range and semantic tokens. Everything else is refused with an error, including `workspace/executeCommand` and file-operation registrations.
+2. **`registerCapability` filtered by the same set.** One constant, the **read-only set R** (the features item 1 enables), drives both item 1 and this filter. A registration is accepted only for a method of a feature in R; everything else is refused with an error, including `workspace/executeCommand`, `workspace/didChangeWatchedFiles` registrations outside R, and file operations (SEC-16a).
 3. **`applyEdit` refused.** Every `workspace/applyEdit` is answered `applied: false`, with a reason.
 4. **`showDocument` confined.** `external` is never honoured. A `file:` URI opens only when its real path is inside the project, and is then read-only for generated files. Everything else is refused.
 5. **`showMessage` and `showMessageRequest` as plain text.** Text is shown escaped, with no markdown-to-HTML and no URL listener. Action items are labels only.
@@ -240,6 +242,15 @@ alone. **In M1–M3 the client accepts no edit and renders no server text as HTM
    - **What IntelliAda does instead:** it disables LSP4IJ's hover feature for this server and registers its own `DocumentationTargetProvider` for `*.jsc`. That provider requests `textDocument/hover` through `LanguageServerManager` and renders the result as escaped literal text: no markdown-to-HTML, no anchors and no images. The only link it may offer is navigation to a `.jsc` position whose real path is inside the project (I18).
    - **The rest:** JOUST escapes its own hover markdown (`features.js:101`), but that is not relied on. LSP4IJ escapes diagnostics (F30).
    - **Tests (M1):** a fake server sends raw HTML, an `<img>`, and `file://` and `https:` links in hover. They must render literally, nothing is fetched, and no out-of-project link opens.
+7. **Navigation confined** (CDX-23, SEC-16c). Several features in R consume server-supplied locations: definition, declaration, type definition, implementation, references and usages, workspace symbols. In LSP4IJ 0.10.0, `WorkspaceSymbolData.navigate` calls `LSPIJUtils.openInEditor` directly, and definitions go through `LSPPsiElementFactory.toPsiElement`, so neither passes item 4.
+   - **What may open:** a location is kept only when it is a `file:` URI whose **real path** is inside one of three places:
+     - the project;
+     - the configured `joust-lsp` package directory, for JOUST's own `std` sources, opened read-only;
+     - the server's `--storage` directory, also read-only.
+
+     Every other location is dropped before it reaches the editor or a results list.
+   - **How:** through a per-feature result hook where LSP4IJ offers one. Where it does not, IntelliAda disables that LSP4IJ feature and provides the feature itself, as it does for hover. G1.1 lists which applies to each feature.
+   - **Tests (M1):** a fake server returns, for each feature, an in-project target, an outside target, and an in-project symlink to an outside target. Only the first opens.
 
 Each item has a fake-server test in M1, and the tests run again on every LSP4IJ upgrade (Q11, decided: a separate upgrade gated by these tests).
 
@@ -247,7 +258,7 @@ Each item has a fake-server test in M1, and the tests run again on every LSP4IJ 
 
 **Settings.** There are two **application-level** settings (a `PersistentStateComponent` with application storage, like `AikenSDKState`): the Node binary and `joust-lsp`. No project-level or `.idea/` setting can name an executable, a path or an argument (I7). The reason is editors.mdx's: the repository must not choose what runs (F18). Q1 is decided: detect and confirm, and never bundle.
 
-**Validation** runs when the setting is saved, at every server start, and when a project opens whose roots contain a configured path. It works on real paths:
+**Validation** runs when the setting is saved, at every server start, and when a project opens whose roots contain a configured path. It works on real paths. **Only the explicit configuration actions (Save, Detect…) execute anything;** validation at server start executes nothing (CDX-25):
 - **Absolute paths only:** no bare name, no relative path, no `npx`, and never a `.cmd`, `.bat` or `.ps1` (cmd.exe argument parsing).
 - **Resolve `joust-lsp` to its real file.**
   - **Unix:** resolve through symlinks to `<prefix>/lib/node_modules/@julclang/joust/bin/joust-lsp.js` (where `<prefix>/bin/joust-lsp` is a link).
@@ -257,6 +268,8 @@ Each item has a fake-server test in M1, and the tests run again on every LSP4IJ 
 - **Location checks.** Neither the selected path nor its real target may be inside any open project's base directory or content roots, nor under a `node_modules/.bin` directory. Paths are compared by segment, never by string prefix, with Windows drive and UNC forms normalised.
 - **Versions.**
   - Node's version comes from `<node> --version`, run on the user's binary by absolute path, with the IDE's environment. It must be at least 22 (F14).
+    - It runs **only when the user saves or detects the setting.** IntelliAda then records the binary's identity: its real path, size, modification time and SHA-256.
+    - **At server start,** IntelliAda re-checks the paths and that identity, without executing anything. If the identity changed, the server does not start, and a notification asks the user to validate Node again. So I1's "no process but `joust-lsp`" holds.
   - `joust-lsp`'s version is read **as text** from the `package.json` beside its package, never by running it.
 - **Executing the validated path.** The command executes exactly the validated real paths, not names re-resolved at launch.
 
@@ -274,14 +287,15 @@ Q8 is decided: per-project opt-in. **r3 amends it (L19):** the opt-in is deferre
   - `joust-lsp` selects an engine **per file**, by walking up to the nearest npm root (`select.js:392-421`).
   - It **re-reads** the engine bytes on `joust/restartAnalysis` and on watched-file changes (`select.js:478-541`; `server.js:2512-2573`).
 
-  So a digest IntelliAda checked before launch cannot bind what the server loads. The feature therefore waits for **ADR-0021 amendment item (f)** (D6). Under it, `joust-lsp` accepts a SHA-256 pin `<js>:<wasm>` for each engine root at launch (a flag or `initializationOptions`), and **denies by default**: it loads an engine only when the bytes it reads, within its read caps, match that root's pin. Any unpinned or mismatched pair falls back to advisory and is reported.
+  So a digest IntelliAda checked before launch cannot bind what the server loads. The feature therefore waits for **ADR-0021 amendment item (f)** (D6). Under it, `joust-lsp` accepts, at launch, a SHA-256 pin `<js>:<wasm>` for each engine root, **in a new flag that replaces `--project-engine`** (illustrative: `--project-engine-pinned <root>=<js>:<wasm>`, repeatable), and **denies by default**: it loads an engine only when the bytes it reads, within its read caps, match that root's pin. Any unpinned or mismatched pair falls back to advisory and is reported.
 
   The check belongs where the bytes are used. `selectUncached` already reads both files once, hashes them into a content-addressed copy and loads that copy (`select.js:325-327`, `:484-487`). Once a `joust-lsp` release has the pin (an entry gate for this feature only, not for M1):
   - In a trusted npm project, the action **Use this project's JOUST compiler…** lists **every** engine pair under the in-base workspace folders, by root real path and SHA-256, and records consent per pair in application-level state.
-  - IntelliAda then restarts the server with `--project-engine` and one pin per consented pair, and only on a server whose version shows it supports pins.
+  - IntelliAda then restarts the server with the pinned-engine flag, one pin per consented pair. **It never sends the bare `--project-engine`.**
+  - **Fail closed (SEC-15):** today's `joust-lsp` matches flags exactly and ignores unknown ones (`bin/joust-lsp.js:37`), and it honours `--project-engine` at initialize (`server.js:283-284`). So a server without pin support ignores the new flag and stays advisory. Safety does not depend on IntelliAda reading the server's version correctly; the version is used only to explain the result in the status bar.
   - When the server reports a refused, changed or new pair, IntelliAda shows it as advisory with the reason, and offers to consent again.
   - **Effect on T1:** this is T1's single exception, and the reason I1 is scoped to what IntelliAda starts or loads.
-- **Until then, M1 ships advisory only:** IntelliAda never passes `--project-engine`. The status widget shows any version skew, e.g. "advisory: bundled compiler X; this project pins Y".
+- **Until then, M1 ships advisory only:** IntelliAda passes no engine flag at all. The status widget shows any version skew, e.g. "advisory: bundled compiler X; this project pins Y".
 - **Rejected:** watching engine files and restarting on change. It is time-of-check/time-of-use; `node_modules` is often excluded from the VFS; a new pair can load before any event. Its I26 would admit unconsented loads, and the machinery would be thrown away once the pin exists (both advisors, L19).
 - **Build on save** stays off unless the user enables it (D3).
 - **Trust changes** restart the project's server through `LanguageServerManager` (F11), because the server ignores `joust/trust` from clients other than VS Code (F15). Revocation drops back to advisory (I4).
@@ -321,7 +335,7 @@ Q8 is decided: per-project opt-in. **r3 amends it (L19):** the opt-in is deferre
 - **(c)** `joust/rename` for such clients;
 - **(d)** `trusted` passed by such a client, with `joust/trust` honoured for it;
 - **(e)** a stable `joust/entryPoints` request (D15);
-- **(f)** engine pins (D5): `--project-engine` together with a SHA-256 `<js>:<wasm>` pin per engine root. The server denies by default, and checks the pin against the exact bytes it copies and loads, on **every** selection.
+- **(f)** engine pins (D5): a **new** flag that carries a SHA-256 `<js>:<wasm>` pin per engine root and **replaces** `--project-engine`, so an older server, which ignores unknown flags, stays advisory. The server denies by default, and checks the pin against the exact bytes it copies and loads, on **every** selection.
 
 ### Part B: JOUST projects
 
@@ -421,11 +435,11 @@ Each is testable; §6.0 maps each invariant to its tests.
 
 | # | Invariant | Decisions |
 |---|---|---|
-| I1 | Opening, indexing, syncing or changing a JOUST project makes **IntelliAda** start or load no project code, and start no process except the user-installed `joust-lsp` (when a `.jsc` opens). The only exception is the project engine under D5's consent | D1, D3, D5 |
+| I1 | Opening, indexing, syncing or changing a JOUST project makes **IntelliAda** start or load no project code, and start no process except the user-installed `joust-lsp` (when a `.jsc` opens). That includes no `node --version` probe (D4). The only exception, after the pin release and never in M1, is consented and pinned engines under D5 | D1, D3, D4, D5 |
 | I2 | A Gradle task, the project's CLI, a dev host or the project engine runs only when the project is trusted and the user invoked an action (for the engine, D5's consent) | D1, D5, D7, D11 |
-| I3 | The server command is exactly `<node> <joust-lsp.js> --stdio --storage <IDE system dir>`, plus `--project-engine` only under D5. Both paths are the validated absolute real paths, outside every open project and every `node_modules/.bin`. Never `npx`, `.cmd` or `--enable-edits` | D3, D4, D5 |
+| I3 | The server command is exactly `<node> <joust-lsp.js> --stdio --storage <IDE system dir>`, plus the pinned-engine flag only under D5, never the bare `--project-engine`. Both paths are the validated absolute real paths, outside every open project and every `node_modules/.bin`. Never `npx`, `.cmd` or `--enable-edits` | D3, D4, D5 |
 | I4 | A project without D5's consent, or untrusted, has no `--project-engine`. A trust or consent change restarts the server with the matching flags | D5 |
-| I5 | In M1–M3, both of these hold.<br>**What IntelliAda sends:** `initializationOptions.client` is never `vscode-joust`, and IntelliAda adds no client capability.<br>**What IntelliAda accepts:** the server advertises no completion, code action, `executeCommand`, rename or formatting, even to a client declaring `failureHandling: transactional`. IntelliAda answers every `workspace/applyEdit` with `applied: false`, refuses every dynamic registration outside the read-only set, and runs no edit feature | D3, D3a, D6 |
+| I5 | In M1–M3, both of these hold (with D3a's navigation confinement for location results).<br>**What IntelliAda sends:** `initializationOptions.client` is never `vscode-joust`, and IntelliAda adds no client capability.<br>**What IntelliAda accepts:** the server advertises no completion, code action, `executeCommand`, rename or formatting, even to a client declaring `failureHandling: transactional`. IntelliAda answers every `workspace/applyEdit` with `applied: false`, refuses every dynamic registration outside the read-only set, and runs no edit feature | D3, D3a, D6 |
 | I6 | The bundled `.jsc` grammar files equal JOUST's at the recorded tag (SHA-256) | D2 |
 | I7 | **Outside D1,** every setting that names an executable, a path, an argument, an environment or an endpoint is application-level, and nothing under the project or `.idea/` sets one. **Under D1,** only the project's own launch spec chooses the host's command line | D4, D9, D11, D14 |
 | I8 | The UI accepts an ABI change only in the bound form: one validated contract name, one module's qualified task, and both validated SHA-256 values. It never runs bare `acceptJscAbi` or `--accept-abi`. After acceptance only that module's manifest changed | D8 |
@@ -446,7 +460,7 @@ Each is testable; §6.0 maps each invariant to its tests.
 | I23 | *(moved to ADR-005 in r2)* | D13, D14a |
 | I24 | *(moved to ADR-005 in r2)* | D11, D12 |
 | I25 | Every workspace-folder list or change IntelliAda sends to the server, at initialize, in answer to `workspace/workspaceFolders`, or in `didChangeWorkspaceFolders`, contains only roots whose real paths are inside the project's base directory | D3 |
-| I26 | IntelliAda passes `--project-engine` only to a `joust-lsp` that supports pins, and only with one SHA-256 pin per consented engine pair. Enforcement is the server's: it loads an engine only when its bytes match the pin for that root (ADR-0021 amendment item f). Until such a release exists, IntelliAda never passes `--project-engine` | D5 |
+| I26 | IntelliAda never passes the bare `--project-engine`. It passes the pinned-engine flag only with one SHA-256 pin per consented engine pair. Enforcement is the server's: it loads an engine only when its bytes match the pin for that root, and a server without pin support ignores the flag and stays advisory (ADR-0021 amendment item f). In M1 IntelliAda passes no engine flag | D5 |
 
 ## 5. Consequences
 
@@ -463,10 +477,10 @@ Each is testable; §6.0 maps each invariant to its tests.
 
 | Invariant | Test (milestone) |
 |---|---|
-| I1 | **Sentinel test (M1), untrusted:** a project with a planted `gradlew`, `node_modules/.bin/joust-lsp`, `node`, npm scripts and `engine/joust-toolchain.js`, each writing a sentinel. Open it, open its `.jsc`, sync: no sentinel appears.<br>**Trusted, without consent:** the same result.<br>**Trusted, with consent:** only the engine marker appears, and only from a workspace folder inside the base; an engine in an out-of-base content root or an ancestor directory never loads |
+| I1 | **Sentinel test (M1), untrusted:** a project with a planted `gradlew`, `node_modules/.bin/joust-lsp`, `node`, npm scripts and `engine/joust-toolchain.js`, each writing a sentinel. Open it, open its `.jsc`, sync: no sentinel appears.<br>**Trusted:** the same result, and in M1 **no engine marker in any case** (CDX-1, DES-14).<br>**The `node --version` probe:** no process except `joust-lsp` starts on open, as captured by a process-launch recorder, not only by the planted executables (CDX-25).<br>**After the pin release:** in a trusted project with consent, only the marker of the consented, pinned engine appears, only for its root and bytes. An engine in an out-of-base content root, an ancestor directory or an unconsented nested root never loads |
 | I2 | M2: every action in an untrusted project is disabled and starts no process. ADR-005 M3: the panel is disabled in an untrusted project |
 | I3, I7 | M1: D4 validation unit tests (below), and a captured command line. M2: the wizard's child environment |
-| I4, I26 | **M1:**<br>• the server is never started with `--project-engine`;<br>• a trust change restarts it advisory.<br>**When the pin release exists:**<br>• consent gives one pin per pair;<br>• a nested npm root with an unconsented engine stays advisory;<br>• replacing an engine between consent and load, and after `joust/restartAnalysis`, is refused by the server and reported;<br>• an older server never receives `--project-engine` |
+| I4, I26 | **M1:**<br>• the server is never started with `--project-engine`;<br>• a trust change restarts it advisory.<br>**When the pin release exists:**<br>• consent gives one pin per pair;<br>• a nested npm root with an unconsented engine stays advisory;<br>• replacing an engine between consent and load, and after `joust/restartAnalysis`, is refused by the server and reported;<br>• an older server given the pinned-engine flag stays advisory, and the bare `--project-engine` is never sent |
 | I5 | **Real server (M1):** initialised with `failureHandling: transactional`, it advertises no editing provider.<br>**Fake server (M1)** sends dynamic registrations of formatting, rename, completion and `executeCommand`; `applyEdit`; and `showDocument` with `external:true`, `https:` and `file:` URIs outside the project. All are refused, and documents are unchanged.<br>Rerun on every LSP4IJ bump |
 | I6 | M1 grammar sync test |
 | I8 | M2: ABI flow tests, including:<br>• two modules with identical contracts;<br>• a crafted contract name containing spaces and quotes;<br>• a **first acceptance** (committed `none`);<br>• a diff whose valid-looking hash disagrees with its displayed text, for which Accept stays disabled |
@@ -485,6 +499,7 @@ Each is testable; §6.0 maps each invariant to its tests.
 | I21 | M1, M2 and ADR-005 M3, with the official JOUST tools: file-system snapshots of the project before and after server sessions, host sessions and panel use, with only user-invoked commands changing files |
 | I22 | *(moved to ADR-005 in r2)* |
 | I24 | *(moved to ADR-005 in r2)* |
+| D3a item 7 | M1: navigation for every location-consuming feature in R. A fake server's in-project, outside and symlink-to-outside targets: only the first opens |
 | I25 | M1: with an out-of-base content root present, the folders at initialize, a later `workspace/workspaceFolders` request from a fake server, and module add and remove events all carry only in-base folders |
 
 ### M1: file type, highlighting, read-only language server, trust (D1–D6, D3a)
@@ -493,7 +508,8 @@ Each is testable; §6.0 maps each invariant to its tests.
   - **G1.1** Re-verify on IntelliJ 2026.1 (build 261, the branch's `sinceBuild`) the APIs checked only on 2025.2.4: `TextMateBundleProvider` and the `VSCodeExtension` fields it requires, `TrustedProjects` and its listener, `GeneratedSourcesFilter` (F12, F13), and that TextMate's flat PSI accepts a `LineMarkerProvider`. Re-verify on the LSP4IJ version then pinned:
     - `fileNamePatternMapping` keeps TextMate colouring;
     - semantic tokens apply to TextMate files;
-    - D3a's override points still exist (F11, F30).
+    - D3a's override points still exist (F11, F30);
+    - for each location-consuming feature, whether LSP4IJ has a result hook or IntelliAda must provide the feature itself (D3a item 7).
   - **G1.2** A published `@julclang/joust` with `joust-lsp` (0.1.0-pre2 has it, F14).
   - **G1.3** The IntelliJ Platform test framework is added to the build (none is used today; `CLAUDE.md`, Testing).
   - **G1.4** PR #8 is merged, or this branch is rebased on what it becomes.
@@ -707,3 +723,11 @@ These are decisions taken on this ADR, with who took them.
   - **CDX-14 remainder:** F28 and D10 use the pinned JuLC's codes (JULC0086, JULC0087).
   - **SEC-14:** location checks run before `node --version`.
   - **SEC-13** and the CDX-2 note are recorded for ADR-005 (P3, draft).
+- **r4** (2026-11-19; responds to round 3's reviews of `8ca8872`; design APPROVED at round 3).
+  - **SEC-15:** pins travel in a new flag that replaces `--project-engine`, so an older server stays advisory (fail closed); I3 and I26 updated.
+  - **CDX-23, SEC-16c:** new D3a item 7 confines navigation, with tests.
+  - **SEC-16a:** one read-only set R for features and registrations.
+  - **SEC-16b:** recorded that LSP4IJ 0.10.0 sends no `didChangeWorkspaceFolders`; the upgrade gate re-checks it.
+  - **CDX-24:** D3's sentence narrowed.
+  - **CDX-25:** `node --version` runs only on explicit configuration, and server start checks the binary's identity without executing anything; I1 updated.
+  - **CDX-1 remainder, DES-14:** T1's exception is post-pin only, and the M1 sentinel test expects no engine marker in any case.
