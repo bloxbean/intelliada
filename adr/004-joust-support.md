@@ -1,6 +1,6 @@
 # ADR-004: JOUST support in IntelliAda
 
-**Status:** Proposed (r5)
+**Status:** Proposed (r6)
 
 **Date:** 2026-11-18. Revised 2026-11-19.
 
@@ -146,7 +146,8 @@ Where each kind of fact was checked:
 - **T3.** Let a project choose an executable, an argument, an endpoint or a key **outside D1**. Under D1, the project's own toolchain chooses its own launch, through D11's launch spec. Endpoints and keys never come from the project.
 - **T4.** Let a mnemonic or private key leave the IDE process, or sign a transaction it has not checked itself (ADR-005 D13).
 - **T5.** Use a public network from the run panel without that network class's explicit opt-in (ADR-005 D14a), or sign on mainnet without the mandatory per-transaction review.
-- **T6.** Render project-supplied or server-supplied text as HTML, or follow a link from it to anything but a file inside the project. This includes LSP4IJ's own surfaces (D3a).
+- **T6.** Render project-supplied or server-supplied text as HTML, or follow a link from it to anything but a file inside the project. This covers every surface IntelliAda renders or configures, LSP4IJ's included (D3a).
+  - **Accepted, and out of scope** (SEC-19): IntelliJ's own console filters in the LSP4IJ log and trace console and in the Gradle and run consoles that show D7's task output. They turn URLs and file paths in text into links that the user may click. That is standard IDE behaviour, not IntelliAda rendering, and IntelliAda adds no filter to those consoles except D7's confined `JSC` diagnostic links.
 - **T7.** Apply an edit from the language server in M1–M3, by any path (D6, D3a).
 - **T8.** Write to project files except through a command the user invoked: a Gradle task, the wizard, or an accepted ABI (I21).
 
@@ -250,9 +251,11 @@ alone. **In M1–M3 the client accepts no edit and renders no server text as HTM
      Navigation into JOUST libraries is a possible later change. It would open only the server-supplied text, in a read-only light virtual file, never a path; T6 would be amended and tests added (CDX-23).
    - **How:** through a per-feature result hook where LSP4IJ offers one. Where it does not, IntelliAda disables that LSP4IJ feature and provides the feature itself, as it does for hover. G1.1 lists which applies to each feature.
    - **Tests (M1):** a fake server returns, for each feature, an in-project target, an outside target, and an in-project symlink to an outside target. Only the first opens.
-8. **Diagnostics rendered as plain text** (SEC-18). IntelliAda's `LSPDiagnosticFeature` overrides `getMessage` and `getTooltip` (F30).
-   - The message, source, code and related-information messages are all escaped, with no markup from the server.
-   - `codeDescription.href` is shown **as text**, never as an anchor. If it is an `https:` URL on an allow-list (JOUST's documentation host), IntelliAda may offer an explicit **Open documentation** action instead.
+8. **Diagnostics rendered as plain text** (SEC-18). IntelliAda's `LSPDiagnosticFeature` overrides `getTooltip` (F30).
+   - **The tooltip** is built by IntelliAda: the message, source, code and related-information messages are all HTML-escaped, with no markup from the server.
+   - **`getMessage`** returns the plain message unescaped. It feeds plain-text surfaces such as the Problems view, where escaping would show `&lt;T&gt;` literally (SEC-20).
+   - **`codeDescription.href`** is shown **as literal text** only, and **never opened** (CDX-27, DES-15).
+   - **The Open documentation action,** where offered, is built by IntelliAda from **its own** fixed catalogue URL. That URL is a constant equal to JOUST's `CATALOGUE` (`model.js:10`), pinned with the grammar's JOUST tag. IntelliAda adds a fragment derived from the diagnostic's code, only when that code matches `^JSC\d{4}$`, and from its severity, as JOUST itself does (`model.js:35-38`). The server's href never chooses the destination.
    - Related-information locations are rendered as text. When they navigate, they do so only through item 7's filter, never through `#lsp-navigation/` links.
    - **Tests (M1):** a fake server's diagnostic with HTML in its source, code, href (including a quote that breaks out of the attribute) and related information renders literally. No link opens, and a related location outside the project does not navigate.
 
@@ -456,7 +459,7 @@ Each is testable; §6.0 maps each invariant to its tests.
 | I15 | Project- and server-supplied text (descriptions, messages, diagnostics including their tooltip fields, LSP messages, host output) is rendered as plain text (Swing HTML disabled, ANSI stripped), within size and depth caps, with `$ref` cycles refused | D3a, D15, D16 |
 | I16 | *(moved to ADR-005 in r2)* | D15 |
 | I17 | *(moved to ADR-005 in r2)* | D15 |
-| I18 | Links from messages, diagnostics, source maps and consoles open only files whose **real path** is inside the project (`.jsc` sites inside its contracts directory) | D3a, D7, D16 |
+| I18 | Links that IntelliAda renders or offers, from messages, diagnostics, source maps and the consoles it adds filters to, open only files whose **real path** is inside the project (`.jsc` sites inside its contracts directory), or IntelliAda's own fixed documentation URL. IntelliJ's standard console filters are outside I18 (T6) | D3a, D7, D16 |
 | I19 | *(moved to ADR-005 in r2)* | D11 |
 | I20 | **On project close,** every process IntelliAda started for the project stops. **On loss of trust:**<br>• the language server restarts in advisory mode;<br>• active and queued JOUST actions are cancelled (Gradle tasks through `ExternalSystemTask.cancel`, the project's npm processes destroyed), and their late results are discarded;<br>• the dev host stops (ADR-005).<br>IntelliJ's shared Gradle daemon is not IntelliAda's and is left alone | D1, D7, D11 |
 | I21 | **IntelliAda's own writes:** it writes, or asks a tool to write, project files only through a command the user invoked (a Gradle task, the CLI, the wizard, an accepted ABI).<br>**What IntelliAda never asks for:** a write by the language server or the dev host, and recorded state in the project.<br>**What is not claimed:** code the user has consented to run (a project engine, the project's own build) runs as the user and is not sandboxed (§2) | D3a, D7, D8, D9, D15 |
@@ -504,7 +507,7 @@ Each is testable; §6.0 maps each invariant to its tests.
 | I22 | *(moved to ADR-005 in r2)* |
 | I24 | *(moved to ADR-005 in r2)* |
 | D3a item 7 | M1: navigation for every location-consuming feature in R. A fake server's in-project, outside, symlink-to-outside, installed-`joust-lsp.js`, storage-file and `joust-lib:` targets: only the in-project one opens |
-| D3a item 8 | M1: diagnostic tooltip with HTML and quote break-outs in source, code, href and related information renders literally. No link opens, and outside related locations do not navigate |
+| D3a item 8 | **M1:**<br>• a diagnostic tooltip with HTML and quote break-outs in source, code, href and related information renders literally;<br>• no link opens, and outside related locations do not navigate;<br>• a valid `https:` href to a different GitHub repository is shown as text, and **Open documentation** opens only IntelliAda's catalogue URL for a valid `JSC` code, never that href. A non-`JSC` code offers no action;<br>• the Problems view shows `<T>` unescaped |
 | I25 | M1: with an out-of-base content root present, the folders at initialize, a later `workspace/workspaceFolders` request from a fake server, and module add and remove events all carry only in-base folders |
 
 ### M1: file type, highlighting, read-only language server, trust (D1–D6, D3a)
@@ -741,3 +744,7 @@ These are decisions taken on this ADR, with who took them.
   - **CDX-23 remainder:** M1 navigation is project-only; the package, its storage and `joust-lib:` targets are dropped.
   - **CDX-26:** D3's command line is I3's, with no bare `--project-engine`; I4 and its test say "no engine flag of either kind" in M1.
   - **SEC-17:** the illustrative flag is renamed `--engine-pin`, with a gate test across the accepted `joust-lsp` versions.
+- **r6** (2026-11-19; responds to round 5's reviews of `82890ab`; design and security APPROVED at round 5).
+  - **CDX-27, DES-15:** the server's href is never opened; Open documentation uses IntelliAda's own catalogue URL and a validated `JSC` code.
+  - **SEC-19:** T6 and I18 are scoped to surfaces IntelliAda renders; IntelliJ's console filters are accepted.
+  - **SEC-20:** only the tooltip is escaped, and `getMessage` stays plain.
