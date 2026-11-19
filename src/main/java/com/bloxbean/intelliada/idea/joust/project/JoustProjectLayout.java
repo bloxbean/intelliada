@@ -40,8 +40,10 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
     static final int MAX_DEPTH = 8;
     static final int MAX_DIRS = 5_000;
     static final long TEXT_CAP = 1024 * 1024;
-    // Never a project root: build output, dependencies, IDE metadata, and source trees (a module is never inside src/).
-    static final Set<String> SKIP = Set.of(".git", ".gradle", ".idea", "build", "node_modules", "out", "target", "dist", ".joust", "src");
+    // Never a project root: build output, dependencies and IDE metadata.
+    static final Set<String> SKIP = Set.of(".git", ".gradle", ".idea", "build", "node_modules", "out", "target", "dist", ".joust");
+    /** Gradle source sets under {@code src/}: never a project root; anything else under {@code src/} (an app) is scanned. */
+    static final Set<String> SOURCE_SETS = Set.of("main", "test", "testFixtures", "integrationTest");
     private static final Pattern VERSION = Pattern.compile(
             "org\\.julclang\\.joust['\"]\\s*\\)?\\s*version\\s*\\(?\\s*['\"]([A-Za-z0-9._+-]{1,40})['\"]");
 
@@ -93,7 +95,8 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
                 Path ownerReal = ownerDir.toRealPath();
                 Path real = p.toRealPath();
                 if (!com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(ownerReal, base)) return null;
-                if (exactRel != null) return real.equals(ownerReal.resolve(exactRel)) ? real : null;
+                // Exact spelling, not Path.equals (which folds case on Windows), M2-CDX-9.
+                if (exactRel != null) return real.toString().equals(ownerReal.resolve(exactRel).toString()) ? real : null;
                 return com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(real, ownerReal) ? real : null;
             } catch (IOException | RuntimeException e) {
                 return null;
@@ -166,6 +169,11 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         java.util.Map<Path, String> settingsVersion = new java.util.HashMap<>();
         java.util.Set<Path> settingsNamesPlugin = new java.util.HashSet<>();
         for (Path dir : dirs) {
+            // A detection file that exists but cannot be read within the budget leaves the scan incomplete (M2-CDX-7).
+            for (String f : new String[]{"settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "package.json",
+                    "joust.config.json"}) {
+                if (unreadable(dir.resolve(f))) truncated[0] = true;
+            }
             for (String settings : new String[]{"settings.gradle", "settings.gradle.kts"}) {
                 String text = readText(dir.resolve(settings));
                 if (text != null && text.contains(PLUGIN_ID)) {
@@ -217,6 +225,9 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
             for (NpmRoot r : npmRoots) {
                 if (r.dir().equals(d)) return new Owner(null, r);
             }
+            // An npm root the bounded scan did not reach still decides, as in project.js (M2-CDX-12).
+            NpmRoot live = npmRoot(d, base, JoustPaths.Flavor.current());
+            if (live != null) return new Owner(null, live);
             for (GradleModule m : gradleModules) {
                 if (m.dir().equals(d)) return new Owner(m, null);
             }
@@ -303,7 +314,9 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         List<Path> children = new ArrayList<>();
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
             for (Path c : ds) {
-                if (Files.isDirectory(c, LinkOption.NOFOLLOW_LINKS) && !SKIP.contains(c.getFileName().toString())) children.add(c);
+                String name = c.getFileName().toString();
+                boolean sourceSet = "src".equals(String.valueOf(dir.getFileName())) && SOURCE_SETS.contains(name);
+                if (Files.isDirectory(c, LinkOption.NOFOLLOW_LINKS) && !SKIP.contains(name) && !sourceSet) children.add(c);
             }
         } catch (IOException ignored) {
             truncated[0] = true;
@@ -315,6 +328,16 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         }
         children.sort(null);
         for (Path c : children) collect(c, depth + 1, out, truncated);
+    }
+
+    /** True when {@code p} exists but is not a regular file within {@link #TEXT_CAP}, or cannot be read. */
+    static boolean unreadable(Path p) {
+        if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) return false;
+        try {
+            return !Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS) || Files.size(p) > TEXT_CAP || !Files.isReadable(p);
+        } catch (IOException | RuntimeException e) {
+            return true;
+        }
     }
 
     static String readText(Path p) {

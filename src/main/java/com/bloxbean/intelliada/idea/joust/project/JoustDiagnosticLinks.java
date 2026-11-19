@@ -26,8 +26,8 @@ public final class JoustDiagnosticLinks {
     private JoustDiagnosticLinks() {
     }
 
-    /** A link: the span of the path text, the relative path as printed, the real target, one-based line and column. */
-    public record Link(int start, int end, String rel, Path target, int line, int column) {
+    /** A link: the span of the path text, the relative path as printed, the real target, its verified root, line and column. */
+    public record Link(int start, int end, String rel, Path target, Path root, int line, int column) {
     }
 
     /** The printed relative path and its span, before any resolution, or null. */
@@ -53,8 +53,8 @@ public final class JoustDiagnosticLinks {
     public static Link find(String text, List<JoustProjectLayout.SourceRoot> roots, Path base) {
         Printed p = printed(text);
         if (p == null) return null;
-        Path t = resolve(p.rel(), roots, base);
-        return t == null ? null : new Link(p.start(), p.end(), p.rel(), t, p.line(), p.column());
+        Path[] hit = resolve(p.rel(), roots, base);
+        return hit == null ? null : new Link(p.start(), p.end(), p.rel(), hit[0], hit[1], p.line(), p.column());
     }
 
     /** The roots under which {@code rel} names a regular file, by real path, each verified. */
@@ -66,14 +66,14 @@ public final class JoustDiagnosticLinks {
         return out;
     }
 
-    /** The one regular file {@code rel} names under exactly one of {@code roots}, by real path, or null. */
-    static Path resolve(String rel, List<JoustProjectLayout.SourceRoot> roots, Path base) {
-        Path hit = null;
+    /** The one regular file {@code rel} names under exactly one of {@code roots} and that root's verified real path, or null. */
+    static Path[] resolve(String rel, List<JoustProjectLayout.SourceRoot> roots, Path base) {
+        Path[] hit = null;
         for (JoustProjectLayout.SourceRoot root : roots) {
             Path real = resolveIn(rel, root, base);
             if (real == null) continue;
-            if (hit != null && !hit.equals(real)) return null;
-            hit = real;
+            if (hit != null && !hit[0].toString().equals(real.toString())) return null;
+            hit = new Path[]{real, root.verifiedContracts(base)};
         }
         return hit;
     }

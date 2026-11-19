@@ -64,6 +64,8 @@ public final class JoustNpmTasks {
         if (run == null) return new JoustAbiReview.Result(false, "", true);
         try {
             List<String> cmd = command(project, root, args);
+            // The CLI reads the files on disk: save the editors first, then check again, then start (M2-CDX-21).
+            ApplicationManager.getApplication().invokeAndWait(() -> com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments());
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
             GeneralCommandLine cl = new GeneralCommandLine(cmd).withWorkDirectory(root.dir().toFile())
                     .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
@@ -80,8 +82,11 @@ public final class JoustNpmTasks {
                 }
             });
             if (showsConsole()) {
+                // The console's links resolve within this npm root only (M2-CDX-14).
+                var filter = new com.bloxbean.intelliada.idea.joust.project.JoustConsoleFilterProvider.JoustDiagnosticFilter(project,
+                        List.of(root.dir()));
                 ApplicationManager.getApplication().invokeAndWait(() -> new com.intellij.execution.RunContentExecutor(project, handler)
-                        .withTitle(PlainText.title(title, 120)).withActivateToolWindow(true).run());
+                        .withTitle(PlainText.title(title, 120)).withActivateToolWindow(true).withFilter(filter).run());
             } else {
                 handler.startNotify();
             }

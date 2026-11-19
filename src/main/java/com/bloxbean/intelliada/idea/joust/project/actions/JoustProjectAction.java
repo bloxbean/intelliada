@@ -128,7 +128,11 @@ public abstract class JoustProjectAction extends AnAction {
                 return null;
             }
         } else if (toolWindowDir != null) {
-            real = toolWindowDir;
+            try {
+                real = toolWindowDir.toRealPath();
+            } catch (java.io.IOException | RuntimeException ex) {
+                return null;
+            }
         } else {
             return null;
         }
@@ -172,28 +176,53 @@ public abstract class JoustProjectAction extends AnAction {
         };
     }
 
-    /** D8 step 1 for npm output (Gradle output is seen by the Gradle listener): one notification per failure. */
-    static void notifyAbiFailures(Ctx ctx, String output) {
-        java.util.Set<String> seen = new java.util.HashSet<>();
+    /**
+     * D8 step 1 for npm output (Gradle output is seen by the Gradle listener): one notification per <b>reported
+     * source</b>, resolved under the npm root that ran the build, and bound to that file (M2-CDX-20).
+     */
+    static List<Ctx> notifyAbiFailures(Ctx ctx, String output) {
+        List<Ctx> notified = new java.util.ArrayList<>();
+        JoustProjectLayout.SourceRoot root = ctx.layout().sourceRoots().stream().filter(r -> r.npm() == ctx.npm()).findFirst().orElse(null);
+        if (root == null) return notified;
+        java.util.Set<Path> seen = new java.util.HashSet<>();
         for (JoustAbi.Failure f : JoustAbi.failures(output)) {
-            if (seen.add(f.contract())) notifyAbiFailure(ctx, f);
+            Path jsc = com.bloxbean.intelliada.idea.joust.project.JoustDiagnosticLinks.resolveIn(f.jscRel(), root, ctx.layout().base());
+            if (jsc == null || !seen.add(jsc)) continue;
+            VirtualFile vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(jsc);
+            Ctx forFile = vf == null ? null : context(ctx.project(), vf);
+            if (forFile != null && forFile.npm() != null && forFile.npm().dir().equals(ctx.npm().dir())) {
+                notifyAbiFailure(forFile, f);
+                notified.add(forFile);
+            }
         }
+        return notified;
     }
 
-    /** The notification for one failure in the module of {@code ctx}, with Review ABI change…. */
+    /** Where the module is, for people: the Gradle project path when linked, else its directory. */
+    static String where(Ctx ctx) {
+        return ctx.linked() != null ? "Gradle project " + PlainText.title(ctx.linked().gradlePath(), 120) : ctx.moduleName();
+    }
+
+    /**
+     * The notification for one failure in the module of {@code ctx}, bound to {@code ctx}'s {@code .jsc}. Review ABI
+     * change… is offered only when it can run there; otherwise the notification says why (M2-CDX-13).
+     */
     public static void notifyAbiFailure(Ctx ctx, JoustAbi.Failure f) {
         String contract = PlainText.title(f.contract(), 120);
+        JoustReviewAbiAction review = new JoustReviewAbiAction();
+        String why = !review.applies(ctx) ? "Review ABI change… is not available for this file." : review.unavailable(ctx);
         var n = JoustNotifications.create("ABI change in " + contract, f.code() + ": the datum or a redeemer encoding of " + contract
-                + " in " + ctx.moduleName() + " changed. Deployed instances depend on it.", NotificationType.WARNING);
-        n.addAction(NotificationAction.createSimpleExpiring("Review ABI change…", () -> new JoustReviewAbiAction().start(ctx)));
+                + " in " + where(ctx) + " changed. Deployed instances depend on it." + (why == null ? "" : "\n" + why),
+                NotificationType.WARNING);
+        if (why == null) n.addAction(NotificationAction.createSimpleExpiring("Review ABI change…", () -> review.start(ctx)));
         n.notify(ctx.project());
     }
 
-    /** The notification when the owning module of a failure cannot be told (D8 step 2: disabled, with the reason). */
+    /** The notification when the owning module of a failure cannot be told (D8 step 2: no action, with the reason). */
     public static void notifyAmbiguousAbiFailure(Project project, JoustAbi.Failure f, List<String> modules) {
-        JoustNotifications.show(project, "ABI change in " + PlainText.title(f.contract(), 120), f.code() + ": " + f.jscRel() + " is in "
-                + modules.size() + " modules (" + String.join(", ", modules) + "), and the build output does not say which failed."
-                + " Open the .jsc in its module and use Review ABI Change… there.", NotificationType.WARNING);
+        JoustNotifications.show(project, "ABI change in " + PlainText.title(f.contract(), 120), f.code() + ": " + PlainText.title(f.jscRel(), 200)
+                + " is in " + modules.size() + " modules (" + PlainText.title(String.join(", ", modules), 400) + "), and the build output"
+                + " does not say which failed. Open the .jsc in its module and use Review ABI Change… there.", NotificationType.WARNING);
     }
 
     static void reportResult(Ctx ctx, String title, JoustAbiReview.Result r) {

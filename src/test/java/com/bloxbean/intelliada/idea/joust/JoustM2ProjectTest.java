@@ -177,4 +177,33 @@ public class JoustM2ProjectTest {
         assertNull(bothOwner.gradle());
         assertNull(layout.owner(plainFile.toRealPath()));
     }
+
+    /** M2-CDX-12: an npm app under a Gradle repository's src/ is its own owner, as in project.js. */
+    @Test
+    public void anNpmAppUnderSrcOwnsItsFiles() throws Exception {
+        Path g = JoustM2Fixtures.gradleProject(Files.createDirectories(base().resolve("repo")));
+        Path client = Files.createDirectories(g.resolve("src/client"));
+        Files.writeString(client.resolve("joust.config.json"), "{}");
+        Path jsc = Files.writeString(Files.createDirectories(client.resolve("contracts/app")).resolve("Counter.jsc"), "x");
+        var layout = JoustProjectLayout.scan(base(), flavor);
+        assertTrue("discovered", layout.npmRoots().stream().anyMatch(r -> r.dir().equals(client)));
+        assertEquals(client, layout.owner(jsc.toRealPath()).npm().dir());
+        assertEquals(g, layout.owner(g.resolve("src/main/jsc/org/acme/Counter.jsc").toRealPath()).gradle().dir());
+    }
+
+    /** M2-CDX-14: two npm roots with the same relative source: no project-wide link, but a link within each root. */
+    @Test
+    public void scopedLinksResolveWithinTheirRoot() throws Exception {
+        Path a = Files.createDirectories(base().resolve("a"));
+        Path b = Files.createDirectories(base().resolve("b"));
+        for (Path r : new Path[]{a, b}) {
+            Files.writeString(r.resolve("joust.config.json"), "{}");
+            Files.writeString(Files.createDirectories(r.resolve("contracts/app")).resolve("Counter.jsc"), "x");
+        }
+        var layout = JoustProjectLayout.scan(base(), flavor);
+        String line = "app/Counter.jsc:1:1: error[JSC0002]: x";
+        assertNull(JoustDiagnosticLinks.find(line, layout));
+        var onlyB = layout.sourceRoots().stream().filter(r -> r.ownerDir().equals(b)).toList();
+        assertEquals(b.resolve("contracts/app/Counter.jsc"), JoustDiagnosticLinks.find(line, onlyB, layout.base()).target());
+    }
 }

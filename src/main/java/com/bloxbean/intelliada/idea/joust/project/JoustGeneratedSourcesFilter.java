@@ -1,7 +1,6 @@
 package com.bloxbean.intelliada.idea.joust.project;
 
 import com.bloxbean.intelliada.idea.joust.core.JoustPaths;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.GeneratedSourcesFilter;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -11,8 +10,8 @@ import java.nio.file.Path;
 
 /**
  * ADR-004 D7: Java under a JOUST module's {@code build/generated/sources/jsc/java/main}, or an npm root's
- * {@code build/joust/generated}, is generated (F13, F19). On the EDT only the cached layout is used; when it is not
- * computed yet, it is computed in the background and editors are refreshed (M2-DES-4).
+ * {@code build/joust/generated}, is generated (F13, F19). Only the cached layout is used; when it is not computed yet,
+ * it is computed in the background and editors are refreshed (M2-DES-4, M2-DES-8).
  */
 public final class JoustGeneratedSourcesFilter extends GeneratedSourcesFilter {
 
@@ -29,11 +28,10 @@ public final class JoustGeneratedSourcesFilter extends GeneratedSourcesFilter {
         JoustProjectService service = JoustProjectService.getInstance(project);
         JoustProjectLayout layout = service.cachedLayout();
         if (layout == null) {
-            if (ApplicationManager.getApplication().isDispatchThread()) {
-                service.computeInBackground();
-                return null;
-            }
-            layout = service.layout();
+            // Never a scan inside a filter call, on the EDT or in a read action (M2-DES-4, M2-DES-8): compute it in the
+            // background, then refresh editors and markers.
+            service.computeInBackground();
+            return null;
         }
         if (layout == null) return null;
         try {

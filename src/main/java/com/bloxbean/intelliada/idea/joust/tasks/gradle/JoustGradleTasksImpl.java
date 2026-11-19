@@ -9,16 +9,15 @@ import com.intellij.execution.ExecutionListener;
 import com.intellij.execution.ExecutionManager;
 import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.execution.process.ProcessHandler;
-import com.intellij.execution.process.ProcessOutputType;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.externalSystem.model.execution.ExternalSystemTaskExecutionSettings;
-import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId;
-import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskNotificationListener;
-import com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunnableState;
-import com.intellij.openapi.externalSystem.service.internal.ExternalSystemProcessingManager;
+import com.intellij.execution.process.ProcessEvent;
+import com.intellij.execution.process.ProcessListener;
+import com.intellij.openapi.externalSystem.service.execution.ExternalSystemProcessHandler;
+import com.intellij.openapi.util.Key;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
 import com.intellij.openapi.module.Module;
@@ -76,8 +75,8 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
             return null;
         }
         try {
-            return Path.of(a.getLinkedExternalProjectPath()).toRealPath();
-        } catch (java.io.IOException | RuntimeException ex) {
+            return Path.of(a.getLinkedExternalProjectPath());   // as text; resolved off the EDT with the context (M2-CDX-17)
+        } catch (RuntimeException ex) {
             return null;
         }
     }
@@ -117,6 +116,26 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         return settings;
     }
 
+    /**
+     * Waits for the task: its result, or null on timeout. A timeout or an interrupted wait <b>cancels the run</b> (and so
+     * the Gradle task, now or when its id arrives) before returning; an interrupt is then rethrown (M2-CDX-3).
+     */
+    static Boolean await(JoustTaskTracker.Run run, CompletableFuture<Boolean> done, long timeout, TimeUnit unit) throws InterruptedException {
+        try {
+            return Boolean.TRUE.equals(done.get(timeout, unit));
+        } catch (java.util.concurrent.CancellationException e) {
+            return false;
+        } catch (java.util.concurrent.ExecutionException e) {
+            return false;
+        } catch (java.util.concurrent.TimeoutException e) {
+            run.cancel();
+            return null;
+        } catch (InterruptedException e) {
+            run.cancel();
+            throw e;
+        }
+    }
+
     @Override
     public JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) throws InterruptedException {
         Project project = guard.project();
@@ -127,58 +146,40 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         CompletableFuture<Boolean> done = new CompletableFuture<>();
         AtomicReference<ExecutionEnvironment> envRef = new AtomicReference<>();
         run.attach(() -> done.cancel(false));
-        ExternalSystemTaskNotificationListener listener = new ExternalSystemTaskNotificationListener() {
-            @Override
-            public void onStart(@NotNull ExternalSystemTaskId taskId, String workingDir) {
-                // A cancellation that came before the id cancels the task now (Run.attach runs it at once).
-                run.attach(() -> {
-                    var task = ExternalSystemProcessingManager.getInstance().findTask(taskId);
-                    if (task != null) task.cancel();
-                });
-            }
-
-            @Override
-            public void onTaskOutput(@NotNull ExternalSystemTaskId taskId, @NotNull String text, @NotNull ProcessOutputType type) {
-                synchronized (out) {
-                    if (out.length() < OUTPUT_CAP) out.append(text, 0, Math.min(text.length(), OUTPUT_CAP - out.length()));
-                }
-            }
-
-            @Override
-            public void onSuccess(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
-                done.complete(true);
-            }
-
-            @Override
-            public void onFailure(@NotNull String projectPath, @NotNull ExternalSystemTaskId id, @NotNull Exception e) {
-                done.complete(false);
-            }
-
-            @Override
-            public void onCancel(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
-                done.cancel(false);
-            }
-
-            @Override
-            public void onEnd(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
-                done.complete(false);
-            }
-        };
         MessageBusConnection bus = project.getMessageBus().connect();
         try {
             ExecutionEnvironment env = environment(project, settings(rootDir, args, title));
             if (env == null) return new JoustAbiReview.Result(false, "IntelliJ cannot run Gradle tasks here.", false);
-            env.putUserData(ExternalSystemRunnableState.TASK_NOTIFICATION_LISTENER_KEY, listener);
             envRef.set(env);
+            // Public APIs only (M2-DES-7): the run's process handler, from the execution events, gives its output, its
+            // exit code and, through its external-system task, cancellation.
             bus.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
                 @Override
-                public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e) {
-                    if (e == envRef.get()) done.complete(false);
+                public void processStarting(@NotNull String executorId, @NotNull ExecutionEnvironment e, @NotNull ProcessHandler handler) {
+                    if (e != envRef.get()) return;
+                    handler.addProcessListener(new ProcessListener() {
+                        @Override
+                        public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
+                            String t = event.getText();
+                            synchronized (out) {
+                                if (t != null && out.length() < OUTPUT_CAP) out.append(t, 0, Math.min(t.length(), OUTPUT_CAP - out.length()));
+                            }
+                        }
+
+                        @Override
+                        public void processTerminated(@NotNull ProcessEvent event) {
+                            done.complete(event.getExitCode() == 0);
+                        }
+                    });
+                    run.attach(() -> {
+                        if (handler instanceof ExternalSystemProcessHandler es) es.getTask().cancel();
+                        handler.destroyProcess();
+                    });
                 }
 
                 @Override
-                public void processStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e, @NotNull ProcessHandler handler) {
-                    if (e == envRef.get()) run.attach(handler::destroyProcess);
+                public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e) {
+                    if (e == envRef.get()) done.complete(false);
                 }
             });
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
@@ -192,19 +193,15 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
                 }
             });
             if (failed.get() != null) return new JoustAbiReview.Result(false, String.valueOf(failed.get().getMessage()), false);
-            boolean ok;
-            try {
-                ok = Boolean.TRUE.equals(done.get(TIMEOUT_MINUTES, TimeUnit.MINUTES));
-            } catch (java.util.concurrent.CancellationException e) {
-                return new JoustAbiReview.Result(false, "", true);
-            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
-                ok = false;
-            }
+            Boolean ok = await(run, done, TIMEOUT_MINUTES, TimeUnit.MINUTES);
+            if (ok == null) return new JoustAbiReview.Result(false, "the Gradle task did not finish within " + TIMEOUT_MINUTES + " minutes", false);
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
             synchronized (out) {
                 return new JoustAbiReview.Result(ok, out.toString(), false);
             }
         } finally {
+            // Never unregister work that may still run (M2-CDX-3): whatever did not finish is cancelled first.
+            if (!done.isDone()) run.cancel();
             bus.disconnect();
             tracker.done(run);
         }

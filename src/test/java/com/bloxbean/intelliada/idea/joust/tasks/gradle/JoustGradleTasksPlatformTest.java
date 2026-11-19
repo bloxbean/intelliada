@@ -56,6 +56,7 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         ServiceContainerUtil.replaceService(ApplicationManager.getApplication(), JoustGradleTasks.class, new JoustGradleTasks() {
             @Override
             public Linked linked(Project project, Path moduleDir) {
+                if (moduleDir.endsWith("unlinked")) return null;
                 return moduleDir.equals(base) ? new Linked(base, ":") : new Linked(base, ":" + base.relativize(moduleDir));
             }
 
@@ -181,5 +182,67 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         TrustedProjects.setProjectTrusted(getProject(), false);
         assertEquals(0, JoustAbiFailureListener.notifyFailures(getProject(), List.of(log().lines()
                 .filter(l -> l.contains("JSC0002")).findFirst().orElseThrow()), Set.of(":generateJsc")));
+    }
+
+    /** M2-CDX-3: a timed-out or interrupted wait cancels the run (and so its task) before returning. */
+    public void testATimedOutOrInterruptedWaitCancelsTheRun() throws Exception {
+        var tracker = com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(getProject());
+        var run = tracker.start(JoustRunGuard.capture(getProject()));
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        run.attach(() -> cancelled.set(true));
+        assertNull(JoustGradleTasksImpl.await(run, new java.util.concurrent.CompletableFuture<>(), 50, java.util.concurrent.TimeUnit.MILLISECONDS));
+        assertTrue("cancelled on timeout", cancelled.get());
+        tracker.done(run);
+        var run2 = tracker.start(JoustRunGuard.capture(getProject()));
+        java.util.concurrent.atomic.AtomicBoolean cancelled2 = new java.util.concurrent.atomic.AtomicBoolean();
+        run2.attach(() -> cancelled2.set(true));
+        Thread.currentThread().interrupt();
+        try {
+            JoustGradleTasksImpl.await(run2, new java.util.concurrent.CompletableFuture<>(), 10, java.util.concurrent.TimeUnit.SECONDS);
+            fail("interrupted");
+        } catch (InterruptedException expected) {
+            assertTrue("cancelled on interrupt", cancelled2.get());
+        }
+        tracker.done(run2);
+    }
+
+    /** M2-CDX-3: output from a run that started before trust was revoked is not published after trust returns. */
+    public void testAFailureFromAnEarlierGenerationIsNotPublished() throws Exception {
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        feed(listener, id, "> Task :other:generateJsc FAILED\n" + log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        TrustedProjects.setProjectTrusted(getProject(), false);
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        TrustedProjects.setProjectTrusted(getProject(), true);
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        listener.onEnd(id);
+        Thread.sleep(500);
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        assertEquals(titles.toString(), 0, titles.size());
+    }
+
+    /** M2-CDX-13: the diagnostic belongs to the task whose output it was in, not to every failed task of the invocation. */
+    public void testTheDiagnosticBelongsToItsOwnTask() throws Exception {
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        String diag = log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow();
+        feed(listener, id, "> Task :other:generateJsc\n" + diag + "\n> Task :other:generateJsc FAILED\n> Task :test FAILED\n"
+                + "Execution failed for task ':test'.\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains("Gradle project :other"));
+    }
+
+    /** M2-CDX-13: an unlinked module's notification says why Review is unavailable and offers no action. */
+    public void testAnUnlinkedModuleGetsTheReasonNotAnAction() throws Exception {
+        Path src = base.resolve("other");
+        Path unlinked = base.resolve("unlinked");
+        Files.move(src, unlinked);
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        assertEquals(1, JoustAbiFailureListener.notifyFailures(getProject(), List.of(log().lines()
+                .filter(l -> l.contains("JSC0002")).findFirst().orElseThrow()), Set.of(":unlinked:generateJsc")));
+        waitForTitles(1);
+        assertTrue(titles.toString(), titles.stream().anyMatch(t -> t.contains("Link the Gradle build first")));
     }
 }

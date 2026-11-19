@@ -122,6 +122,12 @@ public final class JoustAbiReview {
             // After the dialogs: trust, the project and the generation must still hold (M2-DES-2, M2-CDX-2).
             if (!live.getAsBoolean()) return false;
             JoustAbi.Snapshot before = JoustAbi.manifests(scan.get());
+            if (before.incomplete() != null) {
+                // Stop before anything is written: the result could not be verified (M2-CDX-7).
+                ui.report("ABI change not accepted", "The project's ABI manifests could not all be checked: " + before.incomplete()
+                        + ".\nNothing was run.", true);
+                return false;
+            }
             String stale = JoustAbi.verify(d, manifest);
             if (stale != null) {
                 ui.refused("ABI change not accepted", stale + "\nReview the change again.", reviewAgain);
@@ -131,6 +137,13 @@ public final class JoustAbiReview {
             Result a = runner.run(acceptArgs);
             if (a.cancelled()) return false;
             JoustAbi.Snapshot after = JoustAbi.manifests(scan.get());
+            // An explicit refusal of this contract by the bound task wins over what the files look like afterwards: another
+            // acceptance may have written the same new hash meanwhile (M2-CDX-6).
+            String refusedByTask = !a.ok() ? JoustAbi.refusal(a.output(), contract) : null;
+            if (refusedByTask != null) {
+                ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
+                return false;
+            }
             String wrong = JoustAbi.verifyAccepted(before, after, manifest, d);
             if (wrong != null) {
                 // The task refuses when the baseline or the source changed since the review (JSC0002 "not accepted").

@@ -40,12 +40,22 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
     static final int MAX_LINES = 64;
     static final int MAX_LINE = 2_000;
     static final int MAX_TASKS = 64;
+    private static final Pattern TASK_HEADER = Pattern.compile("^> Task (:[A-Za-z0-9_.:-]{1,400})(?:\\s.*)?$");
     private static final Pattern FAILED_TASK = Pattern.compile("(?:> Task (:[A-Za-z0-9_.:-]{1,400}) FAILED|Execution failed for task '(:[A-Za-z0-9_.:-]{1,400})')");
+    /** The JOUST tasks that report JSC0002/JSC0003 (JoustPlugin): only their failures attribute a diagnostic. */
+    static final Set<String> ABI_TASKS = Set.of("generateJsc", "checkJscAbi", "jscAbiDiff");
+
+    /** A diagnostic line and the task whose output it was in (the latest {@code > Task} header), or null. */
+    public record Diagnostic(String line, String task) {
+    }
 
     private static final class Pending {
         final StringBuilder partial = new StringBuilder();
         boolean discarding;
-        final List<String> lines = new ArrayList<>();
+        String currentTask;
+        int generation = -1;
+        Project project;
+        final List<Diagnostic> lines = new ArrayList<>();
         final Set<String> failedTasks = new LinkedHashSet<>();
     }
 
@@ -54,7 +64,16 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
     @Override
     public void onTaskOutput(@NotNull ExternalSystemTaskId id, @NotNull String text, @NotNull ProcessOutputType type) {
         if (!GradleConstants.SYSTEM_ID.equals(id.getProjectSystemId())) return;
-        Pending p = pending.computeIfAbsent(id, k -> new Pending());
+        Pending p = pending.computeIfAbsent(id, k -> {
+            Pending n = new Pending();
+            // The trust generation the run started in: a result is published only within it (M2-CDX-3).
+            Project project = k.findProject();
+            if (project != null && !project.isDisposed()) {
+                n.project = project;
+                n.generation = com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(project).generation();
+            }
+            return n;
+        });
         synchronized (p) {
             for (int i = 0; i < text.length(); i++) {
                 char c = text.charAt(i);
@@ -76,50 +95,77 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
 
     private static void consider(Pending p, String line) {
         if (line.contains("error[JSC0002]") || line.contains("error[JSC0003]")) {
-            if (p.lines.size() < MAX_LINES) p.lines.add(line);
+            if (p.lines.size() < MAX_LINES) p.lines.add(new Diagnostic(line, p.currentTask));
             return;
         }
+        Matcher h = TASK_HEADER.matcher(line);
+        if (h.matches()) p.currentTask = h.group(1);
         Matcher m = FAILED_TASK.matcher(line);
-        if (m.find() && p.failedTasks.size() < MAX_TASKS) p.failedTasks.add(m.group(1) != null ? m.group(1) : m.group(2));
+        if (m.find()) {
+            String t = m.group(1) != null ? m.group(1) : m.group(2);
+            if (ABI_TASKS.contains(t.substring(t.lastIndexOf(':') + 1)) && p.failedTasks.size() < MAX_TASKS) p.failedTasks.add(t);
+        }
     }
 
     @Override
     public void onEnd(@NotNull ExternalSystemTaskId id) {
         Pending p = pending.remove(id);
         if (p == null) return;
-        List<String> lines;
+        List<Diagnostic> lines;
         Set<String> tasks;
         synchronized (p) {
             if (!p.discarding && !p.partial.isEmpty()) consider(p, p.partial.toString());
             lines = List.copyOf(p.lines);
             tasks = Set.copyOf(p.failedTasks);
         }
-        if (lines.isEmpty()) return;
-        Project project = id.findProject();
-        if (project == null || project.isDisposed() || !JoustTrust.isTrusted(project)) return;
-        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> notifyFailures(project, lines, tasks));
+        if (lines.isEmpty() || p.project == null) return;
+        Project project = p.project;
+        int generation = p.generation;
+        if (!live(project, generation)) return;
+        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(
+                () -> notifyFailures(project, lines, tasks, generation));
     }
 
-    /** One notification per (module, contract); returns how many were shown (with or without an action). */
+    /** Trusted, open, and still in the trust generation the run started in. */
+    static boolean live(Project project, int generation) {
+        return !project.isDisposed() && JoustTrust.isTrusted(project)
+                && com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(project).current(generation);
+    }
+
+    /** As {@link #notifyFailures(Project, List, Set, int)}, for lines with no task header, in the current generation. */
     public static int notifyFailures(Project project, List<String> lines, Set<String> failedTasks) {
-        if (project.isDisposed() || !JoustTrust.isTrusted(project)) return 0;
+        return notifyFailures(project, lines.stream().map(l -> new Diagnostic(l, null)).toList(), failedTasks,
+                com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(project).generation());
+    }
+
+    /**
+     * One notification per (module, contract); returns how many were shown (with or without an action). A diagnostic is
+     * attributed to the module of the task whose output it was in; without a header, to the modules whose JOUST task
+     * failed (M2-CDX-13). Nothing is published outside the run's trust generation.
+     */
+    public static int notifyFailures(Project project, List<Diagnostic> lines, Set<String> failedTasks, int generation) {
+        if (!live(project, generation)) return 0;
         JoustProjectLayout layout = JoustProjectService.getInstance(project).layout();
         if (layout == null || layout.gradleModules().isEmpty()) return 0;
         List<JoustProjectLayout.SourceRoot> gradleRoots = layout.sourceRoots().stream().filter(r -> r.gradle() != null).toList();
         JoustGradleTasks gradle = JoustGradleTasks.getInstance();
         Set<String> seen = new HashSet<>();
         int n = 0;
-        for (String line : lines) {
+        for (Diagnostic diag : lines) {
+            String line = diag.line();
             JoustDiagnosticLinks.Printed printed = JoustDiagnosticLinks.printed(line);
             List<JoustAbi.Failure> failures = JoustAbi.failures(line);
             if (printed == null || failures.isEmpty()) continue;
             JoustAbi.Failure f = failures.get(0);
             List<JoustProjectLayout.SourceRoot> candidates = JoustDiagnosticLinks.rootsContaining(printed.rel(), gradleRoots, layout.base());
-            if (candidates.size() > 1 && gradle != null && !failedTasks.isEmpty()) {
+            Set<String> owners = new HashSet<>();
+            if (diag.task() != null) owners.add(ownerOf(diag.task()));
+            else failedTasks.forEach(t -> owners.add(ownerOf(t)));
+            if (candidates.size() > 1 && gradle != null && !owners.isEmpty()) {
                 List<JoustProjectLayout.SourceRoot> failed = new ArrayList<>();
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());
-                    if (linked != null && failedTasks.stream().anyMatch(t -> ownerOf(t).equals(linked.gradlePath()))) failed.add(r);
+                    if (linked != null && owners.contains(linked.gradlePath())) failed.add(r);
                 }
                 candidates = failed.isEmpty() ? candidates : failed;
             }
@@ -136,7 +182,8 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             VirtualFile vf = jsc == null ? null : LocalFileSystem.getInstance().refreshAndFindFileByNioFile(jsc);
             JoustProjectAction.Ctx ctx = JoustProjectAction.context(project, vf);
             if (ctx == null || ctx.gradle() == null || !ctx.gradle().dir().equals(candidates.get(0).ownerDir())) continue;
-            if (seen.add(ctx.moduleName() + "\0" + f.contract())) {
+            if (!live(project, generation)) return n;
+            if (seen.add(ctx.dir() + "\0" + f.contract())) {
                 JoustProjectAction.notifyAbiFailure(ctx, f);
                 n++;
             }

@@ -23,6 +23,9 @@ public class JoustAbiTest {
 
     @Rule
     public TemporaryFolder tmp = new TemporaryFolder();
+    /** IntelliAda's private exchange directory, outside the project (M2-CDX-8). */
+    @Rule
+    public TemporaryFolder ide = new TemporaryFolder();
 
     private Path base;
     private Path module;
@@ -207,8 +210,8 @@ public class JoustAbiTest {
     }
 
     private JoustAbiReview review(JoustAbiReview.Target t, FakeJoust joust, FakeUi ui, java.util.function.BooleanSupplier live) throws Exception {
-        Path tmp = Files.createDirectories(base.resolve(".ide-tmp"));
-        return new JoustAbiReview(t, () -> JoustProjectLayout.scan(base, JoustPaths.Flavor.current()), joust, ui, live, tmp, () -> {
+        return new JoustAbiReview(t, () -> JoustProjectLayout.scan(base, JoustPaths.Flavor.current()), joust, ui, live,
+                ide.getRoot().toPath().toRealPath(), () -> {
         });
     }
 
@@ -217,7 +220,7 @@ public class JoustAbiTest {
         java.util.Map<Path, String> out = new java.util.TreeMap<>();
         try (var s = Files.walk(base)) {
             for (Path p : (Iterable<Path>) s::iterator) {
-                if (Files.isRegularFile(p) && !p.startsWith(base.resolve(".ide-tmp"))) {
+                if (Files.isRegularFile(p)) {
                     out.put(base.relativize(p), com.bloxbean.intelliada.idea.joust.core.JoustToolValidator.sha256(p));
                 }
             }
@@ -238,10 +241,10 @@ public class JoustAbiTest {
         Path other = JoustM2Fixtures.gradleProject(Files.createDirectories(base.resolve("other")));
         Path otherManifest = other.resolve("src/main/jsc/org/acme/Counter.abi.json");
         Files.writeString(otherManifest, text1());
+        var before = tree();   // before detection (M2-CDX-8)
         var t = target(module, "app", "org.acme.Counter");
         var owner = JoustProjectLayout.scan(base, JoustPaths.Flavor.current()).owner(t.jsc());
         assertEquals("production owner resolution picks the selected module", module, owner.gradle().dir());
-        var before = tree();
         FakeJoust joust = new FakeJoust();
         FakeUi ui = new FakeUi();
         assertTrue(ui.reports.toString(), review(t, joust, ui, () -> true).run());
@@ -377,6 +380,84 @@ public class JoustAbiTest {
         }
     }
 
+    /** M2-CDX-8, I21: a dismissed review and a cancelled one leave the whole project tree as it was, detection included. */
+    @Test
+    public void dismissedOrCancelledReviewsChangeNoFile() throws Exception {
+        for (String how : new String[]{"dismissed", "declined", "cancelled"}) {
+            var before = tree();
+            var t = target(module, "app", "org.acme.Counter");
+            JoustProjectLayout.scan(base, JoustPaths.Flavor.current()).owner(t.jsc());
+            FakeJoust joust = new FakeJoust();
+            FakeUi ui = new FakeUi();
+            java.util.concurrent.atomic.AtomicBoolean live = new java.util.concurrent.atomic.AtomicBoolean(true);
+            switch (how) {
+                case "dismissed" -> ui.accept = false;
+                case "declined" -> ui.onConfirm = () -> ui.accept = false;
+                default -> ui.onReview = () -> live.set(false);
+            }
+            assertFalse(how, review(t, joust, ui, live::get).run());
+            assertEquals(how + ": no file changed (I21)", java.util.Set.of(), changed(before, tree()));
+        }
+    }
+
+    /** M2-CDX-6: a concurrent acceptance writes h2 while the bound task refuses: the refusal wins. */
+    @Test
+    public void anExplicitRefusalWinsOverTheFinalFile() throws Exception {
+        FakeJoust joust = new FakeJoust() {
+            @Override
+            public JoustAbiReview.Result run(List<String> args) {
+                if (args.get(0).endsWith(":acceptJscAbi")) {
+                    runs.add(args);
+                    try {
+                        Files.writeString(manifest, text2());   // another invocation accepted meanwhile
+                        return new JoustAbiReview.Result(false, JoustM2Fixtures.text("acceptJscAbi-refused.log"), false);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.run(args);
+            }
+        };
+        FakeUi ui = new FakeUi();
+        assertFalse(review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
+        assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.startsWith("REFUSED") && r.contains("not accepted")));
+        assertTrue(ui.reports.stream().noneMatch(r -> r.contains("ABI change accepted")));
+    }
+
+    /** D8: an acceptance that succeeded, then a later build failure: accepted, with the failure noted, no Review again. */
+    @Test
+    public void anAcceptedChangeFollowedByABuildFailureIsAccepted() throws Exception {
+        FakeJoust joust = new FakeJoust() {
+            @Override
+            public JoustAbiReview.Result run(List<String> args) {
+                JoustAbiReview.Result r = super.run(args);
+                return args.get(0).endsWith(":acceptJscAbi") ? new JoustAbiReview.Result(false, "error: compileJava failed", false) : r;
+            }
+        };
+        FakeUi ui = new FakeUi();
+        assertTrue(ui.reports.toString(), review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
+        assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.contains("ABI change accepted") && r.contains("build then failed")));
+        assertTrue(ui.reports.stream().noneMatch(r -> r.startsWith("REFUSED")));
+    }
+
+    /** M2-CDX-7: an incomplete baseline (an unreadable build file or contracts tree) stops before any accept call. */
+    @Test
+    public void anIncompleteBaselineStopsBeforeAccept() throws Exception {
+        Path other = JoustM2Fixtures.gradleProject(Files.createDirectories(base.resolve("other")));
+        for (Path locked : new Path[]{other.resolve("build.gradle"), Files.createDirectories(other.resolve("src/main/jsc/locked"))}) {
+            Assume.assumeTrue("needs POSIX permissions", locked.toFile().setReadable(false, false));
+            try {
+                FakeJoust joust = new FakeJoust();
+                FakeUi ui = new FakeUi();
+                assertFalse(locked.toString(), review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
+                assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.contains("could not all be checked") && r.contains("Nothing was run")));
+                assertEquals(locked + ": zero accept calls", 1, joust.runs.size());
+            } finally {
+                locked.toFile().setReadable(true, false);
+            }
+        }
+    }
+
     /** M2-SEC-3, M2-CDX-11: the diff is exchanged in the private directory given, which is cleaned up afterwards. */
     @Test
     public void theDiffUsesThePrivateDirectory() throws Exception {
@@ -385,8 +466,9 @@ public class JoustAbiTest {
         ui.accept = false;
         review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run();
         Path out = Path.of(joust.runs.get(0).get(joust.runs.get(0).indexOf("--out") + 1));
-        assertTrue(out.toString(), out.startsWith(base.resolve(".ide-tmp")));
-        try (var s = Files.list(base.resolve(".ide-tmp"))) {
+        assertTrue(out.toString(), out.startsWith(ide.getRoot().toPath().toRealPath()));
+        assertFalse("outside the project", out.startsWith(base));
+        try (var s = Files.list(ide.getRoot().toPath())) {
             assertEquals("cleaned up", 0, s.count());
         }
     }
@@ -443,7 +525,7 @@ public class JoustAbiTest {
                 JoustAbiReview.Target.contractOf(contracts, jsc.toRealPath()));
         var before = tree();
         FakeUi ui = new FakeUi();
-        Path tmp = Files.createDirectories(base.resolve(".ide-tmp"));
+        Path tmp = ide.getRoot().toPath().toRealPath();
         boolean ok = new JoustAbiReview(t, () -> JoustProjectLayout.scan(base, JoustPaths.Flavor.current()), runner, ui, () -> true, tmp, () -> {
         }).run();
         assertTrue(ui.reports.toString(), ok);

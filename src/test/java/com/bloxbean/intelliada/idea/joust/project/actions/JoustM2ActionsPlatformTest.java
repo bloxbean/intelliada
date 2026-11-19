@@ -300,4 +300,44 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
         waitFor(again::isDone, 5_000);
         assertTrue("the restored file opens", again.get());
     }
+
+    /** M2-CDX-9: the file replaced after the pooled resolution, before the EDT open, does not open. */
+    public void testAChangeBetweenResolutionAndOpenIsRefused() throws Exception {
+        Path jscFile = base.resolve("src/main/jsc/org/acme/Counter.jsc");
+        String line = "org/acme/Counter.jsc:17:12: error[JSC0331]: x";
+        var result = new JoustConsoleFilterProvider.JoustDiagnosticFilter(getProject()).applyFilter(line, line.length());
+        var info = (JoustConsoleFilterProvider.JoustLinkInfo) result.getResultItems().get(0).getHyperlinkInfo();
+        String original = Files.readString(jscFile);
+        Path outside = Files.writeString(Files.createTempFile("elsewhere", ".jsc"), "x");
+        var opened = info.open(getProject(), () -> {
+            try {
+                Files.delete(jscFile);
+                Files.createSymbolicLink(jscFile, outside);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        try {
+            waitFor(opened::isDone, 5_000);
+            assertFalse(opened.get());
+        } finally {
+            Files.deleteIfExists(jscFile);
+            Files.writeString(jscFile, original);
+        }
+    }
+
+    /** M2-CDX-20: an npm build's ABI failure is bound to the reported source, not to the file Build was invoked on. */
+    public void testAnNpmFailureIsBoundToTheReportedSource() throws Exception {
+        String log = new String(getClass().getClassLoader().getResourceAsStream("joust-m2/npm-build-JSC0002.log").readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        VirtualFile pkg = vf(Files.writeString(web.resolve("package.json"), "{\"devDependencies\":{\"@julclang/joust\":\"0.1.0-pre2\"}}"));
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).layout();
+        JoustProjectAction.Ctx build = ApplicationManager.getApplication().executeOnPooledThread(
+                () -> JoustProjectAction.context(getProject(), pkg)).get();
+        assertNotNull(build);
+        List<JoustProjectAction.Ctx> bound = ApplicationManager.getApplication().executeOnPooledThread(
+                () -> JoustProjectAction.notifyAbiFailures(build, log)).get();
+        assertEquals(1, bound.size());
+        assertEquals(web.resolve("contracts/app/Counter.jsc"), bound.get(0).fileReal());
+    }
 }

@@ -122,6 +122,21 @@ public final class JoustAbi {
         return out;
     }
 
+    /**
+     * The bound acceptance's explicit refusal of {@code contract} in task output, or null: a JSC0002 line saying
+     * {@code not accepted} for that contract's manifest (Gradle's AcceptJscAbi, npm's {@code --accept-abi=}).
+     */
+    public static String refusal(String output, String contract) {
+        if (output == null) return null;
+        String simple = contract.substring(contract.lastIndexOf('.') + 1);
+        for (String line : output.split("\n", 2000)) {
+            if (line.contains("error[JSC0002]") && line.contains("not accepted") && line.contains(simple + ".abi.json")) {
+                return line.length() > 1000 ? line.substring(0, 1000) : line.strip();
+            }
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------ the diff
 
     /** Parses and validates the {@code --out} JSON (size-capped). */
