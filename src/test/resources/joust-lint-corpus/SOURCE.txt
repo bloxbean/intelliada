@@ -1,0 +1,8 @@
+Corpus for IntelliAda's differential check of the JOUST inspections against JOUST's SubsetLint (ADR-004 D10, M2).
+
+examples/  every Java @StateContract under examples/*/src/main/java in JOUST (https://github.com/bloxbean/joust)
+           at tag v0.1.0-pre2 (eb06a65dcd9cfa2f35b376db3da6dc38349665f8), copied unchanged, except dsl/JavaShop.java
+           and rollup/Rollup.java, which need classes generated from .jsc libraries (Fees, Ledger) to compile.
+mutants/   copies of JOUST's Counter.java and Token.java (same tag) with one rule's violation injected each.
+
+JOUST is MIT licensed; its licence is in LICENSE-JOUST. Test data only: not compiled into the plugin.

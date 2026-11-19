@@ -101,8 +101,45 @@ generateParser {
     pathToPsiRoot = 'com/bloxbean/intelliada/idea/aiken/lang/psi'
 }
 
+// ADR-004 M2 (D10): the differential check of the JOUST inspections against JOUST's own SubsetLint. The processor jar and
+// the JOUST/JuLC API jars are a test-only configuration, not testImplementation: they are Java 25 class files (major
+// version 69), which the JDK 21 test JVM cannot load, so the test runs SubsetLint in a forked JDK 25 and uses the same
+// jars as libraries of its fixture project. Maven Central has julc-state-processor/-api 0.1.0-pre2 but not the JuLC
+// 0.1.0-pre21-rc1 they name (that is on JuLC's own repository), so JuLC resolves to 0.1.0-pre21, its release.
+configurations {
+    joustLint {
+        canBeConsumed = false
+        canBeResolved = true
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'org.julclang' && details.requested.version == '0.1.0-pre21-rc1') {
+                details.useVersion '0.1.0-pre21'
+                details.because 'JuLC 0.1.0-pre21-rc1 is not on Maven Central; 0.1.0-pre21 is its release'
+            }
+        }
+    }
+}
+
+dependencies {
+    joustLint 'org.julclang:julc-state-processor:0.1.0-pre2'
+    joustLint 'org.julclang:julc-state-api:0.1.0-pre2'
+}
+
+def joustLintLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+
 test {
     failOnNoDiscoveredTests = false
+    inputs.files(configurations.joustLint).withPropertyName('joustLintClasspath')
+    jvmArgumentProviders.add({
+        String java = project.findProperty('joustLintJava')
+        if (java == null) {
+            try {
+                java = joustLintLauncher.get().executablePath.asFile.absolutePath
+            } catch (Exception ignored) {
+                java = ''   // JoustSubsetLintDifferentialTest fails and says how to supply a JDK 25
+            }
+        }
+        ["-Djoust.lint.classpath=${configurations.joustLint.asPath}", "-Djoust.lint.java=${java}"]
+    } as CommandLineArgumentProvider)
 }
 
 // The IDE ships its own Kotlin standard library; the Kotlin Gradle plugin's older one on the test classpath stops the

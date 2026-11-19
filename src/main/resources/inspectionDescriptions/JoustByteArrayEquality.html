@@ -1,0 +1,13 @@
+<html>
+<body>
+Reports <code>byte[]</code> compared with <code>==</code> or <code>!=</code>, with <code>byte[].equals</code>, or with
+<code>Objects.equals</code> on a <code>byte[]</code> operand, inside a class annotated <code>@StateContract</code>.
+<p>The same method runs on the JVM and on chain. On the JVM these compare references; on chain they compare bytes, so the
+two runs can disagree. JuLC rejects them itself (JULC0086 for <code>==</code>/<code>!=</code>, JULC0087 for
+<code>equals</code>); this inspection is earlier feedback.</p>
+<p>The quick fix rewrites the comparison to <code>ByteStringLib.equals(a, b)</code> and imports
+<code>org.julclang.stdlib.lib.ByteStringLib</code>.</p>
+<!-- tooltip end -->
+<p>Advice only: JOUST's build stays the authority (IntelliAda ADR-004 D10).</p>
+</body>
+</html>
