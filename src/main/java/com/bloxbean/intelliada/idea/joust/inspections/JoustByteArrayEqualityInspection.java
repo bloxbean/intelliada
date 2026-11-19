@@ -16,7 +16,9 @@ import org.jetbrains.annotations.NotNull;
  * ADR-004 D10, first row: in a {@code @StateContract} class, {@code byte[]} compared with {@code ==}/{@code !=}
  * (JuLC's JULC0086), with {@code byte[].equals} (JULC0087) or with {@code Objects.equals} on a {@code byte[]} operand
  * (JULC0087). On the JVM these compare references, on chain bytes. Earlier feedback for the pinned JuLC's own errors
- * (F28), with {@link ByteStringLibEqualsFix}.
+ * (F28). The {@link ByteStringLibEqualsFix} quick fix is offered only when both operands are {@code byte[]}: JuLC's
+ * {@code ByteStringLib.equals} takes {@code (byte[], byte[])}, so rewriting {@code Objects.equals(Object, byte[])} or
+ * {@code bytes == null} would not compile. The warning stays.
  */
 public final class JoustByteArrayEqualityInspection extends JoustContractInspection {
 
@@ -36,7 +38,7 @@ public final class JoustByteArrayEqualityInspection extends JoustContractInspect
                 if (!JoustStateContracts.isInStateContract(expression)) return;
                 holder.registerProblem(expression, "byte[] " + expression.getOperationSign().getText() + " "
                                 + HAZARD + " (JuLC JULC0086)", ProblemHighlightType.GENERIC_ERROR_OR_WARNING,
-                        new ByteStringLibEqualsFix());
+                        ByteStringLibEqualsFix.fixesFor(expression));
             }
 
             @Override
@@ -56,7 +58,7 @@ public final class JoustByteArrayEqualityInspection extends JoustContractInspect
                 }
                 if (!JoustStateContracts.isInStateContract(call)) return;
                 holder.registerProblem(call, what + " " + HAZARD + " (JuLC JULC0087)",
-                        ProblemHighlightType.GENERIC_ERROR_OR_WARNING, new ByteStringLibEqualsFix());
+                        ProblemHighlightType.GENERIC_ERROR_OR_WARNING, ByteStringLibEqualsFix.fixesFor(call));
             }
         };
     }
