@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.joust.wizard;
 
 import com.bloxbean.intelliada.idea.common.CardanoIcons;
 import com.bloxbean.intelliada.idea.joust.core.JoustPaths;
+import com.bloxbean.intelliada.idea.joust.core.JoustPrivateTemp;
 import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.lsp.JoustNotifications;
 import com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots;
@@ -14,6 +15,7 @@ import com.intellij.ide.util.projectWizard.WizardContext;
 import com.intellij.ide.util.projectWizard.WizardInputField;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.ModifiableModuleModel;
 import com.intellij.openapi.module.Module;
@@ -263,6 +265,17 @@ public class JoustModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
         }));
     }
 
+    /**
+     * The title of the wizard's progress (M2-SEC-1): IntelliJ renders progress titles as HTML in the status-bar tooltip,
+     * so the project directory's name, which the user typed, is shown with {@code <} and {@code >} as their
+     * single-guillemet look-alikes {@code ‹ ›}, without control characters and capped.
+     */
+    static String progressTitle(String target) {
+        String name = target == null ? "" : JoustPaths.fileName(target.replaceAll("[/\\\\]+$", ""));
+        name = PlainText.clean(name, 60).replace('\n', ' ').replace('\t', ' ').replace('<', '\u2039').replace('>', '\u203A');
+        return name.isBlank() ? "Creating the JOUST project (joust new)" : "Creating the JOUST project " + name + " (joust new)";
+    }
+
     private static void linkGradle(Project project, String root) {
         JoustBuildLinker linker = JoustBuildLinker.getInstance();
         if (linker == null) {
@@ -284,6 +297,10 @@ public class JoustModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
         }
     }
 
+    /** What one Create did: the plan, and the outcome when it ran. */
+    private record Attempt(JoustNewPlanner.Plan plan, JoustNewRunner.Outcome outcome) {
+    }
+
     /** Plans and runs {@code joust new} into {@code target}; false (and the user told) when it did not succeed. */
     private boolean scaffold(@Nullable Project project, String target) {
         JoustToolsState state = JoustToolsState.getInstance();
@@ -293,22 +310,24 @@ public class JoustModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
                 template.takesPackage() ? pkg : null, target, chosen == null ? null : chosen.getHomePath());
         JoustNewPlanner.ToolSettings tools = new JoustNewPlanner.ToolSettings(d.joustCliPath, state.validatedJoustCli(),
                 d.nodePath, state.validatedNode());
-        Path workDir = Path.of(System.getProperty("java.io.tmpdir"));
-        JoustNewPlanner.Plan plan = JoustNewPlanner.plan(request, tools, System.getenv(), JoustForbiddenRoots.ofOpenProjects(),
-                workDir, JoustPaths.Flavor.current());
-        if (!plan.ok()) {
-            fail(project, plan.error());
-            return false;
-        }
-        LOG.info("JOUST wizard: " + JoustNewCommand.display(plan.command()) + " with PATH=" + plan.env().get("PATH")
-                + " JAVA_HOME=" + plan.env().get("JAVA_HOME"));
-        JoustNewRunner.Outcome outcome;
+        // E12 (M2-CDX-11): the working directory and the child's TMPDIR are a private directory under the IDE's own
+        // temporary directory, created by the planner only after it is checked against every open project.
+        Path tempBase = Path.of(PathManager.getTempPath());
+        List<Path> forbidden = JoustForbiddenRoots.ofOpenProjects();
+        Attempt attempt;
         try {
-            outcome = run(plan, project);
+            // M2-CDX-17: planning hashes the tools, so it runs with joust new, off the EDT.
+            attempt = inBackground(() -> planAndRun(request, tools, forbidden, tempBase), progressTitle(target), project);
         } catch (IOException e) {
             fail(project, "joust could not be started: " + e.getMessage());
             return false;
         }
+        JoustNewPlanner.Plan plan = attempt.plan();
+        if (!plan.ok()) {
+            fail(project, plan.error());
+            return false;
+        }
+        JoustNewRunner.Outcome outcome = attempt.outcome();
         if (!outcome.ok()) {
             String why = outcome.cancelled() ? "was cancelled" : outcome.timedOut() ? "did not finish in "
                     + TIMEOUT.toMinutes() + " minutes" : "exited with " + outcome.exitCode();
@@ -321,13 +340,26 @@ public class JoustModuleBuilder extends ModuleBuilder implements ModuleBuilderLi
         return true;
     }
 
-    private static JoustNewRunner.Outcome run(JoustNewPlanner.Plan plan, @Nullable Project project) throws IOException {
-        if (ApplicationManager.getApplication().isDispatchThread()) {
-            return ProgressManager.getInstance().runProcessWithProgressSynchronously(
-                    () -> JoustNewRunner.run(plan.command(), plan.env(), plan.workDir(), TIMEOUT, cancelled()),
-                    "Creating the JOUST project (joust new)", true, project);
+    private static Attempt planAndRun(JoustNewPlanner.Request request, JoustNewPlanner.ToolSettings tools,
+                                      List<Path> forbidden, Path tempBase) throws IOException {
+        JoustNewPlanner.Plan plan = JoustNewPlanner.plan(request, tools, System.getenv(), forbidden, tempBase,
+                JoustPaths.Flavor.current());
+        if (!plan.ok()) return new Attempt(plan, null);
+        LOG.info("JOUST wizard: " + JoustNewCommand.display(plan.command()) + " with PATH=" + plan.env().get("PATH")
+                + " JAVA_HOME=" + plan.env().get("JAVA_HOME") + " in " + plan.workDir());
+        try {
+            return new Attempt(plan, JoustNewRunner.run(plan.command(), plan.env(), plan.workDir(), TIMEOUT, cancelled()));
+        } finally {
+            JoustPrivateTemp.deleteTree(plan.workDir());
         }
-        return JoustNewRunner.run(plan.command(), plan.env(), plan.workDir(), TIMEOUT, cancelled());
+    }
+
+    private static Attempt inBackground(com.intellij.openapi.util.ThrowableComputable<Attempt, IOException> work, String title,
+                                        @Nullable Project project) throws IOException {
+        if (ApplicationManager.getApplication().isDispatchThread()) {
+            return ProgressManager.getInstance().runProcessWithProgressSynchronously(work, title, true, project);
+        }
+        return work.compute();
     }
 
     private static BooleanSupplier cancelled() {

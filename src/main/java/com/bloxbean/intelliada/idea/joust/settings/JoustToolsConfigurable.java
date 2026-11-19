@@ -226,14 +226,16 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
      * its identity. Refused when the answer is not a {@code joust <version>} line.
      */
     private static ValidatedCli validateCli(String cli) throws ConfigurationException {
-        JoustToolValidator.Result r = JoustToolValidator.checkExecutable(cli, "joust", JoustForbiddenRoots.ofOpenProjects(),
-                JoustPaths.Flavor.current());
+        List<Path> roots = JoustForbiddenRoots.ofOpenProjects();
+        JoustToolValidator.Result r = JoustToolValidator.checkExecutable(cli, "joust", roots, JoustPaths.Flavor.current());
         if (!r.ok()) throw new ConfigurationException(r.error(), "joust");
         String line;
         NodeIdentity id;
         try {
+            // M2-CDX-11: a private directory under the IDE's own temporary directory, checked before it is created.
+            Path tempBase = Path.of(com.intellij.openapi.application.PathManager.getTempPath());
             line = ProgressManager.getInstance().runProcessWithProgressSynchronously(
-                    () -> JoustCliVersionProbe.probe(r.realPath()), "Checking joust", true, null);
+                    () -> JoustCliVersionProbe.probe(r.realPath(), tempBase, roots), "Checking joust", true, null);
             id = JoustToolValidator.identityOf(r.realPath());
         } catch (IOException e) {
             throw new ConfigurationException("joust could not be run: " + e.getMessage(), "joust");
