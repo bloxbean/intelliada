@@ -370,7 +370,7 @@ Q8 is decided: per-project opt-in. **r3 amends it (L19):** the opt-in is deferre
   - **Gradle:** through IntelliJ's Gradle integration (`ExternalSystemUtil`, an optional dependency on `com.intellij.gradle`), so the project's Gradle JVM and wrapper apply, only under D1. Each run uses **freshly built execution settings**, never a run configuration stored in `.idea/`. In a multi-project build, every task is addressed by its **qualified path** (`:module:generateJsc`) for the module that owns the file.
   - **IDEs without the Gradle plugin:** the Gradle actions are hidden.
   - **npm projects:** the same actions run the project's own CLI, only under D1, with the package's real path inside the project: `<node> node_modules/@julclang/joust/bin/joust.js build`, and `joust fmt <file>`.
-- **Diagnostics in consoles.** Build output lines in JOUST's formats become hyperlinks, resolved only to real paths inside the project's contracts directory (I18). The formats are `org/acme/File.jsc:12:5: error[JSC0502]: …` from `remapJscDiagnostics`, and the npm form `error[JSC0502]: app/File.jsc:12:5: …`.
+- **Diagnostics in consoles.** Build output lines in JOUST's formats become hyperlinks, resolved only to real paths inside the project's contracts directory (I18). Both build paths print `app/File.jsc:12:5: error[JSC0502]: …`, the file relative to the contracts directory (Gradle's `remapJscDiagnostics`; npm's `diagnosticLine` in `js/joust/src/build.js` at v0.1.0-pre2, corrected in r12: the earlier npm example had the code first). IntelliAda also accepts the code-first form.
 
 ### D8. The ABI-change experience
 
@@ -690,6 +690,20 @@ without changing it; none relaxes an invariant.
 | E12 | I21 | IntelliAda's own files outside projects (the TextMate bundle, joust-lsp's storage) are written only to a destination resolved through its real ancestors and checked against every open project before anything is created | M1-CDX-28, M1-CDX-4 |
 | E11 | D3a item 7, I18 | Diagnostics are accepted only for a local `file:` document the server has open; an unsolicited or remote URI is dropped before any lookup. On Windows, where path equality folds case, an ancestor must spell the project base exactly | M1-CDX-24, M1-CDX-3 |
 
+### 12.1 Implementation refinements (M2, r12)
+
+M2's review (PR #22) refined D7–D9 the same way.
+
+| # | Refines | Refinement | Found by |
+|---|---|---|---|
+| E13 | D1, I2, I20 | An action is bound to a **run guard** taken when the user invokes it: the project, trusted, in the current task generation. Every launch and every continuation after a dialog (review, confirm) checks it; losing trust or closing the project ends it, and trusting again does not revive it. A run is registered before its process or Gradle task exists, and a cancellation that arrives first is applied as soon as the real handle does | M2-DES-2, M2-DES-3, M2-CDX-2, M2-CDX-3 |
+| E14 | D7 | Gradle tasks run in a freshly built execution environment whose **before-launch tasks are cleared**: IntelliJ copies them from the project's Gradle run-configuration template otherwise | M2-CDX-4 |
+| E15 | D8, I8 | Review is bound to the **selected `.jsc`**: the contract is its qualified name under the contracts directory, and the diff must name exactly that contract, that source file (by real path) and the manifest beside it. Before accepting, the baseline is checked again; afterwards, the manifest went from the reviewed baseline to the new hash, and an inventory of every manifest, taken from a fresh scan before and after, must be complete and otherwise unchanged. The diff is exchanged in IntelliAda's own verified temporary directory | M2-CDX-5, M2-CDX-6, M2-CDX-7, M2-SEC-3, M2-SEC-5 |
+| E16 | D7, I18 | A file's owner follows JOUST's own rule (`js/joust/src/project.js`): the nearest npm root or Gradle build walking up, npm first in one directory; a settings file naming the plugin makes its build's root a JOUST module. Contracts and generated directories (Gradle and npm, `build/joust/generated`) are used only when their real path is exactly where their owner says; console links are resolved again when clicked | M2-CDX-9, M2-CDX-12, M2-CDX-14 |
+| E17 | D8 step 1 | A JSC0002/JSC0003 failure from any Gradle run names the module whose task failed; when the output does not say and the source is in several modules, the notification names them and offers no action | M2-DES-5, M2-CDX-13 |
+| E18 | D9, I7 | The wizard refuses a `PATH` directory containing the path separator and checks that the child's `PATH` splits into exactly the validated directories; its temporary directory (the child's `TMPDIR`) is IntelliAda's own, verified outside every project | M2-CDX-10, M2-CDX-11 |
+| E19 | D3a, I15 | Every task and progress title built from project text (module and file names) uses `‹` and `›` for angle brackets, like E6's progress titles | M2-SEC-1 |
+
 LSP4IJ 0.10.0's `EditorFeatureManager` clears the inlay-hint cache on a pooled thread when a server starts or stops,
 which IntelliJ 2026.1 reports as a soft threading assertion. It is a defect of the pinned dependency, tracked for the
 LSP4IJ upgrade (Q11).
@@ -779,3 +793,4 @@ LSP4IJ upgrade (Q11).
 - **r9** (2026-11-19, after M1 review round 3): §12 E6 refined (text kept, HTML detection defused); E12 added.
 - **r10** (2026-11-19, after M1 review round 4): §12 E3 and E10 refined.
 - **r11** (2026-11-19, after M1 review round 5): §12 E3, E6 and E10 refined.
+- **r12** (2026-11-19, after M2 review round 1): §12.1 (E13–E19) added; D7's npm diagnostic example corrected (M2-CDX-14).
