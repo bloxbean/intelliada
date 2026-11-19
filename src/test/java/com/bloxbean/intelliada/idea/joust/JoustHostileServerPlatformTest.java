@@ -271,8 +271,11 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         assertTrue(shown.length() <= 210 && !shown.contains("\u001b"));
         // Titles keep the server's characters (r9 E6, M1-CDX-13): controls go, <html> is defused, List<T> stays.
         String title = features.getProgressFeature().getProgressTaskTitle("\u001b[31m<html><b>T</b>");
-        assertTrue(title, title.startsWith("JOUST") && title.endsWith("<html><b>T</b>") && !title.contains("\u001b"));
-        assertTrue(features.getProgressFeature().getProgressTaskTitle("Checking List<T>").endsWith("Checking List<T>"));
+        assertTrue(title, title.startsWith("JOUST") && title.endsWith("\u2039html\u203A\u2039b\u203AT\u2039/b\u203A") && !title.contains("\u001b"));
+        // The title reaches an HTML tooltip (M1-SEC-8): no '<' at all, the text still readable.
+        String img = features.getProgressFeature().getProgressTaskTitle("<img src=x>");
+        assertFalse(img, img.contains("<"));
+        assertTrue(features.getProgressFeature().getProgressTaskTitle("Checking List<T>").endsWith("Checking List\u2039T\u203A"));
 
         // --- messages, and the error LSP4IJ shows for a request it issued itself (I15, M1-SEC-1)
         PlatformTestUtil.waitWithEventsDispatching("the showMessage notification", () -> notifications.stream()

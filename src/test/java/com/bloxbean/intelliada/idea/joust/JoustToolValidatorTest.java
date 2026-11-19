@@ -163,34 +163,67 @@ public class JoustToolValidatorTest {
         assertEquals(probes, com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe.invocations());
     }
 
-    /** M1-CDX-5: only this host's native format, structurally; truncated and foreign headers are refused. */
+    /** M1-CDX-5: only this host's native format, structurally; truncated, headerless and foreign files are refused. */
     @Test
     public void onlyTheHostsNativeFormat() throws Exception {
-        assertTrue(JoustToolValidator.isNativeExecutable(node.toRealPath(), flavor));
-        Path truncated = tools.resolve("t/node");
-        Files.createDirectories(truncated.getParent());
-        Files.write(truncated, new byte[]{(byte) 0xCF, (byte) 0xFA, (byte) 0xED, (byte) 0xFE, 0, 0, 0, 0});
-        truncated.toFile().setExecutable(true);
-        assertFalse(JoustToolValidator.checkNode(truncated.toString(), roots, flavor).ok());
-        byte[] elf = new byte[128];
-        elf[0] = 0x7F; elf[1] = 'E'; elf[2] = 'L'; elf[3] = 'F'; elf[4] = 2; elf[5] = 1; elf[16] = 2;
-        byte[] macho = new byte[128];
+        assertTrue("the host's own executable", JoustToolValidator.isNativeExecutable(node.toRealPath(), flavor));
+        if (flavor == JoustPaths.Flavor.MAC) {
+            assertTrue("/bin/ls (universal)", JoustToolValidator.isNativeExecutable(Path.of("/bin/ls"), JoustPaths.Flavor.MAC));
+            assertFalse("ELF rules refuse Mach-O", JoustToolValidator.isNativeExecutable(Path.of("/bin/ls"), JoustPaths.Flavor.UNIX));
+            assertFalse("PE rules refuse Mach-O", JoustToolValidator.isNativeExecutable(Path.of("/bin/ls"), JoustPaths.Flavor.WINDOWS));
+        }
+        Path f = Files.createDirectories(tools.resolve("t")).resolve("x");
+        // Magic alone, zero-filled: no file type, no load commands, no program headers, no PE header.
+        byte[] macho = new byte[4096];
         macho[0] = (byte) 0xCF; macho[1] = (byte) 0xFA; macho[2] = (byte) 0xED; macho[3] = (byte) 0xFE;
-        byte[] mz = new byte[128];
-        mz[0] = 'M'; mz[1] = 'Z';
-        Path f = tools.resolve("t/x");
-        Files.write(f, elf);
-        assertEquals(JoustPaths.Flavor.UNIX == JoustPaths.Flavor.UNIX, JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.UNIX));
-        assertFalse("ELF is foreign on macOS", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
         Files.write(f, macho);
-        assertTrue(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
-        assertFalse(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.UNIX));
+        assertFalse("Mach-O magic without MH_EXECUTE or load commands", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+        byte[] elf = new byte[4096];
+        elf[0] = 0x7F; elf[1] = 'E'; elf[2] = 'L'; elf[3] = 'F'; elf[4] = 2; elf[5] = 1; elf[6] = 1; elf[16] = 2;
+        Files.write(f, elf);
+        assertFalse("ELF without a machine or program headers", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.UNIX));
+        // A structurally complete ELF64 header with one program header is accepted on Linux, refused elsewhere.
+        elf[18] = (byte) 0xB7;            // e_machine: aarch64
+        elf[32] = 64;                     // e_phoff
+        elf[54] = 56;                     // e_phentsize
+        elf[56] = 1;                      // e_phnum
+        Files.write(f, elf);
+        assertTrue(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.UNIX));
+        assertFalse(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+        Files.write(f, java.util.Arrays.copyOf(elf, 80));
+        assertFalse("program header table past the end", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.UNIX));
+        byte[] mz = new byte[4096];
+        mz[0] = 'M'; mz[1] = 'Z';
         Files.write(f, mz);
         assertFalse("MZ without a PE header", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
-        byte[] cafe = new byte[128];
+        mz[0x3C] = (byte) 0xFC; mz[0x3D] = (byte) 0xFF; mz[0x3E] = (byte) 0xFF; mz[0x3F] = (byte) 0x7F;
+        Files.write(f, mz);
+        assertFalse("an e_lfanew near Integer.MAX_VALUE neither overflows nor throws",
+                JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
+        mz[0x3F] = (byte) 0xFF;
+        Files.write(f, mz);
+        assertFalse(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
+        byte[] cafe = new byte[4096];
         cafe[0] = (byte) 0xCA; cafe[1] = (byte) 0xFE; cafe[2] = (byte) 0xBA; cafe[3] = (byte) 0xBE; cafe[7] = 65;
         Files.write(f, cafe);
         assertFalse("a Java class file is not universal Mach-O (M1-DES-19)", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+        cafe[7] = 1;
+        Files.write(f, cafe);
+        assertFalse("a universal header whose slice is not a Mach-O", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+        Path truncated = tools.resolve("t/node");
+        Files.write(truncated, java.util.Arrays.copyOf(Files.readAllBytes(node.toRealPath()), 40));
+        truncated.toFile().setExecutable(true);
+        assertFalse("a truncated copy of the host's node", JoustToolValidator.checkNode(truncated.toString(), roots, flavor).ok());
+    }
+
+    /** M1-CDX-30 (P2): a shallow path ending in node_modules/@julclang/joust/bin returns a refusal, not an exception. */
+    @Test
+    public void aShallowInstallationPathIsRefusedNotThrown() {
+        JoustToolValidator.Result r = JoustToolValidator.resolveJoustLsp("/node_modules/@julclang/joust/bin/joust-lsp.js", roots,
+                JoustPaths.Flavor.UNIX);
+        assertFalse(r.ok());
+        assertFalse(JoustToolValidator.named(Path.of("/"), "lib"));
+        assertFalse(JoustToolValidator.named(null, "lib"));
     }
 
     /** M1-CDX-30: the right package name and entry point outside a global npm layout is refused. */

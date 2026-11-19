@@ -72,7 +72,7 @@ public class JoustSanitizingInputTest {
     public void messagesAndFoldingPlaceholdersBecomeLiteral() throws Exception {
         var log = through(frame("{\"jsonrpc\":\"2.0\",\"method\":\"window/logMessage\",\"params\":{\"type\":3,\"message\":\"\\u001b[31m<html><b>x</b>\"}}")).get(0);
         String m = log.getJSONObject("params").getString("message");
-        assertEquals("the user's characters are kept; only controls go (M1-CDX-13)", "[31m<html><b>x</b>".replace("[31m", ""), m);
+        assertEquals("the characters are kept; controls go; an <html> start is defused (r9 E6, M1-CDX-13)", "\u200B<html><b>x</b>", m);
         var fold = through(frame("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":[{\"startLine\":0,\"endLine\":2,\"collapsedText\":\"<html><img src=x>"
                 + "z".repeat(1000) + "\"}]}")).get(0);
         String c = fold.getJSONArray("result").getJSONObject(0).getString("collapsedText");
@@ -140,6 +140,10 @@ public class JoustSanitizingInputTest {
         // Brackets inside single-quoted strings cannot skew the depth count: single quotes are refused (M1-CDX-27).
         assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":['" + "]".repeat(70) + "']}").getBytes(StandardCharsets.UTF_8)).size());
         assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{x:1}}").getBytes(StandardCharsets.UTF_8)).size());
+        // A trailing comma is not JSON (M1-CDX-22).
+        assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":1,}").getBytes(StandardCharsets.UTF_8)).size());
+        assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":[1,]}").getBytes(StandardCharsets.UTF_8)).size());
+        assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":01}").getBytes(StandardCharsets.UTF_8)).size());
         // A wide, shallow response is fine.
         String wide = "[" + "[1,2,3],".repeat(20_000) + "[4]]";
         assertEquals(1, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":" + wide + "}").getBytes(StandardCharsets.UTF_8)).size());
@@ -176,5 +180,24 @@ public class JoustSanitizingInputTest {
         assertEquals(List.of(), through(frame("{not json")));
         assertEquals("an unknown header ends the stream", List.of(), through("X-Evil: 1\r\n" + frame("{\"id\":1}")));
         assertEquals("two lengths end the stream", List.of(), through("Content-Length: 2\r\n" + frame("{}")));
+    }
+
+    /** M1-CDX-27: the container and value budgets hold for shallow frames; the boundary with a small budget. */
+    @Test
+    public void budgetsBoundShallowFrames() {
+        var b = new JoustStrictJson.Budget(64, 5, 1_000);
+        String four = "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":[[],[],[]]}";   // 5 containers
+        String five = "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":[[],[],[],[]]}"; // 6 containers
+        assertNotNull(JoustSanitizingInput.sanitize(four.getBytes(StandardCharsets.UTF_8), b));
+        assertNull(JoustSanitizingInput.sanitize(five.getBytes(StandardCharsets.UTF_8), b));
+        var v = new JoustStrictJson.Budget(64, 100, 6);
+        assertNotNull(JoustSanitizingInput.sanitize("{\"a\":1,\"b\":2,\"c\":[3,4]}".getBytes(StandardCharsets.UTF_8), v));
+        assertNull(JoustSanitizingInput.sanitize("{\"a\":1,\"b\":2,\"c\":[3,4,5]}".getBytes(StandardCharsets.UTF_8), v));
+        String deep = "{\"r\":" + "[".repeat(63) + "]".repeat(63) + "}";
+        assertNotNull(JoustSanitizingInput.sanitize(deep.getBytes(StandardCharsets.UTF_8)));
+        assertNull(JoustSanitizingInput.sanitize(("{\"r\":" + "[".repeat(64) + "]".repeat(64) + "}").getBytes(StandardCharsets.UTF_8)));
+        // The default budget refuses millions of tiny arrays before building them.
+        String many = "{\"r\":[" + "[],".repeat(150_000) + "[]]}";
+        assertNull(JoustSanitizingInput.sanitize(many.getBytes(StandardCharsets.UTF_8)));
     }
 }

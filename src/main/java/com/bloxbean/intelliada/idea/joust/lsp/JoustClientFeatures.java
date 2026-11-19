@@ -169,7 +169,11 @@ public class JoustClientFeatures extends LSPClientFeatures {
     static final class SafeProgressFeature extends LSPProgressFeature {
         @Override
         public String getProgressTaskTitle(String title) {
-            return PlainText.literal(super.getProgressTaskTitle(PlainText.clean(title, PROGRESS_TEXT_CAP)), PROGRESS_TEXT_CAP).replace('\n', ' ');
+            // The status bar puts the title in a tooltip, which IntelliJ renders as HTML without escaping plain text
+            // (M1-SEC-8): angle brackets become their single-guillemet look-alikes, so List<T> reads List‹T› and no
+            // tag can form. Every other character is kept (r9 E6, M1-CDX-13).
+            return PlainText.literal(super.getProgressTaskTitle(PlainText.clean(title, PROGRESS_TEXT_CAP)), PROGRESS_TEXT_CAP)
+                    .replace('\n', ' ').replace('<', '\u2039').replace('>', '\u203A');
         }
 
         @Override

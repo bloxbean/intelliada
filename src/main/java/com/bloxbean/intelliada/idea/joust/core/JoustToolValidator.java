@@ -128,11 +128,9 @@ public final class JoustToolValidator {
         // <prefix>\node_modules\@julclang\joust\bin\joust-lsp.js), not any checkout that happens to look alike (M1-CDX-30).
         Path scope = pkg == null ? null : pkg.getParent();
         Path nodeModules = scope == null ? null : scope.getParent();
-        if (bin == null || !bin.getFileName().toString().equals("bin") || pkg == null || !pkg.getFileName().toString().equals("joust")
-                || scope == null || !scope.getFileName().toString().equals("@julclang") || nodeModules == null
-                || !nodeModules.getFileName().toString().equals("node_modules")
-                || (flavor != JoustPaths.Flavor.WINDOWS && !windowsLayout && (nodeModules.getParent() == null
-                        || !nodeModules.getParent().getFileName().toString().equals("lib")))) {
+        // Names are compared without dereferencing a root's null file name (M1-CDX-30).
+        if (!named(bin, "bin") || !named(pkg, "joust") || !named(scope, "@julclang") || !named(nodeModules, "node_modules")
+                || (flavor != JoustPaths.Flavor.WINDOWS && !windowsLayout && !named(nodeModules.getParent(), "lib"))) {
             return Result.fail(selected, "joust-lsp.js is not in a global npm installation of @julclang/joust: " + real);
         }
         String name = readPackageField(pkg.resolve("package.json"), "name");
@@ -145,44 +143,140 @@ public final class JoustToolValidator {
     }
 
     /**
-     * True only for an executable in <b>this host's</b> native format, structurally checked (M1-CDX-5): Mach-O on macOS
-     * (thin, or universal with a plausible architecture count), ELF on Linux (a 32- or 64-bit executable or shared object),
-     * PE on Windows ({@code MZ} and a {@code PE\0\0} signature where its header says). A truncated or foreign file is
-     * refused; the JDK would otherwise run some through {@code /bin/sh}.
+     * True only for an executable in <b>this host's</b> native format, structurally checked (M1-CDX-5): every offset is
+     * read as unsigned, bounds are computed in {@code long}, and tables must lie inside the file.
+     * <ul>
+     *   <li><b>macOS:</b> a thin Mach-O of type {@code MH_EXECUTE} with a bounded, non-empty load-command table whose
+     *   first command fits; or a universal file (1–8 slices, each inside the file) whose every slice is such a Mach-O.</li>
+     *   <li><b>Linux:</b> ELF, 32- or 64-bit, of type {@code ET_EXEC} or {@code ET_DYN}, with a machine, and a non-empty
+     *   program-header table of the right entry size inside the file.</li>
+     *   <li><b>Windows:</b> {@code MZ}, then {@code PE\0\0} at {@code e_lfanew} inside the file, a machine, at least one
+     *   section, an optional header, and the executable-image characteristic.</li>
+     * </ul>
+     * Anything else, truncated or foreign, is refused: the JDK would otherwise run some files through {@code /bin/sh}.
      */
+    public static boolean named(Path p, String name) {
+        Path f = p == null ? null : p.getFileName();
+        return f != null && f.toString().equals(name);
+    }
+
     static boolean isNativeExecutable(Path real) {
         return isNativeExecutable(real, JoustPaths.Flavor.current());
     }
 
     public static boolean isNativeExecutable(Path real, JoustPaths.Flavor host) {
-        byte[] h;
-        try (InputStream in = Files.newInputStream(real)) {
-            h = in.readNBytes(4096);
-        } catch (IOException e) {
+        try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(real, java.nio.file.StandardOpenOption.READ)) {
+            long size = ch.size();
+            return switch (host) {
+                case MAC -> macho(ch, size);
+                case UNIX -> elf(ch, size);
+                case WINDOWS -> pe(ch, size);
+            };
+        } catch (IOException | RuntimeException e) {
             return false;
         }
-        if (h.length < 64) return false;
-        int be = u32be(h, 0);
-        return switch (host) {
-            case MAC -> be == 0xFEEDFACE || be == 0xFEEDFACF || be == 0xCEFAEDFE || be == 0xCFFAEDFE
-                    || ((be == 0xCAFEBABE || be == 0xCAFEBABF) && u32be(h, 4) >= 1 && u32be(h, 4) <= 8);
-            case UNIX -> be == 0x7F454C46 && (h[4] == 1 || h[4] == 2) && (h[5] == 1 || h[5] == 2)
-                    && (elfType(h) == 2 || elfType(h) == 3);
-            case WINDOWS -> h[0] == 'M' && h[1] == 'Z' && pe(h);
-        };
     }
 
-    private static int u32be(byte[] h, int o) {
-        return ((h[o] & 0xff) << 24) | ((h[o + 1] & 0xff) << 16) | ((h[o + 2] & 0xff) << 8) | (h[o + 3] & 0xff);
+    private static java.nio.ByteBuffer read(java.nio.channels.FileChannel ch, long size, long at, int n) throws IOException {
+        if (at < 0 || n < 0 || at + n > size) return null;
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(n);
+        while (b.hasRemaining()) {
+            if (ch.read(b, at + b.position()) < 0) return null;
+        }
+        return b.flip();
     }
 
-    private static int elfType(byte[] h) {
-        return h[5] == 1 ? (h[16] & 0xff) | ((h[17] & 0xff) << 8) : ((h[16] & 0xff) << 8) | (h[17] & 0xff);
+    private static boolean macho(java.nio.channels.FileChannel ch, long size) throws IOException {
+        java.nio.ByteBuffer h = read(ch, size, 0, 8);
+        if (h == null) return false;
+        int magic = h.getInt(0);
+        if (magic == 0xCAFEBABE || magic == 0xCAFEBABF) {
+            boolean wide = magic == 0xCAFEBABF;
+            long n = Integer.toUnsignedLong(h.getInt(4));
+            if (n < 1 || n > 8) return false;   // a Java class file has its version here (M1-DES-19)
+            int entry = wide ? 32 : 20;
+            java.nio.ByteBuffer t = read(ch, size, 8, (int) n * entry);
+            if (t == null) return false;
+            for (int k = 0; k < n; k++) {
+                long off = wide ? t.getLong(k * entry + 8) : Integer.toUnsignedLong(t.getInt(k * entry + 8));
+                long len = wide ? t.getLong(k * entry + 16) : Integer.toUnsignedLong(t.getInt(k * entry + 12));
+                if (off < 8 + n * entry || len < 32 || off > size || len > size - off) return false;
+                if (!thinMacho(ch, off, off + len)) return false;
+            }
+            return true;
+        }
+        return thinMacho(ch, 0, size);
     }
 
-    private static boolean pe(byte[] h) {
-        int off = (h[0x3C] & 0xff) | ((h[0x3D] & 0xff) << 8) | ((h[0x3E] & 0xff) << 16) | ((h[0x3F] & 0xff) << 24);
-        return off >= 0x40 && off + 4 <= h.length && h[off] == 'P' && h[off + 1] == 'E' && h[off + 2] == 0 && h[off + 3] == 0;
+    private static boolean thinMacho(java.nio.channels.FileChannel ch, long start, long end) throws IOException {
+        java.nio.ByteBuffer h = read(ch, end, start, 32);
+        if (h == null) return false;
+        int magic = h.getInt(0);
+        boolean is64;
+        if (magic == 0xFEEDFACE || magic == 0xFEEDFACF) {
+            h.order(java.nio.ByteOrder.BIG_ENDIAN);
+        } else if (magic == 0xCEFAEDFE || magic == 0xCFFAEDFE) {
+            h.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        } else {
+            return false;
+        }
+        is64 = magic == 0xFEEDFACF || magic == 0xCFFAEDFE;
+        int headerSize = is64 ? 32 : 28;
+        int fileType = h.getInt(12);
+        long ncmds = Integer.toUnsignedLong(h.getInt(16));
+        long sizeofcmds = Integer.toUnsignedLong(h.getInt(20));
+        if (fileType != 2 /* MH_EXECUTE */ || ncmds < 1 || ncmds > 10_000 || sizeofcmds < 8 * ncmds
+                || sizeofcmds > end - start - headerSize) {
+            return false;
+        }
+        java.nio.ByteBuffer cmd = read(ch, end, start + headerSize, 8);
+        if (cmd == null) return false;
+        cmd.order(h.order());
+        long cmdsize = Integer.toUnsignedLong(cmd.getInt(4));
+        return cmdsize >= 8 && cmdsize <= sizeofcmds;
+    }
+
+    private static boolean elf(java.nio.channels.FileChannel ch, long size) throws IOException {
+        java.nio.ByteBuffer h = read(ch, size, 0, 64);
+        if (h == null || h.getInt(0) != 0x7F454C46) return false;
+        int cls = h.get(4);
+        int data = h.get(5);
+        if ((cls != 1 && cls != 2) || (data != 1 && data != 2) || h.get(6) != 1) return false;
+        h.order(data == 1 ? java.nio.ByteOrder.LITTLE_ENDIAN : java.nio.ByteOrder.BIG_ENDIAN);
+        int type = Short.toUnsignedInt(h.getShort(16));
+        int machine = Short.toUnsignedInt(h.getShort(18));
+        long phoff;
+        int phentsize;
+        int phnum;
+        if (cls == 2) {
+            phoff = h.getLong(32);
+            phentsize = Short.toUnsignedInt(h.getShort(54));
+            phnum = Short.toUnsignedInt(h.getShort(56));
+            if (phentsize != 56) return false;
+        } else {
+            phoff = Integer.toUnsignedLong(h.getInt(28));
+            phentsize = Short.toUnsignedInt(h.getShort(42));
+            phnum = Short.toUnsignedInt(h.getShort(44));
+            if (phentsize != 32) return false;
+        }
+        return (type == 2 || type == 3) && machine != 0 && phnum >= 1 && phoff >= (cls == 2 ? 64 : 52) && phoff <= size
+                && (long) phnum * phentsize <= size - phoff;
+    }
+
+    private static boolean pe(java.nio.channels.FileChannel ch, long size) throws IOException {
+        java.nio.ByteBuffer h = read(ch, size, 0, 64);
+        if (h == null || h.get(0) != 'M' || h.get(1) != 'Z') return false;
+        h.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        long off = Integer.toUnsignedLong(h.getInt(0x3C));
+        if (off < 0x40) return false;
+        java.nio.ByteBuffer p = read(ch, size, off, 24);
+        if (p == null || p.get(0) != 'P' || p.get(1) != 'E' || p.get(2) != 0 || p.get(3) != 0) return false;
+        p.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        int machine = Short.toUnsignedInt(p.getShort(4));
+        int sections = Short.toUnsignedInt(p.getShort(6));
+        int optional = Short.toUnsignedInt(p.getShort(20));
+        int characteristics = Short.toUnsignedInt(p.getShort(22));
+        return machine != 0 && sections >= 1 && optional > 0 && (characteristics & 0x2) != 0 && optional <= size - off - 24;
     }
 
     /** True when the file is not a native executable (kept for callers that ask the opposite question). */

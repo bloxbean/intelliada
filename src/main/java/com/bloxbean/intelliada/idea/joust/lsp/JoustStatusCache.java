@@ -57,8 +57,10 @@ public final class JoustStatusCache {
 
     /** Forgets every cached declaration and refreshes the widget; reads already in flight are discarded (M1-CDX-15). */
     public void invalidateDeclarations() {
-        declarationGeneration.incrementAndGet();
-        declared.clear();
+        synchronized (declared) {
+            declarationGeneration.incrementAndGet();
+            declared.clear();
+        }
         refresh();
     }
 
@@ -81,7 +83,10 @@ public final class JoustStatusCache {
     /** Clears every status (the server stopped or restarted) and refreshes the widget (M1-CDX-15, M1-DES-12). */
     public void clear() {
         byUri.clear();
-        declared.clear();
+        synchronized (declared) {
+            declarationGeneration.incrementAndGet();
+            declared.clear();
+        }
         refresh();
     }
 
@@ -92,6 +97,22 @@ public final class JoustStatusCache {
      * The project's declaration for a file, from a cache filled off the EDT (M1-DES-16); {@code null} until computed.
      * The first call schedules the read and refreshes the widget when it is done.
      */
+    /**
+     * Publishes a read's result only if no invalidation happened since it started; the check and the write are one
+     * step with respect to invalidation (M1-CDX-15).
+     */
+    boolean publishDeclaration(int generation, String uri, com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.Declared d) {
+        synchronized (declared) {
+            if (generation != declarationGeneration.get()) return false;
+            declared.put(uri, java.util.Optional.ofNullable(d));
+            return true;
+        }
+    }
+
+    int declarationGeneration() {
+        return declarationGeneration.get();
+    }
+
     public com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.Declared declaredFor(String uri, java.nio.file.Path file) {
         var cached = declared.get(uri);
         if (cached != null) return cached.orElse(null);
@@ -102,8 +123,7 @@ public final class JoustStatusCache {
             try {
                 var base = com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.baseReal(project);
                 var d = com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.declared(file.toRealPath(), base);
-                if (generation != declarationGeneration.get()) return;   // invalidated while reading
-                declared.put(uri, java.util.Optional.ofNullable(d));
+                if (!publishDeclaration(generation, uri, d)) return;
                 refresh();
             } catch (java.io.IOException | RuntimeException ignored) {
                 // no declaration
