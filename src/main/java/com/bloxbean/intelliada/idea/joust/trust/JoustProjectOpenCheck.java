@@ -19,7 +19,8 @@ import java.util.List;
 
 /**
  * ADR-004 D4: when a project opens whose roots contain a configured tool path or its real target, the JOUST servers
- * stop (without being disabled: they start again once the conflict is gone) and the user is told. Nothing is executed:
+ * stop (without being disabled: they start again once the conflict is gone) and the user is told. The native
+ * {@code joust} of D9 gets the same check, and the user is told that the wizard will not run it. Nothing is executed:
  * the selected and real paths are checked against the new project's roots ({@link #conflict}).
  */
 public final class JoustProjectOpenCheck implements ProjectActivity {
@@ -27,6 +28,12 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
     @Override
     public @Nullable Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
         JoustToolsState state = JoustToolsState.getInstance();
+        String cli = state.getState().joustCliPath;
+        if (cli != null && !cli.isBlank()) {
+            // ADR-004 D9: the native joust is held to D4's rule too; the wizard refuses it while this project is open.
+            String c = conflict(new String[][]{{"joust", cli}}, JoustForbiddenRoots.of(project), JoustPaths.Flavor.current());
+            if (c != null) JoustNotifications.show(project, "JOUST new-project wizard disabled", c, NotificationType.WARNING);
+        }
         if (!state.looksConfigured()) return Unit.INSTANCE;
         String problem = conflict(state.getState().nodePath, state.getState().joustLspPath, JoustForbiddenRoots.of(project),
                 JoustPaths.Flavor.current());
@@ -39,7 +46,11 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
 
     /** Why a configured tool lies inside {@code roots} (selected or real path), or {@code null}. Executes nothing. */
     public static String conflict(String nodePath, String lspPath, List<Path> roots, JoustPaths.Flavor flavor) {
-        for (String[] tool : new String[][]{{"Node", nodePath}, {"joust-lsp", lspPath}}) {
+        return conflict(new String[][]{{"Node", nodePath}, {"joust-lsp", lspPath}}, roots, flavor);
+    }
+
+    static String conflict(String[][] tools, List<Path> roots, JoustPaths.Flavor flavor) {
+        for (String[] tool : tools) {
             if (tool[1] == null || tool[1].isBlank() || !JoustPaths.isAbsolute(tool[1].trim(), flavor)) continue;
             Path selected = Path.of(tool[1].trim());
             Path real;

@@ -79,6 +79,26 @@ public final class JoustToolDetector {
         return new ArrayList<>(out);
     }
 
+    /**
+     * ADR-004 D9: candidates for the native {@code joust}, found by reading directories only (nothing is run): absolute
+     * {@code PATH} entries and the usual install locations (Homebrew, {@code /usr/local/bin}, {@code ~/.local/bin},
+     * {@code ~/bin}).
+     */
+    public static List<Path> joustCliCandidates(Map<String, String> env, Path home, JoustPaths.Flavor flavor) {
+        String exe = flavor == JoustPaths.Flavor.WINDOWS ? "joust.exe" : "joust";
+        Set<Path> out = new LinkedHashSet<>();
+        for (Path dir : searchDirs(env, home, flavor)) addIfFile(out, dir.resolve(exe));
+        if (home != null) {
+            addIfFile(out, home.resolve(".local").resolve("bin").resolve(exe));
+            addIfFile(out, home.resolve("bin").resolve(exe));
+        }
+        if (flavor != JoustPaths.Flavor.WINDOWS) {
+            addIfFile(out, Path.of("/opt/homebrew/bin/joust"));
+            addIfFile(out, Path.of("/usr/local/bin/joust"));
+        }
+        return new ArrayList<>(out);
+    }
+
     /** Absolute PATH entries, without version-manager shim directories. */
     static List<Path> searchDirs(Map<String, String> env, Path home, JoustPaths.Flavor flavor) {
         List<Path> dirs = new ArrayList<>();

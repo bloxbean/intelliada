@@ -1,0 +1,7 @@
+<idea-plugin>
+    <!-- JOUST M2 (ADR-004 D9): the new-project wizard links the Gradle build it created, only with IntelliJ's Gradle plugin -->
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceInterface="com.bloxbean.intelliada.idea.joust.wizard.JoustBuildLinker"
+                            serviceImplementation="com.bloxbean.intelliada.idea.joust.wizard.gradle.JoustGradleBuildLinker"/>
+    </extensions>
+</idea-plugin>

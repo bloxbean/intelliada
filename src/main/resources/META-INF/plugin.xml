@@ -18,6 +18,8 @@
     <depends>com.intellij.modules.lang</depends>
     <!-- JOUST .jsc highlighting (ADR-004 D2): optional, so .jsc stays plain text with diagnostics when TextMate is absent -->
     <depends optional="true" config-file="intelliada-textmate.xml">org.jetbrains.plugins.textmate</depends>
+    <!-- JOUST M2: wizard (ADR-004 D9): links the Gradle build it created; optional, the wizard works without Gradle -->
+    <depends optional="true" config-file="intelliada-gradle.xml">com.intellij.gradle</depends>
 
     <extensions defaultExtensionNs="com.intellij">
 
@@ -223,6 +225,8 @@
         <localInspection language="JAVA" shortName="JoustUncheckedFiniteBound" groupName="JOUST"
                          displayName="IntervalLib.finite*Bound compared without a Finite check" enabledByDefault="true" level="WEAK WARNING"
                          implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustUncheckedFiniteBoundInspection"/>
+        <!-- JOUST M2: wizard (ADR-004 D9): File | New | Project… | JOUST runs the user's native joust new -->
+        <moduleBuilder builderClass="com.bloxbean.intelliada.idea.joust.wizard.JoustModuleBuilder"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">

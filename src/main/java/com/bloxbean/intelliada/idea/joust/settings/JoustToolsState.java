@@ -28,6 +28,17 @@ public final class JoustToolsState implements PersistentStateComponent<JoustTool
         public String nodeSha256;
         public String nodeVersion;
         public String joustVersion;
+        /**
+         * ADR-004 D9: the user's native {@code joust} (the CLI the new-project wizard runs), an absolute path validated
+         * as in D4. Application-level only: nothing under a project sets it (I7).
+         */
+        public String joustCliPath = "";
+        /** The identity of the native {@code joust} when it was validated on Save (real path, size, mtime, SHA-256). */
+        public String joustCliRealPath;
+        public long joustCliSize;
+        public long joustCliModified;
+        public String joustCliSha256;
+        public String joustCliVersion;
     }
 
     private Data data = new Data();
@@ -57,6 +68,20 @@ public final class JoustToolsState implements PersistentStateComponent<JoustTool
         data.nodeModified = id == null ? 0 : id.modifiedMillis();
         data.nodeSha256 = id == null ? null : id.sha256();
         data.nodeVersion = version;
+    }
+
+    /** The native {@code joust} as validated on Save (D9), or {@code null}. */
+    public NodeIdentity validatedJoustCli() {
+        if (data.joustCliRealPath == null || data.joustCliSha256 == null) return null;
+        return new NodeIdentity(data.joustCliRealPath, data.joustCliSize, data.joustCliModified, data.joustCliSha256);
+    }
+
+    public void setValidatedJoustCli(NodeIdentity id, String version) {
+        data.joustCliRealPath = id == null ? null : id.realPath();
+        data.joustCliSize = id == null ? 0 : id.size();
+        data.joustCliModified = id == null ? 0 : id.modifiedMillis();
+        data.joustCliSha256 = id == null ? null : id.sha256();
+        data.joustCliVersion = version;
     }
 
     public JoustLaunchPlanner.Settings settings() {

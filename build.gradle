@@ -40,6 +40,8 @@ dependencies {
         intellijIdea("2026.1")
         bundledPlugin("com.intellij.java")
         bundledPlugin("org.jetbrains.plugins.textmate")
+        // JOUST M2 (ADR-004 D9): the wizard links its Gradle build; an optional dependency (intelliada-gradle.xml)
+        bundledPlugin("com.intellij.gradle")
         plugin("com.redhat.devtools.lsp4ij:0.10.0")
         // ADR-004 G1.3: the IntelliJ Platform test framework (BasePlatformTestCase)
         testFramework(TestFrameworkType.Platform.INSTANCE)
