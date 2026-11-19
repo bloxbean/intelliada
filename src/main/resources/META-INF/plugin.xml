@@ -202,6 +202,10 @@
                                 implementation="com.bloxbean.intelliada.idea.joust.lsp.JoustStatusBarWidgetFactory"/>
         <colorSettingsPage implementation="com.bloxbean.intelliada.idea.joust.highlight.JoustColorSettingsPage"/>
         <postStartupActivity implementation="com.bloxbean.intelliada.idea.joust.trust.JoustProjectOpenCheck"/>
+        <!-- JOUST M2: projects (ADR-004 D7): generated sources, the banner, console links -->
+        <generatedSourcesFilter implementation="com.bloxbean.intelliada.idea.joust.project.JoustGeneratedSourcesFilter"/>
+        <editorNotificationProvider implementation="com.bloxbean.intelliada.idea.joust.project.JoustGeneratedBannerProvider"/>
+        <consoleFilterProvider implementation="com.bloxbean.intelliada.idea.joust.project.JoustConsoleFilterProvider"/>
 
         <!-- JOUST M2: inspections for Java @StateContract contracts (ADR-004 D10); advice only, Java part -->
         <localInspection language="JAVA" shortName="JoustByteArrayEquality" groupName="JOUST"
@@ -334,6 +338,19 @@
                     text="Check Build (in Memory)" description="Build in memory with the language server's compiler; writes nothing"/>
             <action id="Joust.RestartAnalysis" class="com.bloxbean.intelliada.idea.joust.actions.JoustRestartAnalysisAction"
                     text="Restart Analysis" description="Restart the JOUST language server's analysis"/>
+        </group>
+        <!-- JOUST M2: project actions (ADR-004 D7, D8), enabled only in a trusted project -->
+        <group id="com.bloxbean.intelliada.idea.joust.JoustProjectGroup" text="JOUST Project" popup="true">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="Joust.Gradle.Build" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustGradleTaskAction$Build" text="Build"/>
+            <action id="Joust.Gradle.Generate" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustGradleTaskAction$Generate" text="Generate from .jsc"/>
+            <action id="Joust.Gradle.CheckAbi" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustGradleTaskAction$CheckAbi" text="Check ABI"/>
+            <action id="Joust.ReviewAbi" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustReviewAbiAction" text="Review ABI Change…"/>
+            <action id="Joust.Gradle.AcceptLock" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustGradleTaskAction$AcceptLock" text="Accept joust.lock…"/>
+            <action id="Joust.Gradle.RunTests" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustGradleTaskAction$RunTests" text="Run Tests"/>
+            <action id="Joust.Npm.Build" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustNpmActions$Build" text="Build (npm)"/>
+            <action id="Joust.Npm.Format" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustNpmActions$Format" text="Format File (joust fmt)"/>
         </group>
     </actions>
     <applicationListeners>

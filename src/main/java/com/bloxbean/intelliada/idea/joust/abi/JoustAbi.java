@@ -1,0 +1,250 @@
+package com.bloxbean.intelliada.idea.joust.abi;
+
+import com.bloxbean.intelliada.idea.joust.core.JoustRealPaths;
+import com.bloxbean.intelliada.idea.joust.core.JoustToolValidator;
+import com.bloxbean.intelliada.idea.joust.project.JoustProjectLayout;
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+/**
+ * ADR-004 D8 and I8: the ABI-change review, as pure logic.
+ *
+ * <ul>
+ *   <li><b>Bind before running:</b> the contract name matches JOUST's qualified-name grammar, a hash is 64 lowercase hex
+ *   characters, the committed hash is that or {@code none}; task arguments are built as lists.</li>
+ *   <li><b>Review:</b> the {@code --out} JSON of {@code jscAbiDiff}/{@code joust abi diff} (shape pinned at JOUST
+ *   v0.1.0-pre2: {@code contract, file?, path, committed{sha256,text}, now{sha256,text}}) is project data. IntelliAda
+ *   recomputes the SHA-256 of the texts it shows, reads the committed manifest itself, and allows Accept only when all
+ *   agree.</li>
+ *   <li><b>After accepting:</b> that manifest has the new hash and no other manifest changed.</li>
+ * </ul>
+ */
+public final class JoustAbi {
+
+    public static final Pattern CONTRACT = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*");
+    public static final Pattern SIMPLE = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    public static final Pattern HASH = Pattern.compile("[0-9a-f]{64}");
+    static final long OUT_CAP = 8L * 1024 * 1024;
+    private static final Pattern FAILURE_GRADLE = Pattern.compile(
+            "^\\s*([^\\s:][^:]{0,500}?\\.jsc):\\d+:\\d+: error\\[(JSC0002|JSC0003)\\]: .*?([A-Za-z_][A-Za-z0-9_]{0,200})\\.abi\\.json");
+    private static final Pattern FAILURE_NPM = Pattern.compile(
+            "error\\[(JSC0002|JSC0003)\\]: ([^\\s:][^:]{0,500}?\\.jsc):\\d+:\\d+: .*?([A-Za-z_][A-Za-z0-9_]{0,200})\\.abi\\.json");
+
+    private JoustAbi() {
+    }
+
+    /** A refusal, with a message for the user. */
+    public static final class AbiException extends Exception {
+        public AbiException(String message) {
+            super(message);
+        }
+    }
+
+    /** A validated diff. {@code committedText} is null exactly when {@code committedSha} is {@code none}. */
+    public record Diff(String contract, String file, String path, String committedSha, String committedText, String nowSha, String nowText) {
+        public boolean unchanged() {
+            return committedSha.equals(nowSha);
+        }
+    }
+
+    /** An ABI failure found in build output: the {@code .jsc} path as printed and the contract's simple name. */
+    public record Failure(String code, String jscRel, String contract) {
+    }
+
+    // ------------------------------------------------------------------ names and arguments
+
+    public static String requireContract(String name) throws AbiException {
+        if (name == null || name.length() > 500 || !CONTRACT.matcher(name).matches()) {
+            throw new AbiException("not a contract name: " + (name == null ? "none" : name.length() > 80 ? name.substring(0, 80) + "…" : name));
+        }
+        return name;
+    }
+
+    static String requireHash(String h, boolean noneAllowed) throws AbiException {
+        if (h != null && (HASH.matcher(h).matches() || (noneAllowed && h.equals("none")))) return h;
+        throw new AbiException("not a SHA-256: " + h);
+    }
+
+    /** {@code :m:jscAbiDiff --contract C --out <file>} for a Gradle project path ({@code ":"} for the root). */
+    public static List<String> gradleDiffArgs(String gradlePath, String contract, Path out) throws AbiException {
+        return List.of(task(gradlePath, "jscAbiDiff"), "--contract", requireContract(contract), "--out", out.toString());
+    }
+
+    /** {@code :m:acceptJscAbi --contract C --committed-sha256 h1 --sha256 h2}: never the bare task (I8). */
+    public static List<String> gradleAcceptArgs(String gradlePath, Diff d) throws AbiException {
+        return List.of(task(gradlePath, "acceptJscAbi"), "--contract", requireContract(d.contract()),
+                "--committed-sha256", requireHash(d.committedSha(), true), "--sha256", requireHash(d.nowSha(), false));
+    }
+
+    public static List<String> npmDiffArgs(String contract, Path out) throws AbiException {
+        return List.of("abi", "diff", requireContract(contract), "--out", out.toString());
+    }
+
+    /** {@code build --accept-abi=C@h1..h2}: never the bare {@code --accept-abi} (I8). */
+    public static List<String> npmAcceptArgs(Diff d) throws AbiException {
+        return List.of("build", "--accept-abi=" + requireContract(d.contract()) + "@" + requireHash(d.committedSha(), true) + ".."
+                + requireHash(d.nowSha(), false));
+    }
+
+    /** A qualified Gradle task: {@code :generateJsc} for the root project, {@code :a:b:generateJsc} for a module. */
+    public static String task(String gradlePath, String name) throws AbiException {
+        if (gradlePath == null || !gradlePath.matches(":|(:[A-Za-z0-9_.-]{1,200}){1,20}")) throw new AbiException("not a Gradle project path: " + gradlePath);
+        return (gradlePath.equals(":") ? "" : gradlePath) + ":" + name;
+    }
+
+    // ------------------------------------------------------------------ failures in build output
+
+    /** The JSC0002 and JSC0003 failures in build output, in order. */
+    public static List<Failure> failures(String output) {
+        List<Failure> out = new ArrayList<>();
+        if (output == null) return out;
+        for (String line : output.split("\n", 2000)) {
+            Matcher g = FAILURE_GRADLE.matcher(line);
+            if (g.find()) {
+                out.add(new Failure(g.group(2), g.group(1), g.group(3)));
+                continue;
+            }
+            Matcher n = FAILURE_NPM.matcher(line);
+            if (n.find()) out.add(new Failure(n.group(1), n.group(2), n.group(3)));
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------ the diff
+
+    /** Parses and validates the {@code --out} JSON (size-capped). */
+    public static Diff parse(Path outFile) throws AbiException {
+        try {
+            if (!Files.isRegularFile(outFile, LinkOption.NOFOLLOW_LINKS) || Files.size(outFile) > OUT_CAP) {
+                throw new AbiException("the ABI diff was not written, or is too large");
+            }
+            return parse(Files.readString(outFile, StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            throw new AbiException("the ABI diff could not be read: " + e.getMessage());
+        }
+    }
+
+    public static Diff parse(String json) throws AbiException {
+        JSONObject o;
+        try {
+            o = new JSONObject(json);
+        } catch (RuntimeException e) {
+            throw new AbiException("the ABI diff is not JSON");
+        }
+        String contract = requireContract(o.optString("contract", null));
+        String file = o.opt("file") instanceof String f ? f : null;
+        if (!(o.opt("path") instanceof String path) || path.isEmpty()) throw new AbiException("the ABI diff names no manifest path");
+        JSONObject committed = o.optJSONObject("committed");
+        JSONObject now = o.optJSONObject("now");
+        if (committed == null || now == null) throw new AbiException("the ABI diff has no committed or new manifest");
+        String h1 = requireHash(committed.optString("sha256", null), true);
+        String h2 = requireHash(now.optString("sha256", null), false);
+        Object t1 = committed.opt("text");
+        String text1 = t1 instanceof String s ? s : null;
+        if (!(now.opt("text") instanceof String text2)) throw new AbiException("the ABI diff has no new manifest text");
+        if ((text1 == null) != h1.equals("none")) throw new AbiException("the committed manifest and its hash disagree");
+        return new Diff(contract, file, path, h1, text1, h2, text2);
+    }
+
+    /**
+     * Why Accept must stay disabled, or null (D8 step 3). The SHA-256 of each displayed text must equal its reported hash,
+     * and the committed manifest IntelliAda reads itself must be the reported baseline.
+     */
+    public static String verify(Diff d, Path committedManifestOrNull) {
+        if (d.committedText() != null && !JoustToolValidator.sha256(d.committedText().getBytes(StandardCharsets.UTF_8)).equals(d.committedSha())) {
+            return "the committed manifest shown does not have the reported SHA-256";
+        }
+        if (!JoustToolValidator.sha256(d.nowText().getBytes(StandardCharsets.UTF_8)).equals(d.nowSha())) {
+            return "the new manifest shown does not have the reported SHA-256";
+        }
+        String actual;
+        try {
+            actual = committedManifestOrNull != null && Files.isRegularFile(committedManifestOrNull)
+                    ? JoustToolValidator.sha256(committedManifestOrNull) : "none";
+        } catch (IOException e) {
+            return "the committed manifest could not be read";
+        }
+        if (!actual.equals(d.committedSha())) return "the committed manifest on disk is " + actual + ", not the reviewed " + d.committedSha();
+        if (d.unchanged()) return "the manifest is unchanged";
+        return null;
+    }
+
+    /**
+     * The committed manifest a diff names, confined: {@code dir/path} (the module's directory, or the npm root) must
+     * resolve inside {@code contractsDir} and be named {@code <Contract>.abi.json}. A manifest not yet committed is
+     * allowed to be absent. Returns the path (possibly not existing), or throws.
+     */
+    public static Path manifestPath(Diff d, Path dir, Path contractsDir) throws AbiException {
+        String rel = d.path();
+        if (rel.startsWith("/") || rel.startsWith("\\") || rel.matches("^[A-Za-z]:.*") || rel.contains("..") || rel.indexOf('\0') >= 0) {
+            throw new AbiException("the manifest path is not inside the project: " + rel);
+        }
+        String simple = d.contract().substring(d.contract().lastIndexOf('.') + 1);
+        Path p = dir.resolve(rel).normalize();
+        if (!p.getFileName().toString().equals(simple + ".abi.json")) throw new AbiException("the manifest is not " + simple + ".abi.json");
+        Path parentReal;
+        try {
+            parentReal = p.getParent().toRealPath();
+            Path rootReal = contractsDir.toRealPath();
+            if (!JoustRealPaths.isInside(parentReal, rootReal)) throw new AbiException("the manifest is outside the contracts directory");
+            Path real = parentReal.resolve(p.getFileName());
+            if (Files.exists(real, LinkOption.NOFOLLOW_LINKS) && (Files.isSymbolicLink(real) || !Files.isRegularFile(real))) {
+                throw new AbiException("the manifest is not a regular file");
+            }
+            return real;
+        } catch (IOException e) {
+            throw new AbiException("the manifest's directory does not exist: " + rel);
+        }
+    }
+
+    // ------------------------------------------------------------------ after accepting
+
+    /** SHA-256 of every {@code *.abi.json} under every contracts directory of the layout (I8's "only that manifest"). */
+    public static Map<Path, String> manifests(JoustProjectLayout layout) {
+        Map<Path, String> out = new TreeMap<>();
+        List<Path> roots = new ArrayList<>();
+        layout.gradleModules().forEach(m -> roots.add(m.jscRoot()));
+        layout.npmRoots().forEach(r -> roots.add(r.contractsDir()));
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) continue;
+            try (Stream<Path> s = Files.walk(root, 20)) {
+                s.filter(p -> p.getFileName().toString().endsWith(".abi.json") && Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+                        .limit(10_000).forEach(p -> {
+                            try {
+                                out.put(p.toAbsolutePath().normalize(), JoustToolValidator.sha256(p));
+                            } catch (IOException e) {
+                                out.put(p.toAbsolutePath().normalize(), "unreadable");
+                            }
+                        });
+            } catch (IOException ignored) {
+                // nothing readable here
+            }
+        }
+        return out;
+    }
+
+    /** Why the acceptance did not do exactly what was reviewed, or null. */
+    public static String verifyAccepted(Map<Path, String> before, Map<Path, String> after, Path manifest, String newSha) {
+        Path m = manifest.toAbsolutePath().normalize();
+        if (!newSha.equals(after.get(m))) return "the manifest " + m.getFileName() + " does not have the accepted SHA-256";
+        for (var e : before.entrySet()) {
+            if (!e.getKey().equals(m) && !e.getValue().equals(after.get(e.getKey()))) return "another manifest changed: " + e.getKey();
+        }
+        for (Path p : after.keySet()) {
+            if (!p.equals(m) && !before.containsKey(p)) return "another manifest appeared: " + p;
+        }
+        return null;
+    }
+}

@@ -3,5 +3,8 @@
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceInterface="com.bloxbean.intelliada.idea.joust.wizard.JoustBuildLinker"
                             serviceImplementation="com.bloxbean.intelliada.idea.joust.wizard.gradle.JoustGradleBuildLinker"/>
+        <!-- JOUST M2 (ADR-004 D7, D8): Gradle tasks through IntelliJ's Gradle integration -->
+        <applicationService serviceInterface="com.bloxbean.intelliada.idea.joust.tasks.JoustGradleTasks"
+                            serviceImplementation="com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustGradleTasksImpl"/>
     </extensions>
 </idea-plugin>

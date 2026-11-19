@@ -1,0 +1,7 @@
+Real JOUST 0.1.0-pre2 outputs, recorded for IntelliAda's M2 tests (ADR-004 D7, D8):
+- gradle-jsc/: a project from the native `joust new <dir> -t gradle -l jsc -p org.acme` (joust 0.1.0-pre2), after
+  adding a `note` field and accepting its ABI, with Counter.java and Counter.jscmap.json from `./gradlew generateJsc`
+  (JDK 25).
+- generateJsc-JSC0002.log: generateJsc's output for that change before it was accepted.
+- jscAbiDiff-out.json: `./gradlew jscAbiDiff --contract org.acme.Counter --out <file>` for that change (its `now`
+  manifest is gradle-jsc's Counter.abi.json).
