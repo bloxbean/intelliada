@@ -300,16 +300,25 @@ public final class JoustNpmTasks {
      * (M2-CDX-33). A tree that can never be shown gone keeps its run tracked, so a later cancellation still applies.
      */
     static void releaseWhenTreeGone(Launch launch, Runnable release) {
+        releaseWhenTreeGone(launch, release, 0);
+    }
+
+    /** Retries of the tree kill for a tree never known, with back-off (M2-DES-14); then only a slow re-check. */
+    static final int MAX_TREE_KILL_RETRIES = 5;
+
+    private static void releaseWhenTreeGone(Launch launch, Runnable release, int attempt) {
         if (treeGone(launch)) {
             release.run();
             return;
         }
-        if (launch.killed && !launch.handler.getProcess().isAlive() && !launch.enumerated && !launch.treeKilled) {
-            // The parent is gone and its tree was never known: retry the tree kill once more, then keep checking.
+        boolean unknown = launch.killed && !launch.handler.getProcess().isAlive() && !launch.enumerated && !launch.treeKilled;
+        if (unknown && attempt < MAX_TREE_KILL_RETRIES) {
+            // The parent is gone and its tree was never known: retry the tree kill a few times (each may start a ps).
             destroyTree(launch, launch.handler.getProcess());
         }
+        long delay = attempt < MAX_TREE_KILL_RETRIES ? 200L << attempt : 30_000L;
         com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
-                .schedule(() -> releaseWhenTreeGone(launch, release), 200, java.util.concurrent.TimeUnit.MILLISECONDS);
+                .schedule(() -> releaseWhenTreeGone(launch, release, attempt + 1), delay, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     /** Returns true only when the tree is known to be gone ({@link #treeGone}); a detached handler is no proof. */
