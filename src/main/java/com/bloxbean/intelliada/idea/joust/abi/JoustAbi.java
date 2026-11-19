@@ -92,10 +92,32 @@ public final class JoustAbi {
         return List.of("abi", "diff", requireContract(contract), "--out", out.toString());
     }
 
+    /**
+     * {@code abi diff C --src <contracts> --out <file>}: bound to the verified contracts directory, so a
+     * {@code joust.config.json} changed meanwhile cannot redirect it (M2-CDX-23).
+     */
+    public static List<String> npmDiffArgs(String contract, String src, Path out) throws AbiException {
+        return List.of("abi", "diff", requireContract(contract), "--src", requireSrc(src), "--out", out.toString());
+    }
+
     /** {@code build --accept-abi=C@h1..h2}: never the bare {@code --accept-abi} (I8). */
     public static List<String> npmAcceptArgs(Diff d) throws AbiException {
         return List.of("build", "--accept-abi=" + requireContract(d.contract()) + "@" + requireHash(d.committedSha(), true) + ".."
                 + requireHash(d.nowSha(), false));
+    }
+
+    /** {@code build --src <contracts> --accept-abi=C@h1..h2}, bound to the verified contracts directory (M2-CDX-23). */
+    public static List<String> npmAcceptArgs(Diff d, String src) throws AbiException {
+        return List.of("build", "--src", requireSrc(src), "--accept-abi=" + requireContract(d.contract()) + "@"
+                + requireHash(d.committedSha(), true) + ".." + requireHash(d.nowSha(), false));
+    }
+
+    /** A contracts directory relative to the npm root: plain segments, no {@code ..}, not an option. */
+    static String requireSrc(String src) throws AbiException {
+        if (src == null || !src.matches("[A-Za-z0-9_.][A-Za-z0-9_./-]{0,400}") || src.contains("..") || src.contains("//")) {
+            throw new AbiException("not a contracts directory: " + src);
+        }
+        return src;
     }
 
     /** A qualified Gradle task: {@code :generateJsc} for the root project, {@code :a:b:generateJsc} for a module. */
@@ -110,7 +132,9 @@ public final class JoustAbi {
     public static List<Failure> failures(String output) {
         List<Failure> out = new ArrayList<>();
         if (output == null) return out;
-        for (String line : output.split("\n", 2000)) {
+        // Every line, however long the output; the matches themselves are bounded (M2-CDX-24).
+        for (String line : (Iterable<String>) output.lines()::iterator) {
+            if (out.size() >= 256) break;
             Matcher g = FAILURE_GRADLE.matcher(line);
             if (g.find()) {
                 out.add(new Failure(g.group(2), g.group(1), g.group(3)));
@@ -123,19 +147,47 @@ public final class JoustAbi {
     }
 
     /**
-     * The bound acceptance's explicit refusal of one source in task output, or null (M2-CDX-6). Both pinned producers
-     * (Gradle's JscMain, npm's {@code src/abi.js} at v0.1.0-pre2) print every refusal as
-     * {@code <source>:1:1: error[JSC0002]: not accepted: …}, the source relative to the contracts directory, whether
-     * the baseline or the source changed; so the line is matched by that source path, exactly.
+     * The bound acceptance's explicit refusal in task output, or null (M2-CDX-6). Both pinned producers (Gradle's
+     * JscMain, npm's {@code src/abi.js} at v0.1.0-pre2) print a refusal either as
+     * {@code <source>:1:1: error[JSC0002]: not accepted: …}, the source relative to the contracts directory (whether
+     * the baseline or the source changed), or, when the contract cannot be found, as
+     * {@code error[JSC0002]: --accept-abi=<Contract>@…: …; nothing accepted}. Paths are compared with {@code /}.
      */
-    public static String refusal(String output, String jscRel) {
-        if (output == null || jscRel == null) return null;
-        String prefix = jscRel.replace('\\', '/') + ":";
-        for (String line : output.split("\n", -1)) {
+    public static String refusal(String output, String jscRel, String contract) {
+        if (output == null) return null;
+        String prefix = jscRel == null ? null : jscRel.replace('\\', '/') + ":";
+        String bound = contract == null ? null : "--accept-abi=" + contract + "@";
+        for (String line : (Iterable<String>) output.lines()::iterator) {
             String l = line.strip();
-            if (l.startsWith(prefix) && l.contains(": error[JSC0002]: not accepted")) return l.length() > 1000 ? l.substring(0, 1000) : l;
+            String slashed = l.replace('\\', '/');
+            boolean hit = (prefix != null && slashed.startsWith(prefix) && l.contains(": error[JSC0002]: not accepted"))
+                    || (bound != null && l.contains("error[JSC0002]: " + bound) && l.endsWith("nothing accepted"));
+            if (hit) return l.length() > 1000 ? l.substring(0, 1000) : l;
         }
         return null;
+    }
+
+    public static String refusal(String output, String jscRel) {
+        return refusal(output, jscRel, null);
+    }
+
+    /**
+     * Whether task output affirmatively reports accepting this manifest (M2-CDX-6): Gradle prints
+     * {@code <source>: note: accepted the changed ABI manifest <Name>.abi.json} (or {@code created the}), npm
+     * {@code <manifest, relative to the root>: accepted the changed ABI manifest …} (or {@code created the}).
+     */
+    public static boolean reportsAccepted(String output, String jscRel, String manifestName, String manifestRelToRoot) {
+        if (output == null) return false;
+        String src = jscRel == null ? null : jscRel.replace('\\', '/') + ": note: ";
+        String rel = manifestRelToRoot == null ? null : manifestRelToRoot.replace('\\', '/') + ": ";
+        for (String line : (Iterable<String>) output.lines()::iterator) {
+            String l = line.strip().replace('\\', '/');
+            boolean says = l.contains("accepted the changed ABI manifest") || l.contains("created the ABI manifest");
+            if (!says) continue;
+            if (src != null && l.startsWith(src) && l.contains("ABI manifest " + manifestName)) return true;
+            if (rel != null && l.startsWith(rel)) return true;
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ the diff

@@ -167,6 +167,16 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         List<NpmRoot> npm = new ArrayList<>();
         List<Path> dirs = new ArrayList<>();
         boolean[] truncated = new boolean[1];
+        READ_FAILED.set(truncated);
+        try {
+            return scan0(base, flavor, gradle, npm, dirs, truncated);
+        } finally {
+            READ_FAILED.remove();
+        }
+    }
+
+    private static JoustProjectLayout scan0(Path base, JoustPaths.Flavor flavor, List<GradleModule> gradle, List<NpmRoot> npm,
+                                            List<Path> dirs, boolean[] truncated) {
         collect(base, 0, dirs, truncated);
         // A build's settings file may name the plugin (and its version) for the whole build (D7, F31).
         java.util.Map<Path, String> settingsVersion = new java.util.HashMap<>();
@@ -344,7 +354,19 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         }
     }
 
+    /** A detection file that exists but could not be read as UTF-8 text marks the running scan incomplete (M2-CDX-7). */
+    private static final ThreadLocal<boolean[]> READ_FAILED = new ThreadLocal<>();
+
     static String readText(Path p) {
+        String t = readText0(p);
+        if (t == null && Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
+            boolean[] flag = READ_FAILED.get();
+            if (flag != null) flag[0] = true;
+        }
+        return t;
+    }
+
+    private static String readText0(Path p) {
         try {
             if (!Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS) || Files.size(p) > TEXT_CAP) return null;
             return Files.readString(p, StandardCharsets.UTF_8);

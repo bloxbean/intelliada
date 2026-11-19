@@ -84,6 +84,7 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
         Files.writeString(cli.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\",\"version\":\"0.1.0-pre2\"}");
         Files.writeString(cli.resolve("joust.js"), "require('fs').appendFileSync('calls.log', JSON.stringify(process.argv.slice(2)) + '\\n');\n");
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
         TrustedProjects.setProjectTrusted(getProject(), true);
         ServiceContainerUtil.replaceService(ApplicationManager.getApplication(), JoustGradleTasks.class, new RecordingGradle(), getTestRootDisposable());
         savedDialog = TestDialogManager.setTestDialog(TestDialog.OK);
@@ -182,7 +183,7 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
         Object[][] actions = {{new JoustNpmActions.Build(), "[\"build\"]"}, {new JoustNpmActions.RunTests(), "[\"test\"]"},
                 {new JoustNpmActions.AcceptLock(), "[\"build\",\"--accept-lock\"]"},
                 {new JoustNpmActions.Format(), "[\"fmt\",\"contracts/app/Counter.jsc\"]"},
-                {new JoustReviewAbiAction(), "[\"abi\",\"diff\",\"app.Counter\",\"--out\""}};
+                {new JoustReviewAbiAction(), "[\"abi\",\"diff\",\"app.Counter\",\"--src\",\"contracts\",\"--out\""}};
         for (Object[] row : actions) {
             AnAction a = (AnAction) row[0];
             String expected = (String) row[1];
@@ -265,7 +266,7 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
         Path evil = Files.createDirectories(base.resolve("<img src=x>"));
         copy(Path.of(getClass().getClassLoader().getResource("joust-m2/SOURCE.txt").toURI()).getParent().resolve("gradle-jsc"), evil);
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
-        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).layout();
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
         VirtualFile jsc = vf(evil.resolve("src/main/jsc/org/acme/Counter.jsc"));
         JoustProjectAction.Ctx ctx = ApplicationManager.getApplication().executeOnPooledThread(
                 () -> JoustProjectAction.context(getProject(), jsc)).get();
@@ -363,5 +364,31 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
         assertTrue("its own sources link", filters.stream().anyMatch(f -> f.applyFilter(inThisRoot, inThisRoot.length()) != null));
         assertNotNull("the project-wide filter would have linked it", new JoustConsoleFilterProvider.JoustDiagnosticFilter(getProject())
                 .applyFilter(onlyInOther, onlyInOther.length()));
+    }
+
+    /** M2-CDX-14: the npm console is shown as a Run tab whose console is IntelliAda's scoped one. */
+    public void testTheNpmConsoleIsShownAsARunTab() throws Exception {
+        var layout = com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).layout();
+        var root = layout.npmRoots().stream().filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+        var shown = new java.util.ArrayList<Object[]>();
+        var real = com.intellij.execution.ui.RunContentManager.getInstance(getProject());
+        var recording = (com.intellij.execution.ui.RunContentManager) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{com.intellij.execution.ui.RunContentManager.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("showRunContent")) shown.add(args);
+                    return method.getDeclaringClass() == Object.class ? method.invoke(real, args) : null;
+                });
+        ServiceContainerUtil.replaceService(getProject(), com.intellij.execution.ui.RunContentManager.class, recording, getTestRootDisposable());
+        var handler = new com.intellij.execution.process.NopProcessHandler();
+        var descriptor = JoustNpmTasks.openConsole(getProject(), root, handler, "JOUST Build (web)");
+        try {
+            assertEquals("shown once", 1, shown.size());
+            assertEquals(com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance(), shown.get(0)[0]);
+            assertSame(descriptor, shown.get(0)[1]);
+            assertTrue(descriptor.getExecutionConsole() instanceof com.intellij.execution.ui.ConsoleView);
+            assertSame(handler, descriptor.getProcessHandler());
+        } finally {
+            handler.destroyProcess();
+            com.intellij.openapi.util.Disposer.dispose(descriptor);
+        }
     }
 }

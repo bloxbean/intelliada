@@ -431,7 +431,8 @@ public class JoustAbiTest {
             @Override
             public JoustAbiReview.Result run(List<String> args) {
                 JoustAbiReview.Result r = super.run(args);
-                return args.get(0).endsWith(":acceptJscAbi") ? new JoustAbiReview.Result(false, "error: compileJava failed", false) : r;
+                return args.get(0).endsWith(":acceptJscAbi") ? new JoustAbiReview.Result(false, "org/acme/Counter.jsc: note: accepted the"
+                        + " changed ABI manifest Counter.abi.json\nerror: compileJava failed", false) : r;
             }
         };
         FakeUi ui = new FakeUi();
@@ -559,6 +560,22 @@ public class JoustAbiTest {
         assertNull(JoustAbi.refusal("org/acme/OtherCounter.jsc:1:1: error[JSC0002]: not accepted: the ABI manifest OtherCounter.abi.json",
                 "org/acme/Counter.jsc"));
         assertNull("a later build failure is no refusal", JoustAbi.refusal("error: compileJava failed", "org/acme/Counter.jsc"));
+        // The lookup-failure form names the contract, not the source; a Windows Gradle path uses backslashes.
+        assertNotNull(JoustAbi.refusal("jsc: error[JSC0002]: --accept-abi=org.acme.Counter@…: no .jsc 2 contract org.acme.Counter; nothing accepted",
+                "org/acme/Counter.jsc", "org.acme.Counter"));
+        assertNull(JoustAbi.refusal("jsc: error[JSC0002]: --accept-abi=org.acme.CounterX@…: no contract; nothing accepted",
+                "org/acme/Counter.jsc", "org.acme.Counter"));
+        assertNotNull(JoustAbi.refusal(sourceChanged.replace("org/acme/", "org\\acme\\"), "org/acme/Counter.jsc"));
+        // Evidence of acceptance, in both producers' forms.
+        assertTrue(JoustAbi.reportsAccepted("org/acme/Counter.jsc: note: accepted the changed ABI manifest Counter.abi.json", "org/acme/Counter.jsc",
+                "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
+        assertTrue(JoustAbi.reportsAccepted("contracts/app/Counter.abi.json: created the ABI manifest; commit it", "app/Counter.jsc",
+                "Counter.abi.json", "contracts/app/Counter.abi.json"));
+        assertFalse(JoustAbi.reportsAccepted("error: compileJava failed", "org/acme/Counter.jsc", "Counter.abi.json", "x"));
+        // 256 unrelated diagnostics cannot crowd out the refusal past the cap.
+        var crowded = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
+        crowded.append("y".repeat(200) + "\n" + "other/X.jsc:1:1: error[JSC0502]: unrelated\n".repeat(300) + sourceChanged + "\n");
+        assertNotNull(JoustAbi.refusal(crowded.toString(), "org/acme/Counter.jsc"));
         // Kept past the output cap as it arrives.
         var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
         capture.append("y".repeat(10_000) + "\n");
@@ -636,5 +653,77 @@ public class JoustAbiTest {
         FakeUi ui = new FakeUi();
         assertFalse(review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
         assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.contains("another manifest") && r.contains("webapp")));
+    }
+
+    /** M2-CDX-6: a failed accept run that neither refuses nor reports accepting is not taken as an acceptance. */
+    @Test
+    public void aFailedRunWithoutEvidenceIsNotAnAcceptance() throws Exception {
+        FakeJoust joust = new FakeJoust() {
+            @Override
+            public JoustAbiReview.Result run(List<String> args) {
+                JoustAbiReview.Result r = super.run(args);   // writes h2 as a real acceptance would
+                return args.get(0).endsWith(":acceptJscAbi") ? new JoustAbiReview.Result(false, "", false) : r;   // output lost
+            }
+        };
+        FakeUi ui = new FakeUi();
+        assertFalse(review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
+        assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.startsWith("REFUSED") && r.contains("without reporting")));
+    }
+
+    /** M2-CDX-23: the npm contracts directory changed during the confirmation: no accept, both manifests unchanged. */
+    @Test
+    public void aContractsDirectoryChangedDuringReviewRunsNothing() throws Exception {
+        Path web = Files.createDirectories(base.resolve("web"));
+        Files.writeString(web.resolve("joust.config.json"), "{\"contracts\":\"c1\"}");
+        Path[] manifests = new Path[2];
+        for (int i = 0; i < 2; i++) {
+            Path dir = Files.createDirectories(web.resolve("c" + (i + 1) + "/app"));
+            Files.copy(module.resolve("src/main/jsc/org/acme/Counter.jsc"), dir.resolve("Counter.jsc"));
+            manifests[i] = Files.writeString(dir.resolve("Counter.abi.json"), text1());
+        }
+        JSONObject o = new JSONObject(diffJson).put("contract", "app.Counter").put("file", "app/Counter.jsc").put("path", "c1/app/Counter.abi.json");
+        List<List<String>> runs = new ArrayList<>();
+        JoustAbiReview.Runner runner = args -> {
+            runs.add(args);
+            try {
+                if (args.get(0).equals("abi")) Files.writeString(Path.of(args.get(args.indexOf("--out") + 1)), o.toString());
+                else Files.writeString(manifests[1], text2());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            return new JoustAbiReview.Result(true, "", false);
+        };
+        FakeUi ui = new FakeUi();
+        ui.onConfirm = () -> {
+            try {
+                Files.writeString(web.resolve("joust.config.json"), "{\"contracts\":\"c2\"}");
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+        Path contracts = web.resolve("c1").toRealPath();
+        Path jsc = web.resolve("c1/app/Counter.jsc").toRealPath();
+        var t = new JoustAbiReview.Target("web", false, null, web.toRealPath(), contracts, jsc, "app.Counter");
+        boolean ok = new JoustAbiReview(t, () -> JoustProjectLayout.scan(base, JoustPaths.Flavor.current()), runner, ui, () -> true,
+                ide.getRoot().toPath().toRealPath(), () -> {
+        }).run();
+        assertFalse(ok);
+        assertEquals("the diff ran bound to c1", List.of("abi", "diff", "app.Counter", "--src", "c1"), runs.get(0).subList(0, 5));
+        assertEquals("zero accept calls", 1, runs.size());
+        assertEquals(text1(), Files.readString(manifests[0]));
+        assertEquals(text1(), Files.readString(manifests[1]));
+        assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.contains("contracts directory changed")));
+    }
+
+    /** M2-CDX-7: a detection file that exists but is not valid UTF-8 leaves the inventory incomplete: no accept. */
+    @Test
+    public void anUndecodableDetectionFileStopsBeforeAccept() throws Exception {
+        Path other = JoustM2Fixtures.gradleProject(Files.createDirectories(base.resolve("other")));
+        Files.write(other.resolve("build.gradle"), new byte[]{'p', 'l', 'u', (byte) 0xC3, (byte) 0x28, 'g'});
+        assertFalse(JoustProjectLayout.scan(base, JoustPaths.Flavor.current()).complete());
+        FakeJoust joust = new FakeJoust();
+        FakeUi ui = new FakeUi();
+        assertFalse(review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
+        assertEquals("zero accept calls", 1, joust.runs.size());
     }
 }

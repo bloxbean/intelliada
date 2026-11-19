@@ -55,6 +55,8 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
         String currentTask;
         int generation = -1;
         Project project;
+        /** The linked build this run is for (its external project path), when IntelliJ said (M2-CDX-13). */
+        String rootPath;
         final List<Diagnostic> lines = new ArrayList<>();
         final Set<String> failedTasks = new LinkedHashSet<>();
     }
@@ -63,7 +65,11 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
 
     @Override
     public void onStart(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
-        if (GradleConstants.SYSTEM_ID.equals(id.getProjectSystemId())) pending(id);   // the generation, at task start (M2-CDX-3)
+        if (!GradleConstants.SYSTEM_ID.equals(id.getProjectSystemId())) return;
+        Pending p = pending(id);   // the generation, at task start (M2-CDX-3)
+        synchronized (p) {
+            p.rootPath = projectPath;
+        }
     }
 
     @Override
@@ -135,9 +141,10 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
         if (lines.isEmpty() || p.project == null) return;
         Project project = p.project;
         int generation = p.generation;
+        String root = p.rootPath;
         if (!live(project, generation)) return;
         com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(
-                () -> notifyFailures(project, lines, tasks, generation));
+                () -> notifyFailures(project, lines, tasks, generation, root));
     }
 
     /** Trusted, open, and still in the trust generation the run started in. */
@@ -149,7 +156,17 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
     /** As {@link #notifyFailures(Project, List, Set, int)}, for lines with no task header, in the current generation. */
     public static int notifyFailures(Project project, List<String> lines, Set<String> failedTasks) {
         return notifyFailures(project, lines.stream().map(l -> new Diagnostic(l, null)).toList(), failedTasks,
-                com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(project).generation());
+                com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(project).generation(), null);
+    }
+
+    /** Whether a linked module is the run's: the same Gradle path and, when the run's build root is known, that root. */
+    static boolean sameBuild(JoustGradleTasks.Linked linked, String rootPath) {
+        if (rootPath == null) return true;
+        try {
+            return linked.rootDir().toRealPath().toString().equals(Path.of(rootPath).toRealPath().toString());
+        } catch (java.io.IOException | RuntimeException e) {
+            return false;
+        }
     }
 
     /**
@@ -157,7 +174,7 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
      * attributed to the module of the task whose output it was in; without a header, to the modules whose JOUST task
      * failed (M2-CDX-13). Nothing is published outside the run's trust generation.
      */
-    public static int notifyFailures(Project project, List<Diagnostic> lines, Set<String> failedTasks, int generation) {
+    public static int notifyFailures(Project project, List<Diagnostic> lines, Set<String> failedTasks, int generation, String rootPath) {
         if (!live(project, generation)) return 0;
         JoustProjectLayout layout = JoustProjectService.getInstance(project).layout();
         if (layout == null || layout.gradleModules().isEmpty()) return 0;
@@ -183,7 +200,7 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());
                     if (linked == null) unlinked.add(layout.base().relativize(r.ownerDir()).toString());
-                    else if (owners.contains(linked.gradlePath())) failed.add(r);
+                    else if (owners.contains(linked.gradlePath()) && sameBuild(linked, rootPath)) failed.add(r);
                 }
                 if (failed.isEmpty()) {
                     if (seen.add("!" + owners + printed.rel())) {

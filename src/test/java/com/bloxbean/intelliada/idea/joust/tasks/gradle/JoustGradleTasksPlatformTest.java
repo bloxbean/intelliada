@@ -52,11 +52,13 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
             }
         }
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
         TrustedProjects.setProjectTrusted(getProject(), true);
         ServiceContainerUtil.replaceService(ApplicationManager.getApplication(), JoustGradleTasks.class, new JoustGradleTasks() {
             @Override
             public Linked linked(Project project, Path moduleDir) {
                 if (moduleDir.endsWith("unlinked")) return null;
+                if (moduleDir.endsWith("other2")) return new Linked(moduleDir, ":");   // an independent build, also ":"
                 return moduleDir.equals(base) ? new Linked(base, ":") : new Linked(base, ":" + base.relativize(moduleDir));
             }
 
@@ -279,7 +281,7 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
                 assertTrue(event + ": output captured", b.out.toString().contains("JSC0002"));
             }
             assertTrue(event + ": the exit is seen", b.done.get(5, java.util.concurrent.TimeUnit.SECONDS) != null);
-            b.release(true, 1_000);
+            b.release(true);
             tracker.done(run);
         }
     }
@@ -293,13 +295,16 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
         assertTrue(run.cancelled());
         assertTrue(b.done.isDone());
-        b.release(true, 60_000);   // IntelliAda stops waiting; the binding keeps listening
+        b.release(true);   // IntelliAda stops waiting; the binding keeps listening, with no time limit
         tracker.done(run);
+        Thread.sleep(1_500);   // well after IntelliAda let go
+        assertTrue("still listening for the submitted run's handler", b.listening());
         var h = new com.intellij.execution.process.NopProcessHandler();
         h.startNotify();
         bus().processStarting("Run", b.env(), h);
         assertTrue("the late handler is destroyed", h.waitFor(5_000));
         assertTrue(h.isProcessTerminated());
+        assertFalse("and then it stops listening", b.listening());
     }
 
     /** M2-CDX-3: a run revoked and re-trusted before its first output is not published. */
@@ -330,5 +335,28 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         assertEquals(titles.toString(), 1, titles.size());
         assertTrue(titles.get(0), titles.get(0).contains("failed in Gradle project :") && titles.get(0).contains("not in the module now"));
         assertFalse(titles.get(0).contains(":other"));
+    }
+
+    /** M2-CDX-13: two independent linked builds both named ":": the run's build root decides, not the path alone. */
+    public void testTheRunsBuildRootIsMatchedToo() throws Exception {
+        Path other2 = base.resolve("other2");
+        Files.move(base.resolve("other"), other2);
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        Files.delete(other2.resolve("src/main/jsc/org/acme/Counter.jsc"));   // the failing build's source went away
+        String diag = log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow();
+        assertEquals(1, JoustAbiFailureListener.notifyFailures(getProject(), List.of(new JoustAbiFailureListener.Diagnostic(diag, ":generateJsc")),
+                Set.of(), com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(getProject()).generation(), other2.toString()));
+        waitForTitles(1);
+        assertTrue(titles.toString(), titles.get(0).contains("not in the module now"));
+    }
+
+    /** M2-CDX-24: diagnostics after thousands of ordinary lines are still parsed. */
+    public void testFailuresAfterManyLinesAreParsed() throws Exception {
+        String npmLog = new String(getClass().getClassLoader().getResourceAsStream("joust-m2/npm-build-JSC0002.log").readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        String verbose = "line\n".repeat(2_100) + npmLog;
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(1 << 20);
+        capture.append(verbose);
+        assertEquals(1, com.bloxbean.intelliada.idea.joust.abi.JoustAbi.failures(capture.toString()).size());
     }
 }

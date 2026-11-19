@@ -13,6 +13,9 @@ public final class JoustOutputCapture {
     private final int cap;
     private final StringBuilder head = new StringBuilder();
     private final StringBuilder extra = new StringBuilder();
+    /** Acceptance outcomes ({@code not accepted}, {@code nothing accepted}, {@code accepted the}…), kept apart (M2-CDX-6). */
+    private final StringBuilder outcomes = new StringBuilder();
+    private int outcomeLines;
     private final StringBuilder partial = new StringBuilder();
     private boolean discarding;
     private int extraLines;
@@ -44,15 +47,21 @@ public final class JoustOutputCapture {
     }
 
     private void keep(String line, boolean beyondHead) {
-        if (!beyondHead || extraLines >= MAX_EXTRA_LINES || !line.contains("error[JSC")) return;
+        if (!beyondHead) return;
+        if (line.contains("accepted") && outcomeLines < MAX_EXTRA_LINES) {
+            outcomes.append(line).append('\n');
+            outcomeLines++;
+            return;
+        }
+        if (extraLines >= MAX_EXTRA_LINES || !line.contains("error[JSC")) return;
         extra.append(line).append('\n');
         extraLines++;
     }
 
     @Override
     public synchronized String toString() {
-        String tail = !discarding && head.length() >= cap && partial.indexOf("error[JSC") >= 0 && extraLines < MAX_EXTRA_LINES
+        String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || partial.indexOf("accepted") >= 0)
                 ? partial + "\n" : "";
-        return extra.isEmpty() && tail.isEmpty() ? head.toString() : head + "\n" + extra + tail;
+        return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() ? head.toString() : head + "\n" + extra + outcomes + tail;
     }
 }

@@ -91,7 +91,7 @@ public final class JoustAbiReview {
             tmp = Files.createTempDirectory(privateTmp, "abi-");
             Path out = tmp.resolve("diff.json");   // written by the task into a directory only IntelliAda uses (M2-SEC-3)
             List<String> diffArgs = target.gradle() ? JoustAbi.gradleDiffArgs(target.gradlePath(), contract, out)
-                    : JoustAbi.npmDiffArgs(contract, out);
+                    : JoustAbi.npmDiffArgs(contract, npmSrc(), out);
             Result r = runner.run(diffArgs);
             if (r.cancelled() || !live.getAsBoolean()) return false;
             if (!r.ok()) {
@@ -121,7 +121,15 @@ public final class JoustAbiReview {
             if (!ui.confirm(target.module(), d)) return false;
             // After the dialogs: trust, the project and the generation must still hold (M2-DES-2, M2-CDX-2).
             if (!live.getAsBoolean()) return false;
-            JoustAbi.Snapshot before = JoustAbi.manifests(scan.get());
+            JoustProjectLayout fresh = scan.get();
+            JoustAbi.Snapshot before = JoustAbi.manifests(fresh);
+            String moved = rebind(fresh, manifest);
+            if (moved != null) {
+                // The project changed under the review (a contracts directory moved, the source or its owner changed):
+                // nothing is run (M2-CDX-23).
+                ui.refused("ABI change not accepted", moved + "\nNothing was run. Review the change again.", reviewAgain);
+                return false;
+            }
             if (before.incomplete() != null) {
                 // Stop before anything is written: the result could not be verified (M2-CDX-7).
                 ui.report("ABI change not accepted", "The project's ABI manifests could not all be checked: " + before.incomplete()
@@ -133,17 +141,25 @@ public final class JoustAbiReview {
                 ui.refused("ABI change not accepted", stale + "\nReview the change again.", reviewAgain);
                 return false;
             }
-            List<String> acceptArgs = target.gradle() ? JoustAbi.gradleAcceptArgs(target.gradlePath(), d) : JoustAbi.npmAcceptArgs(d);
+            List<String> acceptArgs = target.gradle() ? JoustAbi.gradleAcceptArgs(target.gradlePath(), d) : JoustAbi.npmAcceptArgs(d, npmSrc());
             Result a = runner.run(acceptArgs);
             if (a.cancelled()) return false;
             JoustAbi.Snapshot after = JoustAbi.manifests(scan.get());
             // An explicit refusal of this contract by the bound task wins over what the files look like afterwards: another
             // acceptance may have written the same new hash meanwhile (M2-CDX-6).
             String jscRel = target.contractsDir().relativize(target.jsc()).toString().replace('\\', '/');
-            String refusedByTask = !a.ok() ? JoustAbi.refusal(a.output(), jscRel) : null;
-            if (refusedByTask != null) {
-                ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
-                return false;
+            if (!a.ok()) {
+                // A failed run is an acceptance only when it says so: an explicit refusal wins over the files, and output
+                // that is missing or incomplete is no evidence of acceptance (M2-CDX-6).
+                String refusedByTask = JoustAbi.refusal(a.output(), jscRel, contract);
+                if (refusedByTask == null && !JoustAbi.reportsAccepted(a.output(), jscRel, manifest.getFileName().toString(),
+                        target.dir().relativize(manifest).toString())) {
+                    refusedByTask = "the accept task failed without reporting that it accepted " + manifest.getFileName();
+                }
+                if (refusedByTask != null) {
+                    ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
+                    return false;
+                }
             }
             String wrong = JoustAbi.verifyAccepted(before, after, manifest, d);
             if (wrong != null) {
@@ -163,6 +179,37 @@ public final class JoustAbiReview {
             return false;
         } finally {
             if (tmp != null) deleteTree(tmp);
+        }
+    }
+
+    /** The npm contracts directory relative to the npm root, for {@code --src}. */
+    private String npmSrc() {
+        return target.dir().relativize(target.contractsDir()).toString().replace('\\', '/');
+    }
+
+    /**
+     * Why the fresh scan no longer binds the selected source to the reviewed manifest, or null (M2-CDX-23): the source
+     * must still be owned by the same module or npm root, under the same verified contracts directory, as the same real
+     * file, with the same sibling manifest.
+     */
+    private String rebind(JoustProjectLayout fresh, Path manifest) {
+        try {
+            Path jsc = target.jsc().toRealPath();
+            if (!jsc.toString().equals(target.jsc().toString())) return "the selected source moved";
+            JoustProjectLayout.Owner owner = fresh.owner(jsc);
+            Path ownerDir = owner == null ? null : owner.gradle() != null ? owner.gradle().dir() : owner.npm().dir();
+            if (ownerDir == null || owner.gradle() != null != target.gradle() || !ownerDir.toString().equals(target.dir().toString())) {
+                return "the source's module changed";
+            }
+            JoustProjectLayout.SourceRoot root = fresh.sourceRoots().stream()
+                    .filter(r -> r.ownerDir().toString().equals(ownerDir.toString())).findFirst().orElse(null);
+            Path contracts = root == null ? null : root.verifiedContracts(fresh.base());
+            if (contracts == null || !contracts.toString().equals(target.contractsDir().toString())) return "the contracts directory changed";
+            String simple = target.contract().substring(target.contract().lastIndexOf('.') + 1);
+            if (!jsc.resolveSibling(simple + ".abi.json").toString().equals(manifest.toString())) return "the manifest's place changed";
+            return null;
+        } catch (IOException | RuntimeException e) {
+            return "the selected source is gone";
         }
     }
 

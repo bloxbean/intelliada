@@ -205,18 +205,16 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         }
 
         /**
-         * Called when IntelliAda stops waiting. A run that never got its handler keeps listening (up to {@code grace}) so
-         * that a late handler is cancelled at once; one that was never submitted lets go now.
+         * Called when IntelliAda stops waiting. A submitted run that has not delivered its handler keeps listening, with
+         * no time limit, until the handler arrives (and is cancelled at once if the run was), the run reports that it did
+         * not start, or the project closes and its message bus with it (M2-CDX-3). One never submitted lets go now.
          */
-        void release(boolean submitted, long graceMillis) {
-            if (!submitted) {
-                settle();
-                return;
-            }
-            if (!settled.isDone()) {
-                com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
-                        .schedule(this::settle, graceMillis, TimeUnit.MILLISECONDS);
-            }
+        void release(boolean submitted) {
+            if (!submitted) settle();
+        }
+
+        boolean listening() {
+            return !settled.isDone();
         }
 
         boolean bound() {
@@ -228,7 +226,6 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         }
     }
 
-    static final long LATE_HANDLER_GRACE_MS = 10 * 60 * 1000;
 
     @Override
     public JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) throws InterruptedException {
@@ -268,7 +265,7 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
             // Never let go of work that may still run (M2-CDX-3): cancel what did not finish, and keep listening for a
             // handler that has not arrived yet, so the cancellation reaches it.
             if (binding == null || !binding.done.isDone() || binding.done.isCancelled()) run.cancel();
-            if (binding != null) binding.release(submitted, LATE_HANDLER_GRACE_MS);
+            if (binding != null) binding.release(submitted);
             tracker.done(run);
         }
     }

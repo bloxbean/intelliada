@@ -83,6 +83,11 @@ public final class JoustProjectService {
         return l;
     }
 
+    /** Forgets the cached layout; the next use scans again. */
+    public void invalidate() {
+        layout = null;
+    }
+
     /** The cached layout, or null if it has not been computed (for EDT callers that must not read files). */
     public JoustProjectLayout cachedLayout() {
         return layout;

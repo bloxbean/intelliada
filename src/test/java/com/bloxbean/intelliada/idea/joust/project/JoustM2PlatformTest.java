@@ -41,6 +41,7 @@ public class JoustM2PlatformTest extends BasePlatformTestCase {
             }
         }
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
         TrustedProjects.setProjectTrusted(getProject(), true);
     }
 
@@ -58,6 +59,9 @@ public class JoustM2PlatformTest extends BasePlatformTestCase {
     }
 
     public void testGeneratedJavaIsMarkedAndLeadsToItsJsc() throws Exception {
+        VirtualFile probe = vf("build/generated/sources/jsc/java/main/org/acme/Counter.java");
+        assertFalse("a cold cache never scans inside the filter (M2-DES-8)", GeneratedSourcesFilter.isGeneratedSourceByAnyFilter(probe, getProject()));
+        JoustProjectService.getInstance(getProject()).layout();
         VirtualFile java = vf("build/generated/sources/jsc/java/main/org/acme/Counter.java");
         assertTrue(GeneratedSourcesFilter.isGeneratedSourceByAnyFilter(java, getProject()));
         assertFalse(GeneratedSourcesFilter.isGeneratedSourceByAnyFilter(vf("src/main/jsc/org/acme/Counter.jsc"), getProject()));

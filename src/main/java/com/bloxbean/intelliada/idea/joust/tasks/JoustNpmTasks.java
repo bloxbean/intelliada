@@ -79,8 +79,8 @@ public final class JoustNpmTasks {
                 }
             });
             if (showsConsole()) {
-                ApplicationManager.getApplication().invokeAndWait(() -> new com.intellij.execution.RunContentExecutor(project, handler)
-                        .withConsole(console(project, root)).withTitle(PlainText.title(title, 120)).withActivateToolWindow(true).run());
+                ApplicationManager.getApplication().invokeAndWait(() -> openConsole(project, root, handler, PlainText.title(title, 120)));
+                handler.startNotify();
             } else {
                 handler.startNotify();
             }
@@ -97,24 +97,51 @@ public final class JoustNpmTasks {
     }
 
     /**
-     * The filters of an npm Run console (M2-CDX-14): IntelliJ's standard filters from every other provider, and the
-     * JOUST filter scoped to this npm root; never the project-wide JOUST filter.
+     * The filters of an npm Run console (M2-CDX-14): every other provider's filters, through the console-aware overload
+     * where the provider has one (IntelliJ's standard filters stay), and the JOUST filter scoped to this npm root; never
+     * the project-wide JOUST filter.
      */
-    public static List<com.intellij.execution.filters.Filter> consoleFilters(Project project, JoustProjectLayout.NpmRoot root) {
+    public static List<com.intellij.execution.filters.Filter> consoleFilters(Project project, JoustProjectLayout.NpmRoot root,
+                                                                            com.intellij.execution.ui.ConsoleView console) {
         List<com.intellij.execution.filters.Filter> filters = new ArrayList<>();
+        var scope = com.intellij.psi.search.GlobalSearchScope.allScope(project);
         for (var provider : com.intellij.execution.filters.ConsoleFilterProvider.FILTER_PROVIDERS.getExtensionList()) {
             if (provider instanceof com.bloxbean.intelliada.idea.joust.project.JoustConsoleFilterProvider) continue;
-            filters.addAll(List.of(provider.getDefaultFilters(project)));
+            com.intellij.execution.filters.Filter[] f;
+            if (provider instanceof com.intellij.execution.filters.ConsoleDependentFilterProvider cd && console != null) {
+                f = cd.getDefaultFilters(console, project, scope);
+            } else if (provider instanceof com.intellij.execution.filters.ConsoleFilterProviderEx ex) {
+                f = ex.getDefaultFilters(project, scope);
+            } else {
+                f = provider.getDefaultFilters(project);
+            }
+            filters.addAll(List.of(f));
         }
         filters.add(new com.bloxbean.intelliada.idea.joust.project.JoustConsoleFilterProvider.JoustDiagnosticFilter(project, List.of(root.dir())));
         return filters;
     }
 
-    static com.intellij.execution.ui.ConsoleView console(Project project, JoustProjectLayout.NpmRoot root) {
+    public static List<com.intellij.execution.filters.Filter> consoleFilters(Project project, JoustProjectLayout.NpmRoot root) {
+        return consoleFilters(project, root, null);
+    }
+
+    /**
+     * The npm Run tab: a console with {@link #consoleFilters} (no predefined filters), attached to the process, in a run
+     * descriptor shown under the Run executor and disposed with it. On the EDT; the caller starts the process after.
+     */
+    public static com.intellij.execution.ui.RunContentDescriptor openConsole(Project project, JoustProjectLayout.NpmRoot root,
+                                                                             com.intellij.execution.process.ProcessHandler handler, String title) {
         var builder = new com.intellij.execution.filters.TextConsoleBuilderImpl(project);
-        builder.setUsePredefinedMessageFilter(false);   // the providers are added above, without the project-wide JOUST one
-        builder.filters(consoleFilters(project, root));
-        return builder.getConsole();
+        builder.setUsePredefinedMessageFilter(false);
+        com.intellij.execution.ui.ConsoleView console = builder.getConsole();
+        for (var f : consoleFilters(project, root, console)) console.addMessageFilter(f);
+        console.attachToProcess(handler);
+        var descriptor = new com.intellij.execution.ui.RunContentDescriptor(console, handler, console.getComponent(), title);
+        descriptor.setActivateToolWindowWhenAdded(true);
+        com.intellij.openapi.util.Disposer.register(descriptor, console);
+        com.intellij.execution.ui.RunContentManager.getInstance(project)
+                .showRunContent(com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance(), descriptor);
+        return descriptor;
     }
 
     /** A Run console in the IDE; tests without one read the captured output only. */
