@@ -213,10 +213,6 @@ public final class JoustNpmTasks {
         final java.util.Set<ProcessHandle> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
         /** Whether the latest listing of descendants, taken while the process lived, succeeded. */
         volatile boolean enumerated;
-        /** Whether the tree was frozen (SIGSTOP) and listed until stable while it lived: a complete listing (M2-CDX-3). */
-        volatile boolean frozen;
-        /** Whether IntelliJ's own tree kill reported success. */
-        volatile boolean treeKilled;
         /** Whether IntelliAda had to end it (cancellation, failure): only then must the tree be shown gone. */
         volatile boolean killed;
         private java.util.concurrent.ScheduledFuture<?> sampler;
@@ -259,10 +255,7 @@ public final class JoustNpmTasks {
 
     /** For tests: when true, enumerating descendants is refused, as some sandboxes do. */
     static volatile boolean enumerationDeniedForTests;
-    /** For tests: when true, IntelliJ's tree kill reports failure. */
-    static volatile boolean treeKillFailsForTests;
-
-    /** The process's descendants, or null when the system refuses to list them. */
+    /** The process's descendants, or null when the system refuses to list them. Called only while it lives. */
     static List<ProcessHandle> descendants(Process p) {
         try {
             if (enumerationDeniedForTests) throw new UnsupportedOperationException("Operation not permitted (sysctl failed)");
@@ -273,114 +266,54 @@ public final class JoustNpmTasks {
     }
 
     /**
-     * Ends {@code p} and its whole tree by every means available: the descendants it lists now and the ones observed
-     * while it ran (their own handles), IntelliJ's tree kill (which walks the tree with {@code ps}), then the process.
+     * The process's tree ended by <b>observed identity only</b> (ADR-004 §11 L21, M2-CDX-32): while the process lives,
+     * its descendants are listed, each observed handle is destroyed (handles carry their start time), and the tree is
+     * listed again, until a listing finds nothing new; then the process itself. Nothing is ever signalled by a bare PID:
+     * no {@code kill} command, no SIGSTOP, no PID-based tree kill. A child forked after the final listing, or one that left
+     * the tree, may survive (a documented residual, §12 E13; OS-level containment is a follow-up).
      */
-    /**
-     * POSIX only: stops the live tree (the process first, so it can start no child, then each descendant as it is
-     * found), re-listing until no new descendant appears, and records them. True when the tree was frozen and listed
-     * completely while the process lived. Each signal goes to a handle checked alive just before.
-     */
-    static boolean freezeAndList(Launch launch, Process p) {
-        if (com.intellij.openapi.util.SystemInfo.isWindows || !p.isAlive() || !signal("STOP", p.toHandle())) return false;
-        for (int round = 0; round < 16; round++) {
-            List<ProcessHandle> now = descendants(p);
-            if (now == null || !p.isAlive()) return false;
-            boolean added = false;
-            for (ProcessHandle h : now) {
-                if (launch.seen.add(h)) added = true;
-                signal("STOP", h);
-            }
-            if (!added) return true;   // stable: nothing new appeared while all were stopped
-        }
-        return false;
-    }
-
-    static boolean signal(String sig, ProcessHandle h) {
-        if (freezeFailsForTests || !h.isAlive()) return false;
-        try {
-            Process k = new ProcessBuilder("/bin/kill", "-" + sig, String.valueOf(h.pid())).redirectErrorStream(true).start();
-            return k.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && k.exitValue() == 0;
-        } catch (java.io.IOException e) {
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
-
-    /** For tests: when true, the tree cannot be frozen. */
-    static volatile boolean freezeFailsForTests;
-
     static void destroyTree(Launch launch, Process p) {
-        // Listing and IntelliJ's tree kill go by PID: only while the process itself lives (M2-CDX-32, M2-SEC-10). After
-        // its exit, only the handles kept from the launch are acted on; they carry their start time.
-        if (p.isAlive()) {
-            if (launch.killed && freezeAndList(launch, p)) launch.frozen = true;
+        for (int round = 0; round < 16 && p.isAlive(); round++) {
             List<ProcessHandle> now = descendants(p);
-            boolean stillAlive = p.isAlive();
-            launch.enumerated = now != null && stillAlive;
-            if (now != null && stillAlive) launch.seen.addAll(now);
+            if (now == null || !p.isAlive()) break;
+            boolean added = false;
+            for (ProcessHandle h : now) if (launch.seen.add(h)) added = true;
+            for (ProcessHandle h : launch.liveSeen()) h.destroyForcibly();
+            if (!added) break;   // nothing new since the last listing
         }
-        for (ProcessHandle d : launch.liveSeen()) d.destroyForcibly();
-        if (p.isAlive()) {
-            treeKillCalls.incrementAndGet();
-            try {
-                boolean killed = !treeKillFailsForTests && com.intellij.execution.process.OSProcessUtil.killProcessTree(p);
-                if (killed) launch.treeKilled = true;
-            } catch (RuntimeException | Error unavailable) {
-                // the other means still apply
-            }
-        }
-        p.destroyForcibly();
+        for (ProcessHandle h : launch.liveSeen()) h.destroyForcibly();
+        p.destroyForcibly();   // the Process object: identity-bound
     }
 
-    /** For tests: how many times IntelliJ's tree kill was called. */
-    static final java.util.concurrent.atomic.AtomicInteger treeKillCalls = new java.util.concurrent.atomic.AtomicInteger();
-
-    /**
-     * True only when the tree is <b>known</b> to be gone (M2-CDX-3): the process has exited, every observed descendant
-     * has exited, and, for a run IntelliAda had to end, the tree was actually known, by a listing that succeeded while it
-     * lived or by IntelliJ's tree kill reporting success. An empty sample from a refused listing proves nothing.
-     */
+    /** True when the process and every descendant observed for it have exited. */
     static boolean treeGone(Launch launch) {
-        // For a run IntelliAda had to end, a snapshot is no proof (a child may start after it): only a frozen, stable
-        // listing or IntelliJ's tree kill reporting success knows the tree (M2-CDX-3).
-        boolean known = !launch.killed || launch.frozen || launch.treeKilled;
-        return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty() && known;
+        return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty();
     }
 
     /**
-     * Runs {@code release} once {@link #treeGone} holds: a one-shot check that reschedules itself only while work remains
-     * (M2-CDX-33). A tree that can never be shown gone keeps its run tracked, so a later cancellation still applies.
+     * Runs {@code release} once {@link #treeGone} holds: a one-shot check that reschedules itself only while something
+     * it observes is still alive (M2-CDX-33, M2-DES-14, M2-CDX-37); it re-reads the state before deciding (M2-CDX-38).
      */
     static void releaseWhenTreeGone(Launch launch, Runnable release) {
         releaseWhenTreeGone(launch, release, 0);
     }
 
-    /** Quick re-checks with back-off (M2-DES-14), then only a slow one; a tree never known stays tracked. */
-    static final int MAX_TREE_KILL_RETRIES = 5;
+    static final int QUICK_CHECKS = 5;
 
     private static void releaseWhenTreeGone(Launch launch, Runnable release, int attempt) {
+        List<ProcessHandle> live = launch.liveSeen();
+        // A run that ended normally is only observed; forcing is for runs IntelliAda had to end (M2-CDX-36).
+        if (launch.killed) for (ProcessHandle d : live) d.destroyForcibly();
         if (treeGone(launch)) {
             release.run();
             return;
         }
-        // Only the handles kept from the launch are acted on now: never the dead parent's PID (M2-CDX-32, M2-SEC-10). A run
-        // that ended normally is only observed; forcing is for runs IntelliAda had to end (M2-CDX-36).
-        List<ProcessHandle> live = launch.liveSeen();
-        if (launch.killed) for (ProcessHandle d : live) d.destroyForcibly();
-        if (!launch.handler.getProcess().isAlive() && live.isEmpty()) {
-            // Nothing is left to observe and the tree cannot become known: the run stays tracked, with nothing scheduled
-            // (M2-CDX-37).
-            return;
-        }
-        long delay = attempt < MAX_TREE_KILL_RETRIES ? 200L << attempt : 30_000L;
+        long delay = attempt < QUICK_CHECKS ? 200L << attempt : 30_000L;
         com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
                 .schedule(() -> releaseWhenTreeGone(launch, release, attempt + 1), delay, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
-    /** Returns true only when the tree is known to be gone ({@link #treeGone}); a detached handler is no proof. */
+    /** Returns true when the process and its observed descendants have exited; a detached handler is no proof. */
     static boolean kill(Launch launch) {
         Runnable hook = killHookForTests;
         if (hook != null) hook.run();
