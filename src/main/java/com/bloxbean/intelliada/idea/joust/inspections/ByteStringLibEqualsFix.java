@@ -17,9 +17,7 @@ import com.intellij.psi.PsiImportList;
 import com.intellij.psi.PsiImportStatement;
 import com.intellij.psi.PsiJavaFile;
 import com.intellij.psi.PsiMethodCallExpression;
-import com.intellij.psi.PsiReferenceExpression;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
-import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -31,8 +29,8 @@ import org.jetbrains.annotations.Nullable;
  * operands are {@code byte[]} ({@link #fixesFor}).
  * <p>The call uses the simple class name, because JuLC rejects a static call through a qualified class name (JULC0123),
  * and imports {@code org.julclang.stdlib.lib.ByteStringLib} when the name does not resolve yet. When another class named
- * {@code ByteStringLib} is in scope (an import of it, or a nested class), the call is qualified instead, so it still
- * compiles and resolves on the JVM; JuLC then reports JULC0123, which is the honest outcome of that name clash.
+ * {@code ByteStringLib} is in scope (an import of it, or a nested or same-package class), no fix is offered: the simple
+ * name would mean that class, and the qualified call JuLC rejects. The warning stays.
  */
 public final class ByteStringLibEqualsFix extends PsiUpdateModCommandQuickFix {
 
@@ -43,9 +41,27 @@ public final class ByteStringLibEqualsFix extends PsiUpdateModCommandQuickFix {
         return "Replace with ByteStringLib.equals(a, b)";
     }
 
-    /** The fix for {@code element} when its rewrite would compile (both operands {@code byte[]}), otherwise none. */
+    /**
+     * The fix for {@code element} when its rewrite would compile for both the JVM and JuLC: both operands {@code byte[]},
+     * and no other {@code ByteStringLib} in scope. Otherwise none.
+     */
     static LocalQuickFix @NotNull [] fixesFor(@NotNull PsiElement element) {
-        return byteArrayOperands(element) != null ? new LocalQuickFix[]{new ByteStringLibEqualsFix()} : LocalQuickFix.EMPTY_ARRAY;
+        return isApplicable(element) ? new LocalQuickFix[]{new ByteStringLibEqualsFix()} : LocalQuickFix.EMPTY_ARRAY;
+    }
+
+    private static boolean isApplicable(PsiElement element) {
+        return byteArrayOperands(element) != null && !anotherByteStringLibInScope(element);
+    }
+
+    /**
+     * Whether the simple name {@code ByteStringLib} at {@code element} means a class other than JuLC's: it resolves to
+     * another class, or (when it resolves to nothing) the file imports another class of that name by its single name.
+     */
+    private static boolean anotherByteStringLibInScope(PsiElement element) {
+        PsiClass visible = JavaPsiFacade.getInstance(element.getProject()).getResolveHelper()
+                .resolveReferencedClass(SIMPLE_NAME, element);
+        if (visible != null) return !JoustStateContracts.BYTE_STRING_LIB.equals(visible.getQualifiedName());
+        return element.getContainingFile() instanceof PsiJavaFile file && importsAnotherByteStringLib(file);
     }
 
     /** The two compared operands of a supported comparison when both are {@code byte[]}, otherwise null. */
@@ -78,41 +94,23 @@ public final class ByteStringLibEqualsFix extends PsiUpdateModCommandQuickFix {
     @Override
     protected void applyFix(@NotNull Project project, @NotNull PsiElement element, @NotNull ModPsiUpdater updater) {
         PsiExpression[] operands = byteArrayOperands(element);
-        if (operands == null) return;
+        if (operands == null || anotherByteStringLibInScope(element)) return;
         boolean negate = element instanceof PsiBinaryExpression binary && binary.getOperationTokenType() == JavaTokenType.NE;
         JavaPsiFacade facade = JavaPsiFacade.getInstance(project);
-        // what the simple name means here before the rewrite: nothing (import it), JuLC's class, or another class (qualify)
-        PsiClass visible = facade.getResolveHelper().resolveReferencedClass(SIMPLE_NAME, element);
-        boolean otherInScope = visible != null && !JoustStateContracts.BYTE_STRING_LIB.equals(visible.getQualifiedName());
+        // the simple name means JuLC's class here already, or nothing yet (then it is imported)
+        boolean visible = facade.getResolveHelper().resolveReferencedClass(SIMPLE_NAME, element) != null;
         PsiElementFactory factory = facade.getElementFactory();
-        String text = (negate ? "!" : "") + (otherInScope ? JoustStateContracts.BYTE_STRING_LIB : SIMPLE_NAME) + ".equals("
+        String text = (negate ? "!" : "") + SIMPLE_NAME + ".equals("
                 + PsiUtil.skipParenthesizedExprDown(operands[0]).getText() + ", "
                 + PsiUtil.skipParenthesizedExprDown(operands[1]).getText() + ")";
         PsiElement replaced = element.replace(factory.createExpressionFromText(text, element));
-        if (otherInScope || visible != null) return;
-        PsiMethodCallExpression call = PsiTreeUtil.findChildOfType(replaced, PsiMethodCallExpression.class, false);
-        if (call == null || !(replaced.getContainingFile() instanceof PsiJavaFile file)) return;
+        if (visible || !(replaced.getContainingFile() instanceof PsiJavaFile file)) return;
         PsiClass target = facade.findClass(JoustStateContracts.BYTE_STRING_LIB, file.getResolveScope());
         if (target != null) {
             JavaCodeStyleManager.getInstance(project).addImport(file, target);
-            if (!resolvesToByteStringLib(call)) qualify(factory, call);
-        } else if (!importsAnotherByteStringLib(file)) {
+        } else {
             // The library is not resolvable here: add the import by text, so JuLC still finds the simple name
             addImportByText(project, file);
-        } else {
-            qualify(factory, call);
-        }
-    }
-
-    private static boolean resolvesToByteStringLib(PsiMethodCallExpression call) {
-        return call.getMethodExpression().getQualifierExpression() instanceof PsiReferenceExpression ref
-                && ref.resolve() instanceof PsiClass cls && JoustStateContracts.BYTE_STRING_LIB.equals(cls.getQualifiedName());
-    }
-
-    private static void qualify(PsiElementFactory factory, PsiMethodCallExpression call) {
-        PsiExpression qualifier = call.getMethodExpression().getQualifierExpression();
-        if (qualifier != null) {
-            qualifier.replace(factory.createExpressionFromText(JoustStateContracts.BYTE_STRING_LIB, qualifier));
         }
     }
 
