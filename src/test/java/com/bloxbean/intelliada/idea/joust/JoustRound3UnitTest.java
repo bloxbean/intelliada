@@ -87,6 +87,19 @@ public class JoustRound3UnitTest {
         try (var s = Files.walk(project)) {
             assertEquals(List.of(project), s.toList());
         }
+        // A symlinked syntaxes/ under a valid tag directory is refused too (M1-CDX-28).
+        Path sys3 = Files.createDirectories(base.resolve("sys3"));
+        Path tagDir = Files.createDirectories(sys3.resolve("intelliada/joust-textmate/v0.1.0-pre2"));
+        Files.createSymbolicLink(tagDir.resolve("syntaxes"), project);
+        try {
+            com.bloxbean.intelliada.idea.joust.textmate.JoustGrammarBundle.extracted(sys3, List.of(project));
+            fail("wrote the grammar through a symlinked syntaxes/");
+        } catch (java.io.IOException expected) {
+            // refused
+        }
+        try (var s = Files.walk(project)) {
+            assertEquals(List.of(project), s.toList());
+        }
         Path ok = com.bloxbean.intelliada.idea.joust.textmate.JoustGrammarBundle.extracted(Files.createDirectories(base.resolve("sys2")), List.of(project));
         assertTrue(Files.isRegularFile(ok.resolve("syntaxes/jsc.tmLanguage.json")));
     }

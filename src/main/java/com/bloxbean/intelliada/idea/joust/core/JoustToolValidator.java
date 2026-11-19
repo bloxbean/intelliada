@@ -124,8 +124,16 @@ public final class JoustToolValidator {
         }
         Path bin = real.getParent();
         Path pkg = bin == null ? null : bin.getParent();
-        if (bin == null || !bin.getFileName().toString().equals("bin") || pkg == null) {
-            return Result.fail(selected, "joust-lsp.js is not in a package's bin directory: " + real);
+        // D4: the global npm layout, <prefix>/lib/node_modules/@julclang/joust/bin/joust-lsp.js (Windows:
+        // <prefix>\node_modules\@julclang\joust\bin\joust-lsp.js), not any checkout that happens to look alike (M1-CDX-30).
+        Path scope = pkg == null ? null : pkg.getParent();
+        Path nodeModules = scope == null ? null : scope.getParent();
+        if (bin == null || !bin.getFileName().toString().equals("bin") || pkg == null || !pkg.getFileName().toString().equals("joust")
+                || scope == null || !scope.getFileName().toString().equals("@julclang") || nodeModules == null
+                || !nodeModules.getFileName().toString().equals("node_modules")
+                || (flavor != JoustPaths.Flavor.WINDOWS && !windowsLayout && (nodeModules.getParent() == null
+                        || !nodeModules.getParent().getFileName().toString().equals("lib")))) {
+            return Result.fail(selected, "joust-lsp.js is not in a global npm installation of @julclang/joust: " + real);
         }
         String name = readPackageField(pkg.resolve("package.json"), "name");
         if (!PACKAGE_NAME.equals(name)) {
@@ -137,23 +145,44 @@ public final class JoustToolValidator {
     }
 
     /**
-     * True only for a native executable: ELF, Mach-O (thin or universal) or PE. A script, with or without {@code #!},
-     * is never a Node binary: the JDK would run a shebang-less text file through {@code /bin/sh} (M1-CDX-5).
+     * True only for an executable in <b>this host's</b> native format, structurally checked (M1-CDX-5): Mach-O on macOS
+     * (thin, or universal with a plausible architecture count), ELF on Linux (a 32- or 64-bit executable or shared object),
+     * PE on Windows ({@code MZ} and a {@code PE\0\0} signature where its header says). A truncated or foreign file is
+     * refused; the JDK would otherwise run some through {@code /bin/sh}.
      */
     static boolean isNativeExecutable(Path real) {
+        return isNativeExecutable(real, JoustPaths.Flavor.current());
+    }
+
+    public static boolean isNativeExecutable(Path real, JoustPaths.Flavor host) {
         byte[] h;
         try (InputStream in = Files.newInputStream(real)) {
-            h = in.readNBytes(4);
+            h = in.readNBytes(4096);
         } catch (IOException e) {
             return false;
         }
-        if (h.length < 2) return false;
-        if (h[0] == 'M' && h[1] == 'Z') return true;
-        if (h.length < 4) return false;
-        int be = ((h[0] & 0xff) << 24) | ((h[1] & 0xff) << 16) | ((h[2] & 0xff) << 8) | (h[3] & 0xff);
-        return be == 0x7F454C46                                         // ELF
-                || be == 0xFEEDFACE || be == 0xFEEDFACF || be == 0xCEFAEDFE || be == 0xCFFAEDFE   // Mach-O
-                || be == 0xCAFEBABE || be == 0xBEBAFECA;                 // universal Mach-O
+        if (h.length < 64) return false;
+        int be = u32be(h, 0);
+        return switch (host) {
+            case MAC -> be == 0xFEEDFACE || be == 0xFEEDFACF || be == 0xCEFAEDFE || be == 0xCFFAEDFE
+                    || ((be == 0xCAFEBABE || be == 0xCAFEBABF) && u32be(h, 4) >= 1 && u32be(h, 4) <= 8);
+            case UNIX -> be == 0x7F454C46 && (h[4] == 1 || h[4] == 2) && (h[5] == 1 || h[5] == 2)
+                    && (elfType(h) == 2 || elfType(h) == 3);
+            case WINDOWS -> h[0] == 'M' && h[1] == 'Z' && pe(h);
+        };
+    }
+
+    private static int u32be(byte[] h, int o) {
+        return ((h[o] & 0xff) << 24) | ((h[o + 1] & 0xff) << 16) | ((h[o + 2] & 0xff) << 8) | (h[o + 3] & 0xff);
+    }
+
+    private static int elfType(byte[] h) {
+        return h[5] == 1 ? (h[16] & 0xff) | ((h[17] & 0xff) << 8) : ((h[16] & 0xff) << 8) | (h[17] & 0xff);
+    }
+
+    private static boolean pe(byte[] h) {
+        int off = (h[0x3C] & 0xff) | ((h[0x3D] & 0xff) << 8) | ((h[0x3E] & 0xff) << 16) | ((h[0x3F] & 0xff) << 24);
+        return off >= 0x40 && off + 4 <= h.length && h[off] == 'P' && h[off + 1] == 'E' && h[off + 2] == 0 && h[off + 3] == 0;
     }
 
     /** True when the file is not a native executable (kept for callers that ask the opposite question). */

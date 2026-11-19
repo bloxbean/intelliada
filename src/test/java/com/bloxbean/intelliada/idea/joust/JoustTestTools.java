@@ -22,6 +22,17 @@ public final class JoustTestTools {
         return null;
     }
 
+    /** The JOUST checkout ({@code -Djoust.repo} or {@code JOUST_REPO}) if usable; required runs fail otherwise (M1-CDX-25). */
+    public static String repo(String test) {
+        String r = System.getProperty("joust.repo");
+        if (r == null || r.isBlank()) r = System.getenv("JOUST_REPO");
+        boolean usable = r != null && !r.isBlank() && new java.io.File(r, ".git").exists();
+        if (usable) return r;
+        if (required()) throw new AssertionError(test + " needs a JOUST checkout in JOUST_REPO (JOUST_REQUIRE_TOOLS=1); got " + r);
+        System.out.println("JOUST-SKIPPED " + test + ": set JOUST_REPO to a JOUST checkout");
+        return null;
+    }
+
     /** True when the run must have every tool: {@code -Djoust.requireTools} is {@code true} or {@code 1} (M1-DES-18). */
     public static boolean required() {
         String v = System.getProperty("joust.requireTools", "");

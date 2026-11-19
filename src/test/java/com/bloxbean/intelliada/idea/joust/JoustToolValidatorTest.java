@@ -163,6 +163,50 @@ public class JoustToolValidatorTest {
         assertEquals(probes, com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe.invocations());
     }
 
+    /** M1-CDX-5: only this host's native format, structurally; truncated and foreign headers are refused. */
+    @Test
+    public void onlyTheHostsNativeFormat() throws Exception {
+        assertTrue(JoustToolValidator.isNativeExecutable(node.toRealPath(), flavor));
+        Path truncated = tools.resolve("t/node");
+        Files.createDirectories(truncated.getParent());
+        Files.write(truncated, new byte[]{(byte) 0xCF, (byte) 0xFA, (byte) 0xED, (byte) 0xFE, 0, 0, 0, 0});
+        truncated.toFile().setExecutable(true);
+        assertFalse(JoustToolValidator.checkNode(truncated.toString(), roots, flavor).ok());
+        byte[] elf = new byte[128];
+        elf[0] = 0x7F; elf[1] = 'E'; elf[2] = 'L'; elf[3] = 'F'; elf[4] = 2; elf[5] = 1; elf[16] = 2;
+        byte[] macho = new byte[128];
+        macho[0] = (byte) 0xCF; macho[1] = (byte) 0xFA; macho[2] = (byte) 0xED; macho[3] = (byte) 0xFE;
+        byte[] mz = new byte[128];
+        mz[0] = 'M'; mz[1] = 'Z';
+        Path f = tools.resolve("t/x");
+        Files.write(f, elf);
+        assertEquals(JoustPaths.Flavor.UNIX == JoustPaths.Flavor.UNIX, JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.UNIX));
+        assertFalse("ELF is foreign on macOS", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+        Files.write(f, macho);
+        assertTrue(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+        assertFalse(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.UNIX));
+        Files.write(f, mz);
+        assertFalse("MZ without a PE header", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
+        byte[] cafe = new byte[128];
+        cafe[0] = (byte) 0xCA; cafe[1] = (byte) 0xFE; cafe[2] = (byte) 0xBA; cafe[3] = (byte) 0xBE; cafe[7] = 65;
+        Files.write(f, cafe);
+        assertFalse("a Java class file is not universal Mach-O (M1-DES-19)", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+    }
+
+    /** M1-CDX-30: the right package name and entry point outside a global npm layout is refused. */
+    @Test
+    public void joustLspMustBeAGlobalNpmInstallation() throws Exception {
+        Path checkout = tools.resolve("checkout/@julclang/joust");
+        Files.createDirectories(checkout.resolve("bin"));
+        Files.writeString(checkout.resolve("package.json"), "{\"name\":\"@julclang/joust\",\"version\":\"1\"}");
+        Path js = JoustTestFiles.executable(checkout.resolve("bin/joust-lsp.js"), "x");
+        assertFalse(JoustToolValidator.resolveJoustLsp(js.toString(), roots, flavor).ok());
+        Path other = tools.resolve("elsewhere/joust/bin");
+        Files.createDirectories(other);
+        Files.writeString(other.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\",\"version\":\"1\"}");
+        assertFalse(JoustToolValidator.resolveJoustLsp(JoustTestFiles.executable(other.resolve("joust-lsp.js"), "x").toString(), roots, flavor).ok());
+    }
+
     @Test
     public void nodeMajor() {
         assertEquals(22, JoustToolValidator.nodeMajor("v22.12.0"));

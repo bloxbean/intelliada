@@ -141,7 +141,8 @@ final class JoustSanitizingInput extends InputStream {
             org.json.JSONTokener t = new org.json.JSONTokener(text);
             Object v = t.nextValue();
             // One object, and nothing after it: org.json stops at the closing brace, LSP4J would read on (M1-CDX-22).
-            if (!(v instanceof JSONObject obj) || t.nextClean() != 0) return null;
+            // The strict lexical check has already refused NUL, which org.json's tokenizer would read as the end.
+            if (!(v instanceof JSONObject obj) || t.nextClean() != 0 || t.more()) return null;
             o = obj;
         } catch (RuntimeException e) {
             return null;
@@ -170,24 +171,50 @@ final class JoustSanitizingInput extends InputStream {
     /** Nesting deeper than this ends the stream; checked on the bytes, before any tree is built (M1-CDX-27). */
     static final int MAX_DEPTH = 64;
 
-    /** True when objects and arrays nest deeper than {@code max}, outside strings. */
+    /**
+     * True unless the body is <b>strict</b> JSON with nesting no deeper than {@code max} (M1-CDX-22, M1-CDX-27): strings in
+     * double quotes only, no raw control characters (NUL included) inside or outside them, and outside strings only
+     * structure, whitespace, numbers and the literals {@code true}, {@code false} and {@code null}. No single quotes,
+     * unquoted names, comments or NUL: whatever passes is read the same by org.json and by LSP4J's Gson. Checked on
+     * the bytes, before any tree is built.
+     */
     static boolean depthExceeds(byte[] body, int max) {
         int depth = 0;
         boolean inString = false;
         boolean escaped = false;
-        for (byte b : body) {
+        for (int i = 0; i < body.length; i++) {
+            int b = body[i] & 0xff;
             if (inString) {
+                if (b < 0x20) return true;
                 if (escaped) escaped = false;
                 else if (b == '\\') escaped = true;
                 else if (b == '"') inString = false;
                 continue;
             }
-            if (b == '"') inString = true;
-            else if (b == '{' || b == '[') {
-                if (++depth > max) return true;
-            } else if (b == '}' || b == ']') depth--;
+            switch (b) {
+                case '"' -> inString = true;
+                case '{', '[' -> {
+                    if (++depth > max) return true;
+                }
+                case '}', ']' -> {
+                    if (--depth < 0) return true;
+                }
+                case ',', ':', ' ', '\t', '\n', '\r', '-', '+', '.', 'e', 'E', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> {
+                }
+                case 't', 'f', 'n' -> {
+                    String lit = b == 't' ? "true" : b == 'f' ? "false" : "null";
+                    if (i + lit.length() > body.length) return true;
+                    for (int k = 0; k < lit.length(); k++) {
+                        if (body[i + k] != lit.charAt(k)) return true;
+                    }
+                    i += lit.length() - 1;
+                }
+                default -> {
+                    return true;
+                }
+            }
         }
-        return false;
+        return inString || depth != 0;
     }
     static final int FOLD_CAP = 200;
 

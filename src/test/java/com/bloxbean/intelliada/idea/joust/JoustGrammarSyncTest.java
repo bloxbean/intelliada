@@ -48,8 +48,8 @@ public class JoustGrammarSyncTest {
 
     @Test
     public void bundledFilesEqualJoustAtTheTag() throws Exception {
-        String repo = System.getProperty("joust.repo", JoustTestTools.env("JOUST_REPO", "bundledFilesEqualJoustAtTheTag"));
-        Assume.assumeTrue("set JOUST_REPO to compare with a JOUST checkout", repo != null && new File(repo, ".git").exists());
+        String repo = JoustTestTools.repo("bundledFilesEqualJoustAtTheTag");
+        Assume.assumeTrue("set JOUST_REPO to compare with a JOUST checkout", repo != null);
         Map<String, String> rec = JoustGrammarBundle.record();
         assertEquals(rec.get("commit"), git(repo, "rev-parse", rec.get("tag") + "^{commit}").trim());
         for (String f : new String[]{"syntaxes/jsc.tmLanguage.json", "language-configuration.json", "LICENSE"}) {
@@ -61,8 +61,8 @@ public class JoustGrammarSyncTest {
     /** M1-DES-13: IntelliAda's catalogue constant equals JOUST's CATALOGUE at the recorded tag. */
     @Test
     public void catalogueUrlEqualsJoustsAtTheTag() throws Exception {
-        String repo = System.getProperty("joust.repo", JoustTestTools.env("JOUST_REPO", "catalogueUrlEqualsJoustsAtTheTag"));
-        Assume.assumeTrue("set JOUST_REPO", repo != null && new File(repo, ".git").exists());
+        String repo = JoustTestTools.repo("catalogueUrlEqualsJoustsAtTheTag");
+        Assume.assumeTrue("set JOUST_REPO", repo != null);
         String model = git(repo, "show", JoustConstants.JOUST_TAG + ":js/joust/src/lsp/model.js");
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("export const CATALOGUE = '([^']+)'").matcher(model);
         assertTrue(m.find());

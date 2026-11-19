@@ -68,8 +68,16 @@ public final class JoustGrammarBundle {
             String actual = JoustToolValidator.sha256(bytes);
             if (!actual.equals(expected)) throw new IOException("bundled " + f + " does not match GRAMMAR_SOURCE.txt");
             Path target = dir.resolve(f);
+            // Every destination directory is verified through its real ancestors (M1-CDX-28): a symlinked
+            // syntaxes/ into a project is refused like a symlinked tag directory. The file itself must not be a link.
+            Path parent = com.bloxbean.intelliada.idea.joust.core.JoustLaunchPlanner.verifiedStorage(target.getParent(), forbiddenRoots,
+                    com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current());
+            if (parent == null || !com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(parent, dir)) {
+                throw new IOException("the TextMate bundle directory would be inside an open project");
+            }
+            target = parent.resolve(target.getFileName());
+            if (Files.isSymbolicLink(target)) throw new IOException("a TextMate bundle file is a link: " + target);
             if (Files.isRegularFile(target) && JoustToolValidator.sha256(target).equals(expected)) continue;
-            Files.createDirectories(target.getParent());
             Path tmp = Files.createTempFile(target.getParent(), "jsc", ".tmp");
             Files.write(tmp, bytes);
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);

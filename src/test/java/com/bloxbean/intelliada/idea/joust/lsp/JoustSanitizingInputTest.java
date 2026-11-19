@@ -106,13 +106,13 @@ public class JoustSanitizingInputTest {
             } catch (RuntimeException ignored) {
                 // the outcome is judged by what LSP4J read
             }
-            if (i < 2) {
+            if (i == 0) {
                 assertEquals("form " + i + " is read, escaped", 1, got.size());
                 var err = ((org.eclipse.lsp4j.jsonrpc.messages.ResponseMessage) got.get(0)).getError();
                 assertNotNull(err);
                 assertFalse(err.getMessage(), err.getMessage().contains("<"));
             } else {
-                assertEquals("form " + i + " (duplicate keys, UTF-16) ends the stream", List.of(), got);
+                assertEquals("form " + i + " (single quotes, duplicate keys, UTF-16) ends the stream", List.of(), got);
             }
         }
     }
@@ -133,6 +133,16 @@ public class JoustSanitizingInputTest {
         String deeper = "[".repeat(65) + "1" + "]".repeat(65);
         assertEquals("depth 65 ends the stream", 0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":" + deeper + "}")
                 .getBytes(StandardCharsets.UTF_8)).size());
+        // A raw NUL after a complete object, then more input: org.json would read the NUL as the end (M1-CDX-22).
+        byte[] nulBody = (ok + "\u0000{\"id\":\"2\"}").getBytes(StandardCharsets.UTF_8);
+        assertEquals("NUL then trailing input", 0, lsp4jRead(concat(("Content-Length: " + nulBody.length + "\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII), nulBody)).size());
+        // Brackets inside single-quoted strings cannot skew the depth count: single quotes are refused (M1-CDX-27).
+        assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":['" + "]".repeat(70) + "']}").getBytes(StandardCharsets.UTF_8)).size());
+        assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{x:1}}").getBytes(StandardCharsets.UTF_8)).size());
+        // A wide, shallow response is fine.
+        String wide = "[" + "[1,2,3],".repeat(20_000) + "[4]]";
+        assertEquals(1, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":" + wide + "}").getBytes(StandardCharsets.UTF_8)).size());
         var nullError = lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{\"x\":1},\"error\":null}").getBytes(StandardCharsets.UTF_8));
         assertEquals(1, nullError.size());
         assertNull("error:null is no error", ((org.eclipse.lsp4j.jsonrpc.messages.ResponseMessage) nullError.get(0)).getError());

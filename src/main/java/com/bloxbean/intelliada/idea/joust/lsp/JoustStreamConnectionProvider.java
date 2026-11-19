@@ -30,11 +30,23 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
     /** Tests observe every command line IntelliAda launches here (I1, I3). */
     private static volatile Consumer<List<String>> launchRecorder;
 
-    private static final java.util.Set<Path> LAUNCHED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Providers whose server is running; each knows the real paths it was started with (M1-CDX-29). */
+    private static final java.util.Set<JoustStreamConnectionProvider> LIVE = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile List<Path> launched = List.of();
 
-    /** The Node and joust-lsp real paths servers were started with in this session (the project-open check uses them). */
+    /** The Node and joust-lsp real paths of servers running now (the project-open check uses them). */
     public static java.util.Set<Path> launchedPaths() {
-        return java.util.Set.copyOf(LAUNCHED);
+        java.util.Set<Path> out = new java.util.HashSet<>();
+        for (JoustStreamConnectionProvider p : LIVE) {
+            if (p.isAlive()) out.addAll(p.launched);
+        }
+        return out;
+    }
+
+    @Override
+    public void stop() {
+        LIVE.remove(this);
+        super.stop();
     }
 
     /** For tests: receives each command line just before it is started; {@code null} to stop. */
@@ -75,8 +87,8 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
         setIncludeSystemEnvironmentVariables(true);
         Consumer<List<String>> rec = launchRecorder;
         if (rec != null) rec.accept(launch.command());
-        LAUNCHED.add(Path.of(launch.command().get(0)));
-        LAUNCHED.add(Path.of(launch.command().get(1)));
+        launched = List.of(Path.of(launch.command().get(0)), Path.of(launch.command().get(1)));
+        LIVE.add(this);
         try {
             super.start();
         } catch (RuntimeException e) {
@@ -98,6 +110,7 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
     }
 
     private CannotStartProcessException failed(Exception e) {
+        LIVE.remove(this);
         JoustNotifications.show(project, "JOUST language server stopped",
                 "joust-lsp did not start or exited early: " + e.getMessage(), NotificationType.WARNING);
         return new CannotStartProcessException(SAFE_FAILURE);

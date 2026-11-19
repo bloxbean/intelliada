@@ -269,7 +269,10 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
                 new Range(new Position(0, 0), new Position(0, 3)), new Range(new Position(0, 0), new Position(0, 3)), "<b>d</b>");
         String shown = features.getDocumentSymbolFeature().getPresentableText(sym, psi);
         assertTrue(shown.length() <= 210 && !shown.contains("\u001b"));
-        assertFalse(features.getProgressFeature().getProgressTaskTitle("\u001b[31m<html><b>T</b>").contains("<"));
+        // Titles keep the server's characters (r9 E6, M1-CDX-13): controls go, <html> is defused, List<T> stays.
+        String title = features.getProgressFeature().getProgressTaskTitle("\u001b[31m<html><b>T</b>");
+        assertTrue(title, title.startsWith("JOUST") && title.endsWith("<html><b>T</b>") && !title.contains("\u001b"));
+        assertTrue(features.getProgressFeature().getProgressTaskTitle("Checking List<T>").endsWith("Checking List<T>"));
 
         // --- messages, and the error LSP4IJ shows for a request it issued itself (I15, M1-SEC-1)
         PlatformTestUtil.waitWithEventsDispatching("the showMessage notification", () -> notifications.stream()

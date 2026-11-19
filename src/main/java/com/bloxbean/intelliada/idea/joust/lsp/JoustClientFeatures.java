@@ -169,7 +169,7 @@ public class JoustClientFeatures extends LSPClientFeatures {
     static final class SafeProgressFeature extends LSPProgressFeature {
         @Override
         public String getProgressTaskTitle(String title) {
-            return PlainText.label(super.getProgressTaskTitle(PlainText.clean(title, PROGRESS_TEXT_CAP)), PROGRESS_TEXT_CAP);
+            return PlainText.literal(super.getProgressTaskTitle(PlainText.clean(title, PROGRESS_TEXT_CAP)), PROGRESS_TEXT_CAP).replace('\n', ' ');
         }
 
         @Override

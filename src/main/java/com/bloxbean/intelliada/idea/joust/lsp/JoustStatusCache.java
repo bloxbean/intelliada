@@ -53,8 +53,11 @@ public final class JoustStatusCache {
                 });
     }
 
-    /** Forgets every cached declaration and refreshes the widget. */
+    private final java.util.concurrent.atomic.AtomicInteger declarationGeneration = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** Forgets every cached declaration and refreshes the widget; reads already in flight are discarded (M1-CDX-15). */
     public void invalidateDeclarations() {
+        declarationGeneration.incrementAndGet();
         declared.clear();
         refresh();
     }
@@ -94,10 +97,12 @@ public final class JoustStatusCache {
         if (cached != null) return cached.orElse(null);
         if (declared.size() >= MAX_FILES) declared.clear();
         declared.put(uri, java.util.Optional.empty());
+        int generation = declarationGeneration.get();
         com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
                 var base = com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.baseReal(project);
                 var d = com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.declared(file.toRealPath(), base);
+                if (generation != declarationGeneration.get()) return;   // invalidated while reading
                 declared.put(uri, java.util.Optional.ofNullable(d));
                 refresh();
             } catch (java.io.IOException | RuntimeException ignored) {

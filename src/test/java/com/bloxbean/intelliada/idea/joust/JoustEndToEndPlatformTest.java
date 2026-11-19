@@ -69,6 +69,12 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
             try (JoustProcessStarts starts = new JoustProcessStarts()) {
                 com.intellij.openapi.project.Project p = PlatformTestUtil.loadAndOpenProject(dir, getTestRootDisposable());
                 try {
+                    // T1: loading and indexing the project start nothing (M1-CDX-10).
+                    com.intellij.testFramework.IndexingTestUtil.waitUntilIndexesAreReady(p);
+                    PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+                    Thread.sleep(1500);
+                    assertEquals("trusted=" + trusted + ": started on load: " + starts.commands(), List.of(), starts.commands());
+                    assertEquals("the loaded project's effective trust", trusted, com.intellij.ide.trustedProjects.TrustedProjects.isProjectTrusted(p));
                     VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(dir.resolve("contracts/app/Counter.jsc"));
                     ApplicationManager.getApplication().invokeAndWait(() -> FileEditorManager.getInstance(p).openFile(vf, true));
                     PlatformTestUtil.waitWithEventsDispatching("started", () -> JoustServerControl.status(p) == ServerStatus.started, 60);
