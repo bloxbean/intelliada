@@ -149,7 +149,9 @@ public final class JoustToolValidator {
         // Names are compared without dereferencing a root's null file name (M1-CDX-30).
         if (!named(bin, "bin") || !named(pkg, "joust") || !named(scope, "@julclang") || !named(nodeModules, "node_modules")
                 || (flavor != JoustPaths.Flavor.WINDOWS && !windowsLayout && !named(nodeModules.getParent(), "lib"))) {
-            return Result.fail(selected, "joust-lsp.js is not in a global npm installation of @julclang/joust: " + real);
+            return Result.fail(selected, "joust-lsp.js is not in npm's global layout (" + (flavor == JoustPaths.Flavor.WINDOWS || windowsLayout
+                    ? "<prefix>\\node_modules\\@julclang\\joust\\bin\\joust-lsp.js" : "<prefix>/lib/node_modules/@julclang/joust/bin/joust-lsp.js")
+                    + "): install it with npm install -g @julclang/joust (pnpm and Yarn global installs are not supported): " + real);
         }
         String name = readPackageField(pkg.resolve("package.json"), "name");
         if (!PACKAGE_NAME.equals(name)) {

@@ -220,4 +220,29 @@ public class JoustSanitizingInputTest {
         assertNotNull(JoustSanitizingInput.sanitize(in, JoustStrictJson.DEFAULT, in.length));
         assertNull(JoustSanitizingInput.sanitize(in, JoustStrictJson.DEFAULT, in.length - 1));
     }
+
+    /** M1-CDX-31: the budget is charged as bytes are emitted; serialisation stops before a later member is visited. */
+    @Test
+    public void theWriterStopsAtTheFirstWriteOverBudget() throws Exception {
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("a", "x".repeat(100));
+        m.put("b", new Object());   // not a JSON value: visiting it would throw IllegalArgumentException
+        try {
+            JoustStrictJson.writeUtf8(m, 50);
+            fail("over budget");
+        } catch (JoustStrictJson.Refused expected) {
+            // stopped inside "a", before "b"
+        }
+        java.util.Map<String, Object> ok = new java.util.LinkedHashMap<>();
+        ok.put("a", "\u00e9\uD83D\uDE00");
+        byte[] exact = JoustStrictJson.writeUtf8(ok, 1 << 20);
+        assertEquals("{\"a\":\"\u00e9\uD83D\uDE00\"}", new String(exact, StandardCharsets.UTF_8));
+        assertEquals(exact.length, JoustStrictJson.writeUtf8(ok, exact.length).length);
+        try {
+            JoustStrictJson.writeUtf8(ok, exact.length - 1);
+            fail("one byte under");
+        } catch (JoustStrictJson.Refused expected) {
+            // refused
+        }
+    }
 }

@@ -233,54 +233,109 @@ final class JoustStrictJson {
 
     // ------------------------------------------------------------------ writing
 
-    /** Canonical JSON for a value read by {@link #parse}. */
+    /** Canonical JSON for a value read by {@link #parse} (unbounded; tests and small values). */
     static String write(Object v) {
-        StringBuilder sb = new StringBuilder();
-        write(v, sb);
-        return sb.toString();
+        try {
+            return new String(writeUtf8(v, Integer.MAX_VALUE - 16), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Refused e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /**
-     * Canonical JSON as UTF-8, refused when it would exceed {@code maxBytes} (M1-CDX-31). Valid surrogate pairs are
-     * written as themselves (four UTF-8 bytes), so the output is never much larger than the input.
+     * Canonical JSON encoded straight to UTF-8, with every byte charged against {@code maxBytes} as it is emitted: the
+     * first write that would exceed the budget stops serialisation, before any later member is visited and before a
+     * larger buffer is allocated (M1-CDX-31). Valid surrogate pairs are written as themselves (four bytes).
      */
     static byte[] writeUtf8(Object v, int maxBytes) throws Refused {
-        String json = write(v);
-        // A char is at most 3 UTF-8 bytes: refuse early before encoding a string that cannot fit.
-        if ((long) json.length() > maxBytes) throw new Refused("rewritten frame too large");
-        byte[] out = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        if (out.length > maxBytes) throw new Refused("rewritten frame too large");
-        return out;
+        Out out = new Out(maxBytes);
+        write(v, out);
+        return out.bytes();
+    }
+
+    /** A growable byte buffer that never grows past its budget. */
+    static final class Out {
+        private final int max;
+        private byte[] buf = new byte[256];
+        private int n;
+
+        Out(int max) {
+            this.max = max;
+        }
+
+        private void ensure(int more) throws Refused {
+            if ((long) n + more > max) throw new Refused("rewritten frame too large");
+            if (n + more > buf.length) {
+                long want = Math.min((long) max, Math.max((long) buf.length * 2, (long) n + more));
+                buf = java.util.Arrays.copyOf(buf, (int) want);
+            }
+        }
+
+        void ascii(char c) throws Refused {
+            ensure(1);
+            buf[n++] = (byte) c;
+        }
+
+        void ascii(String s) throws Refused {
+            ensure(s.length());
+            for (int k = 0; k < s.length(); k++) buf[n++] = (byte) s.charAt(k);
+        }
+
+        void codePoint(int cp) throws Refused {
+            if (cp < 0x80) {
+                ensure(1);
+                buf[n++] = (byte) cp;
+            } else if (cp < 0x800) {
+                ensure(2);
+                buf[n++] = (byte) (0xC0 | (cp >> 6));
+                buf[n++] = (byte) (0x80 | (cp & 0x3F));
+            } else if (cp < 0x10000) {
+                ensure(3);
+                buf[n++] = (byte) (0xE0 | (cp >> 12));
+                buf[n++] = (byte) (0x80 | ((cp >> 6) & 0x3F));
+                buf[n++] = (byte) (0x80 | (cp & 0x3F));
+            } else {
+                ensure(4);
+                buf[n++] = (byte) (0xF0 | (cp >> 18));
+                buf[n++] = (byte) (0x80 | ((cp >> 12) & 0x3F));
+                buf[n++] = (byte) (0x80 | ((cp >> 6) & 0x3F));
+                buf[n++] = (byte) (0x80 | (cp & 0x3F));
+            }
+        }
+
+        byte[] bytes() {
+            return java.util.Arrays.copyOf(buf, n);
+        }
     }
 
     @SuppressWarnings("unchecked")
-    private static void write(Object v, StringBuilder sb) {
+    private static void write(Object v, Out out) throws Refused {
         if (v == NULL || v == null) {
-            sb.append("null");
+            out.ascii("null");
         } else if (v instanceof Boolean b) {
-            sb.append(b);
-        } else if (v instanceof Num n) {
-            sb.append(n.text());
+            out.ascii(b ? "true" : "false");
+        } else if (v instanceof Num num) {
+            out.ascii(num.text());
         } else if (v instanceof String str) {
-            quote(str, sb);
+            quote(str, out);
         } else if (v instanceof Map<?, ?> m) {
-            sb.append('{');
+            out.ascii('{');
             boolean first = true;
             for (var e : ((Map<String, Object>) m).entrySet()) {
-                if (!first) sb.append(',');
+                if (!first) out.ascii(',');
                 first = false;
-                quote(e.getKey(), sb);
-                sb.append(':');
-                write(e.getValue(), sb);
+                quote(e.getKey(), out);
+                out.ascii(':');
+                write(e.getValue(), out);
             }
-            sb.append('}');
+            out.ascii('}');
         } else if (v instanceof List<?> a) {
-            sb.append('[');
+            out.ascii('[');
             for (int k = 0; k < a.size(); k++) {
-                if (k > 0) sb.append(',');
-                write(a.get(k), sb);
+                if (k > 0) out.ascii(',');
+                write(a.get(k), out);
             }
-            sb.append(']');
+            out.ascii(']');
         } else {
             throw new IllegalArgumentException("not a JSON value: " + v.getClass());
         }
@@ -288,29 +343,33 @@ final class JoustStrictJson {
 
     private static final char[] HEX = "0123456789abcdef".toCharArray();
 
-    private static void quote(String s, StringBuilder sb) {
-        sb.append('"');
+    private static void quote(String s, Out out) throws Refused {
+        out.ascii('"');
         for (int k = 0; k < s.length(); k++) {
             char c = s.charAt(k);
             switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\n' -> sb.append("\\n");
-                case '\r' -> sb.append("\\r");
-                case '\t' -> sb.append("\\t");
-                case '\b' -> sb.append("\\b");
-                case '\f' -> sb.append("\\f");
+                case '"' -> out.ascii("\\\"");
+                case '\\' -> out.ascii("\\\\");
+                case '\n' -> out.ascii("\\n");
+                case '\r' -> out.ascii("\\r");
+                case '\t' -> out.ascii("\\t");
+                case '\b' -> out.ascii("\\b");
+                case '\f' -> out.ascii("\\f");
                 default -> {
                     if (Character.isHighSurrogate(c) && k + 1 < s.length() && Character.isLowSurrogate(s.charAt(k + 1))) {
-                        sb.append(c).append(s.charAt(++k));   // a valid pair: written as itself
+                        out.codePoint(Character.toCodePoint(c, s.charAt(++k)));   // a valid pair: written as itself
                     } else if (c < 0x20 || Character.isSurrogate(c)) {
-                        sb.append("\\u").append(HEX[(c >> 12) & 15]).append(HEX[(c >> 8) & 15]).append(HEX[(c >> 4) & 15]).append(HEX[c & 15]);
+                        out.ascii("\\u");
+                        out.ascii(HEX[(c >> 12) & 15]);
+                        out.ascii(HEX[(c >> 8) & 15]);
+                        out.ascii(HEX[(c >> 4) & 15]);
+                        out.ascii(HEX[c & 15]);
                     } else {
-                        sb.append(c);
+                        out.codePoint(c);
                     }
                 }
             }
         }
-        sb.append('"');
+        out.ascii('"');
     }
 }
