@@ -395,4 +395,33 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         assertEquals(titles.toString(), 1, titles.size());
         assertTrue(titles.get(0), titles.get(0).contains("Build again") || titles.get(0).contains("not in the module now"));
     }
+
+    /** M2-CDX-13: a stale linked-project entry is skipped on its own; it never discards a valid match. */
+    public void testAStaleLinkIsSkippedOnItsOwn() throws Exception {
+        var settings = org.jetbrains.plugins.gradle.settings.GradleSettings.getInstance(getProject());
+        var stale = new org.jetbrains.plugins.gradle.settings.GradleProjectSettings();
+        stale.setExternalProjectPath(base.resolve("gone-away").toString());
+        var real = new org.jetbrains.plugins.gradle.settings.GradleProjectSettings();
+        real.setExternalProjectPath(base.toString());
+        settings.linkProject(stale);
+        settings.linkProject(real);
+        try {
+            assertEquals(base, new JoustGradleTasksImpl().linkedRootOf(getProject(), base.resolve("other")));
+        } finally {
+            settings.unlinkExternalProject(stale.getExternalProjectPath());
+            settings.unlinkExternalProject(real.getExternalProjectPath());
+        }
+    }
+
+    /** M2-CDX-13: a run whose start path is no linked build credits no module: no action. */
+    public void testAnUnattributableStartGetsNoAction() throws Exception {
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        listener.onStart("/nowhere/linked", id);
+        feed(listener, id, "> Task :other:generateJsc\n" + log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains("started at /nowhere/linked"));
+    }
 }

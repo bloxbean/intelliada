@@ -68,17 +68,22 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
 
     @Override
     public Path linkedRootOf(Project project, Path path) {
+        Path p;
         try {
-            Path p = path.toRealPath();
-            Path best = null;
-            for (var ps : org.jetbrains.plugins.gradle.settings.GradleSettings.getInstance(project).getLinkedProjectsSettings()) {
-                Path root = Path.of(ps.getExternalProjectPath()).toRealPath();
-                if (p.startsWith(root) && (best == null || root.getNameCount() > best.getNameCount())) best = root;
-            }
-            return best;
+            p = path.toRealPath();
         } catch (java.io.IOException | RuntimeException e) {
             return null;
         }
+        Path best = null;
+        for (var ps : org.jetbrains.plugins.gradle.settings.GradleSettings.getInstance(project).getLinkedProjectsSettings()) {
+            try {
+                Path root = Path.of(ps.getExternalProjectPath()).toRealPath();
+                if (p.startsWith(root) && (best == null || root.getNameCount() > best.getNameCount())) best = root;
+            } catch (java.io.IOException | RuntimeException stale) {
+                // a stale link is skipped on its own; it never discards a valid match (M2-CDX-13)
+            }
+        }
+        return best;
     }
 
     @Override

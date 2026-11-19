@@ -46,9 +46,19 @@ public final class JoustOutputCapture {
         }
     }
 
+    static final int MAX_OUTCOME_LINES = 4_096;
+
+    /**
+     * JOUST's own acceptance records only (M2-CDX-6): {@code … ABI manifest …} (accepted the changed, created the) and
+     * {@code error[JSC0002]} (not accepted, nothing accepted). Other lines that merely say "accepted" never take a slot.
+     */
+    static boolean outcome(String line) {
+        return line.contains("ABI manifest") || line.contains("error[JSC0002]");
+    }
+
     private void keep(String line, boolean beyondHead) {
         if (!beyondHead) return;
-        if ((line.contains("accepted") || line.contains("created the ABI manifest")) && outcomeLines < MAX_EXTRA_LINES) {
+        if (outcome(line) && outcomeLines < MAX_OUTCOME_LINES) {
             outcomes.append(line).append('\n');
             outcomeLines++;
             return;
@@ -60,8 +70,7 @@ public final class JoustOutputCapture {
 
     @Override
     public synchronized String toString() {
-        String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || partial.indexOf("accepted") >= 0
-                || partial.indexOf("created the ABI manifest") >= 0)
+        String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || outcome(partial.toString()))
                 ? partial + "\n" : "";
         return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() ? head.toString() : head + "\n" + extra + outcomes + tail;
     }

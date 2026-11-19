@@ -195,16 +195,28 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             // The run's own linked build first (M2-CDX-13): its start path, resolved through IntelliJ's linked projects (a run
             // may start from a module directory), scopes the candidates before any task-path or ambiguity rule.
             Path buildRoot = rootPath == null || gradle == null ? null : gradle.linkedRootOf(project, Path.of(rootPath));
+            if (rootPath != null && gradle != null && buildRoot == null && !candidates.isEmpty()) {
+                // The run said where it started, but that is no linked build now: no module can be credited (M2-CDX-13).
+                if (!live(project, generation)) return n;
+                if (seen.add("?" + rootPath + printed.rel())) {
+                    JoustProjectAction.notifyUnresolvedAbiFailure(project, f, List.of("started at " + rootPath), List.of());
+                    n++;
+                }
+                continue;
+            }
             if (buildRoot != null) {
                 List<JoustProjectLayout.SourceRoot> inBuild = new ArrayList<>();
+                List<String> unlinkedHere = new ArrayList<>();
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());
                     if (linked != null && sameBuild(linked, buildRoot)) inBuild.add(r);
+                    else if (linked == null && r.ownerDir().startsWith(buildRoot)) unlinkedHere.add(layout.base().relativize(r.ownerDir()).toString());
                 }
                 if (inBuild.isEmpty() && !candidates.isEmpty()) {
+                    if (!live(project, generation)) return n;   // published only within the run's generation (M2-CDX-2)
                     if (seen.add("!" + buildRoot + printed.rel())) {
                         JoustProjectAction.notifyUnresolvedAbiFailure(project, f, List.of(owners.isEmpty()
-                                ? "at " + layout.base().relativize(buildRoot) : String.join(", ", new java.util.TreeSet<>(owners))), List.of());
+                                ? "at " + layout.base().relativize(buildRoot) : String.join(", ", new java.util.TreeSet<>(owners))), unlinkedHere);
                         n++;
                     }
                     continue;
@@ -222,6 +234,7 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                     else if (owners.contains(linked.gradlePath()) && sameBuild(linked, buildRoot)) failed.add(r);
                 }
                 if (failed.isEmpty()) {
+                    if (!live(project, generation)) return n;
                     if (seen.add("!" + owners + printed.rel())) {
                         JoustProjectAction.notifyUnresolvedAbiFailure(project, f, List.copyOf(new java.util.TreeSet<>(owners)), unlinked);
                         n++;
@@ -232,6 +245,7 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             }
             if (candidates.isEmpty()) continue;
             if (candidates.size() > 1) {
+                if (!live(project, generation)) return n;
                 if (seen.add("?" + printed.rel())) {
                     List<String> names = candidates.stream().map(r -> layout.base().relativize(r.ownerDir()).toString()).toList();
                     JoustProjectAction.notifyAmbiguousAbiFailure(project, f, names.stream().map(s -> s.isEmpty() ? "." : s).toList());

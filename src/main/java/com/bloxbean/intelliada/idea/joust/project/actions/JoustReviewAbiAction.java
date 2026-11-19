@@ -46,14 +46,19 @@ public final class JoustReviewAbiAction extends JoustProjectAction {
         review(ctx, guard);
     }
 
-    /** Starts the review from a notification, for the file of {@code ctx}, under a guard captured now. */
-    void start(Ctx ctx) {
-        if (!JoustTrust.isTrusted(ctx.project())) return;
-        JoustRunGuard guard = JoustRunGuard.capture(ctx.project());
-        new Task.Backgroundable(ctx.project(), title(ctx), true) {
+    /**
+     * Starts the review from a notification or Review again, for the file of {@code saved}, under a guard captured now.
+     * The context is resolved afresh in the background: a reimport may have remapped the module (M2-CDX-23).
+     */
+    void start(Ctx saved) {
+        if (!JoustTrust.isTrusted(saved.project())) return;
+        JoustRunGuard guard = JoustRunGuard.capture(saved.project());
+        new Task.Backgroundable(saved.project(), title(saved), true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
-                if (!guard.live() || unavailable(ctx) != null) return;
+                if (!guard.live()) return;
+                Ctx ctx = context(saved.project(), saved.file());
+                if (ctx == null || !applies(ctx) || unavailable(ctx) != null || !guard.live()) return;
                 try {
                     review(ctx, guard);
                 } catch (InterruptedException ie) {
@@ -74,9 +79,13 @@ public final class JoustReviewAbiAction extends JoustProjectAction {
         Path contracts = root.verifiedContracts(base);
         if (contracts == null) throw new Exception("The contracts directory of " + ctx.moduleName() + " is not where its module says.");
         String contract = JoustAbiReview.Target.contractOf(contracts, ctx.fileReal());
+        // One linked pair, taken now, builds the runner and the arguments and is what the final check compares (M2-CDX-23).
+        JoustGradleTasks.Linked linked = ctx.gradle() != null ? JoustGradleTasks.getInstance().linked(ctx.project(), ctx.gradle().dir()) : null;
+        if (ctx.gradle() != null && linked == null) throw new Exception("Link the Gradle build first: " + ctx.moduleName() + " is not linked.");
+        Ctx bound = ctx.gradle() != null ? new Ctx(ctx.project(), ctx.layout(), ctx.gradle(), null, ctx.file(), ctx.fileReal(), linked) : ctx;
         JoustAbiReview.Target target = new JoustAbiReview.Target(ctx.moduleName(), ctx.gradle() != null,
-                ctx.gradle() != null ? ctx.linked().gradlePath() : null, ctx.dir(), contracts, ctx.fileReal(), contract);
-        JoustAbiReview.Runner runner = ctx.gradle() != null ? gradleRunner(ctx, guard, title(ctx)) : npmRunner(ctx, guard, title(ctx));
+                linked != null ? linked.gradlePath() : null, ctx.dir(), contracts, ctx.fileReal(), contract);
+        JoustAbiReview.Runner runner = ctx.gradle() != null ? gradleRunner(bound, guard, title(ctx)) : npmRunner(ctx, guard, title(ctx));
         Path tmp = privateTmp();
         if (tmp == null) throw new Exception("IntelliAda's temporary directory is not usable (it must be outside every open project).");
         java.util.function.Supplier<String> linkedNow = () -> {
@@ -84,8 +93,9 @@ public final class JoustReviewAbiAction extends JoustProjectAction {
             var l = JoustGradleTasks.getInstance().linked(ctx.project(), ctx.gradle().dir());
             return l == null ? null : l.rootDir() + "|" + l.gradlePath();
         };
+        String expected = linked != null ? linked.rootDir() + "|" + linked.gradlePath() : "npm";
         new JoustAbiReview(target, () -> JoustProjectLayout.scan(base, JoustPaths.Flavor.current()), runner,
-                new JoustAbiDialogUi(ctx.project()), guard::live, tmp, () -> start(ctx), linkedNow).run();
+                new JoustAbiDialogUi(ctx.project()), guard::live, tmp, () -> start(ctx), linkedNow, expected).run();
     }
 
     /** IntelliAda's own temporary directory for ABI exchanges, verified outside every open project (§12 E12). */

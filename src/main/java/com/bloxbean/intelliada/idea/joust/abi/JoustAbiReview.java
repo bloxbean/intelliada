@@ -84,7 +84,17 @@ public final class JoustAbiReview {
      */
     public JoustAbiReview(Target target, Supplier<JoustProjectLayout> scan, Runner runner, Ui ui, BooleanSupplier live, Path privateTmp,
                           Runnable reviewAgain, Supplier<String> linkedNow) {
+        this(target, scan, runner, ui, live, privateTmp, reviewAgain, linkedNow, null);
+    }
+
+    /**
+     * @param linkedExpected the {@code root|path} the runner and the arguments were built from; the final check compares
+     *                       against it, so one linked pair drives the whole flow (M2-CDX-23). Null: sampled at start.
+     */
+    public JoustAbiReview(Target target, Supplier<JoustProjectLayout> scan, Runner runner, Ui ui, BooleanSupplier live, Path privateTmp,
+                          Runnable reviewAgain, Supplier<String> linkedNow, String linkedExpected) {
         this.linkedNow = linkedNow;
+        this.linkedAtStart = linkedExpected;
         this.target = target;
         this.scan = scan;
         this.runner = runner;
@@ -99,7 +109,7 @@ public final class JoustAbiReview {
         Path tmp = null;
         try {
             if (!live.getAsBoolean()) return false;
-            linkedAtStart = linkedNow.get();
+            if (linkedAtStart == null) linkedAtStart = linkedNow.get();
             String contract = JoustAbi.requireContract(target.contract());
             tmp = Files.createTempDirectory(privateTmp, "abi-");
             Path out = tmp.resolve("diff.json");   // written by the task into a directory only IntelliAda uses (M2-SEC-3)
@@ -158,6 +168,8 @@ public final class JoustAbiReview {
             Result a = runner.run(acceptArgs);
             if (a.cancelled()) return false;
             JoustAbi.Snapshot after = JoustAbi.manifests(scan.get());
+            // Nothing is published outside the action's trust generation, even after the run (M2-CDX-2).
+            if (!live.getAsBoolean()) return false;
             // An explicit refusal of this contract by the bound task wins over what the files look like afterwards: another
             // acceptance may have written the same new hash meanwhile (M2-CDX-6).
             String jscRel = target.contractsDir().relativize(target.jsc()).toString().replace('\\', '/');
@@ -171,7 +183,7 @@ public final class JoustAbiReview {
                         + manifest.getFileName();
             }
             if (refusedByTask != null) {
-                ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
+                if (live.getAsBoolean()) ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
                 return false;
             }
             String wrong = JoustAbi.verifyAccepted(before, after, manifest, d);
@@ -180,6 +192,7 @@ public final class JoustAbiReview {
                 ui.refused("ABI change not accepted", (a.ok() ? "" : tail(a.output()) + "\n\n") + wrong + "\nReview the change again.", reviewAgain);
                 return false;
             }
+            if (!live.getAsBoolean()) return false;
             ui.report("ABI change accepted", "Accepted " + d.contract() + " in " + target.module() + " (" + d.committedSha() + " -> "
                     + d.nowSha() + ").\nReview and commit " + manifest.getFileName() + " beside the .jsc file."
                     + (a.ok() ? "" : "\nThe build then failed after accepting: see its output."), !a.ok());

@@ -47,10 +47,13 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
     private JoustToolsState.Data savedTools;
 
     /** IntelliJ's Gradle integration, replaced: the module dirs are linked; runs are recorded only for a live guard. */
+    /** A reimport's remapping of the root module, for M2-CDX-23. */
+    private volatile String rootGradlePath = ":";
+
     private final class RecordingGradle implements JoustGradleTasks {
         @Override
         public Linked linked(Project project, Path moduleDir) {
-            if (moduleDir.equals(base)) return new Linked(base, ":");
+            if (moduleDir.equals(base)) return new Linked(base, rootGradlePath);
             return moduleDir.startsWith(base) ? new Linked(base, ":" + base.relativize(moduleDir).toString().replace('/', ':')) : null;
         }
 
@@ -419,6 +422,64 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
             long pid = Long.parseLong(Files.readString(pidFile).trim());
             assertFalse("the process was ended before release", ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
         } finally {
+            JoustNpmTasks.setConsoleOpenerForTests(null);
+        }
+    }
+
+    /** M2-CDX-23: Review again after a reimport resolves the module afresh: the runner uses the new mapping, not the saved one. */
+    public void testReviewAgainResolvesTheModuleAfresh() throws Exception {
+        VirtualFile jsc = vf(base.resolve("src/main/jsc/org/acme/Counter.jsc"));
+        JoustProjectAction.Ctx saved = ApplicationManager.getApplication().executeOnPooledThread(
+                () -> JoustProjectAction.context(getProject(), jsc)).get();
+        assertEquals(":", saved.linked().gradlePath());
+        rootGradlePath = ":b";   // a reimport remapped the module
+        gradleRuns.clear();
+        new JoustReviewAbiAction().start(saved);   // what Review ABI change again… calls
+        waitFor(() -> !gradleRuns.isEmpty(), 10_000);
+        assertEquals(":b:jscAbiDiff", gradleRuns.get(0).get(0));
+    }
+
+    /** M2-CDX-3: trust revoked while the console is being set up: one start notification, and the process gone before release. */
+    public void testRevocationDuringConsoleSetup() throws Exception {
+        if (!configureNode()) return;
+        Files.writeString(web.resolve("node_modules/@julclang/joust/bin/joust.js"),
+                "require('fs').writeFileSync('pid', String(process.pid)); setTimeout(() => {}, 120000);\n");
+        var layout = com.bloxbean.intelliada.idea.joust.project.JoustProjectLayout.scan(base, com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current());
+        var root = layout.npmRoots().stream().filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+        Path pidFile = web.resolve("pid");
+        java.util.concurrent.CountDownLatch inSetup = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch resume = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger starts = new java.util.concurrent.atomic.AtomicInteger();
+        JoustNpmTasks.setConsoleOpenerForTests(h -> {
+            h.addProcessListener(new com.intellij.execution.process.ProcessListener() {
+                @Override
+                public void startNotified(@org.jetbrains.annotations.NotNull com.intellij.execution.process.ProcessEvent event) {
+                    starts.incrementAndGet();
+                }
+            });
+            inSetup.countDown();
+            try {
+                resume.await(20, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        try {
+            JoustRunGuard guard = JoustRunGuard.capture(getProject());
+            var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("build"), "build"));
+            waitFor(() -> inSetup.getCount() == 0 && Files.exists(pidFile), 15_000);
+            long pid = Long.parseLong(Files.readString(pidFile).trim());
+            TrustedProjects.setProjectTrusted(getProject(), false);   // cancels while the console is being set up
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            waitFor(() -> !ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false), 15_000);
+            resume.countDown();
+            waitFor(result::isDone, 20_000);
+            assertTrue(result.get().cancelled());
+            assertFalse("gone before release", ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+            assertEquals("start-notified exactly once", 1, starts.get());
+            assertEquals(0, JoustTaskTracker.getInstance(getProject()).runningCount());
+        } finally {
+            resume.countDown();
             JoustNpmTasks.setConsoleOpenerForTests(null);
         }
     }

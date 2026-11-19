@@ -70,9 +70,12 @@ public final class JoustNpmTasks {
             GeneralCommandLine cl = new GeneralCommandLine(cmd).withWorkDirectory(root.dir().toFile())
                     .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
             OSProcessHandler handler = new OSProcessHandler(cl);   // the process runs from here
+            Launch launch = new Launch(handler);
             boolean ended = false;
             try {
-                run.attach(() -> destroy(handler));   // runs at once if cancelled while starting; never blocks (it may be the EDT)
+                // A cancellation (possibly on the EDT) only queues the kill on a pooled thread; the kill itself start-notifies
+                // through the one owner and waits for the end there (M2-CDX-3).
+                run.attach(() -> com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService().execute(() -> kill(launch)));
                 JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP);
                 handler.addProcessListener(new ProcessListener() {
                     @Override
@@ -86,7 +89,7 @@ public final class JoustNpmTasks {
                 } else if (showsConsole()) {
                     ApplicationManager.getApplication().invokeAndWait(() -> openConsole(project, root, handler, PlainText.title(title, 120)));
                 }
-                handler.startNotify();
+                launch.ensureStarted();
                 if (!handler.waitFor(TIMEOUT_MS)) {
                     return new JoustAbiReview.Result(false, "joust did not finish within " + TIMEOUT_MS / 60000 + " minutes", false);
                 }
@@ -97,7 +100,7 @@ public final class JoustNpmTasks {
             } finally {
                 // Whatever happened after the process started (a console that failed to open, a timeout, an exception),
                 // it is ended before the tracker lets go of it (M2-CDX-3).
-                if (!ended) kill(handler);
+                if (!ended) kill(launch);
             }
         } finally {
             tracker.done(run);
@@ -159,27 +162,40 @@ public final class JoustNpmTasks {
         consoleOpener = opener;
     }
 
-    /**
-     * Ends the process and its children: a handler not yet start-notified queues destruction until then, so it is
-     * notified first; then the tree is destroyed and awaited (bounded).
-     */
-    static void destroy(OSProcessHandler handler) {
-        try {
-            if (!handler.isStartNotified()) handler.startNotify();
-        } catch (RuntimeException ignored) {
-            // already started elsewhere
+    /** The one owner of a launched handler's start notification (M2-CDX-3): {@code startNotify()} runs exactly once. */
+    static final class Launch {
+        final OSProcessHandler handler;
+        private boolean started;
+
+        Launch(OSProcessHandler handler) {
+            this.handler = handler;
         }
-        handler.destroyProcess();
+
+        synchronized void ensureStarted() {
+            if (started) return;
+            started = true;
+            handler.startNotify();
+        }
     }
 
-    /** {@link #destroy}, then waits for the end (bounded) and forces it; off the EDT. */
-    static void kill(OSProcessHandler handler) {
-        destroy(handler);
-        handler.waitFor(10_000);
-        if (!handler.isProcessTerminated()) {
-            Process p = handler.getProcess();
-            p.descendants().forEach(ProcessHandle::destroyForcibly);
-            p.destroyForcibly();
+    /**
+     * Ends the process and its children, off the EDT: start-notified once (destruction waits for it), destroyed, awaited,
+     * then forced; returns only when the process is gone or, after the bounded waits, as far as the OS lets it go.
+     */
+    static void kill(Launch launch) {
+        OSProcessHandler handler = launch.handler;
+        launch.ensureStarted();
+        handler.destroyProcess();
+        if (handler.waitFor(10_000)) return;
+        Process p = handler.getProcess();
+        p.descendants().forEach(ProcessHandle::destroyForcibly);
+        p.destroyForcibly();
+        try {
+            p.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS);   // destroyForcibly returns before the exit
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
+            // as far as the OS lets it go
         }
     }
 

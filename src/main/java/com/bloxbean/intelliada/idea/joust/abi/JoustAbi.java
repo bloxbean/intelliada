@@ -265,7 +265,11 @@ public final class JoustAbi {
      */
     public static Path manifestPath(Diff d, Path dir, Path contractsDir) throws AbiException {
         String rel = d.path();
-        if (rel.startsWith("/") || rel.startsWith("\\") || rel.matches("^[A-Za-z]:.*") || rel.contains("..") || rel.indexOf('\0') >= 0) {
+        // A parent-traversal segment is refused; two dots inside a name (contracts..v2) are a name (M2-CDX-26). The real
+        // path is checked against the contracts directory below either way.
+        boolean parent = false;
+        for (String seg : rel.split("[/\\\\]")) parent |= seg.equals("..");
+        if (rel.startsWith("/") || rel.startsWith("\\") || rel.matches("^[A-Za-z]:.*") || parent || rel.indexOf('\0') >= 0) {
             throw new AbiException("the manifest path is not inside the project: " + rel);
         }
         String simple = d.contract().substring(d.contract().lastIndexOf('.') + 1);

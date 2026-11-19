@@ -838,4 +838,51 @@ public class JoustAbiTest {
         assertFalse(JoustAbi.reportsAccepted(refused, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
         assertNotNull(JoustAbi.refusal(refused, "org/acme/Counter.jsc", "org.acme.Counter"));
     }
+
+    /** M2-CDX-6: unrelated lines that merely say "accepted" cannot displace JOUST's own acceptance record. */
+    @Test
+    public void unrelatedAcceptedLinesDoNotDisplaceTheRecord() throws Exception {
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
+        capture.append("x".repeat(200) + "\n" + "request accepted\n".repeat(300) + "warning: offer accepted\n".repeat(300)
+                + JoustM2Fixtures.text("acceptJscAbi-accepted.log"));
+        assertTrue(JoustAbi.reportsAccepted(capture.toString(), "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
+        var refusal = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
+        refusal.append("x".repeat(200) + "\n" + "request accepted\n".repeat(300) + JoustM2Fixtures.text("acceptJscAbi-refused.log"));
+        assertNotNull(JoustAbi.refusal(refusal.toString(), "org/acme/Counter.jsc", "org.acme.Counter"));
+    }
+
+    /** M2-CDX-2: trust lost during the scan after the run: nothing is published. */
+    @Test
+    public void nothingIsPublishedAfterLivenessEnds() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean live = new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.util.concurrent.atomic.AtomicInteger scans = new java.util.concurrent.atomic.AtomicInteger();
+        FakeJoust joust = new FakeJoust();
+        FakeUi ui = new FakeUi();
+        boolean ok = new JoustAbiReview(target(module, "app", "org.acme.Counter"), () -> {
+            if (scans.incrementAndGet() == 2) live.set(false);   // the scan after the accept run
+            return JoustProjectLayout.scan(base, JoustPaths.Flavor.current());
+        }, joust, ui, live::get, ide.getRoot().toPath().toRealPath(), () -> {
+        }).run();
+        assertFalse(ok);
+        assertEquals("the accept ran", 2, joust.runs.size());
+        assertEquals("no notification of either outcome", List.of(), ui.reports);
+    }
+
+    /** M2-CDX-26: a directory with two dots inside its name is a name; a ".." segment is refused. */
+    @Test
+    public void twoDotsInANameAreNotTraversal() throws Exception {
+        Path web = Files.createDirectories(base.resolve("web"));
+        Path dir = Files.createDirectories(web.resolve("contracts..v2/app"));
+        JSONObject o = new JSONObject(diffJson).put("contract", "app.Counter").put("file", "app/Counter.jsc").put("path", "contracts..v2/app/Counter.abi.json");
+        Path m = JoustAbi.manifestPath(JoustAbi.parse(o.toString()), web, web.resolve("contracts..v2"));
+        assertEquals(dir.toRealPath().resolve("Counter.abi.json"), m);
+        assertEquals("contracts..v2", JoustAbi.npmAcceptArgs(JoustAbi.parse(o.toString()), "contracts..v2").get(2));
+        o.put("path", "contracts..v2/../x/Counter.abi.json");
+        try {
+            JoustAbi.manifestPath(JoustAbi.parse(o.toString()), web, web.resolve("contracts..v2"));
+            fail("a .. segment");
+        } catch (JoustAbi.AbiException expected) {
+            // refused
+        }
+    }
 }
