@@ -35,6 +35,7 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
         try {
             JoustStreamConnectionProvider.setLaunchRecorderForTests(null);
             if (saved != null) JoustToolsState.getInstance().loadState(saved);
+            com.intellij.ide.trustedProjects.TrustedProjects.setProjectTrusted(getProject(), true);
         } finally {
             super.tearDown();
         }
@@ -46,12 +47,9 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
     }
 
     public void testOpeningAJscStartsOnlyTheUsersServer() throws Exception {
-        String node = System.getenv("JOUST_NODE");
-        String lsp = System.getenv("JOUST_LSP");
-        if (node == null || lsp == null) {
-            System.out.println("skipped: set JOUST_NODE and JOUST_LSP");
-            return;
-        }
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        String lsp = JoustTestTools.env("JOUST_LSP", getName());
+        if (node == null || lsp == null) return;
         Path base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
         Path jsc = base.resolve("contracts/app/Counter.jsc");
         Files.createDirectories(jsc.getParent());
@@ -75,6 +73,7 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
         state.setValidatedNode(JoustToolValidator.identityOf(Path.of(node).toRealPath()), "test");
         JoustStreamConnectionProvider.setLaunchRecorderForTests(launches::add);
         int probes = NodeVersionProbe.invocations();
+        JoustProcessStarts starts = new JoustProcessStarts();
         java.util.Set<Long> before = descendants();
         // Untrusted first (T2): the same advisory command, nothing planted runs.
         com.intellij.ide.trustedProjects.TrustedProjects.setProjectTrusted(getProject(), false);
@@ -89,7 +88,7 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
         assertEquals("one process at the JVM boundary (I1): " + started, 1, started.size());
         long firstPid = started.iterator().next();
         // A sync (VFS refresh and indexing) starts nothing (I1).
-        com.intellij.openapi.vfs.VirtualFileManager.getInstance().syncRefresh();
+        com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base));
         com.intellij.testFramework.IndexingTestUtil.waitUntilIndexesAreReady(getProject());
         List<String> cmd = launches.get(0);
         assertEquals(List.of(Path.of(node).toRealPath().toString(),
@@ -109,6 +108,11 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
 
         Thread.sleep(3000);
         assertEquals("no node --version ran", probes, NodeVersionProbe.invocations());
+        // Every process the JVM started, short-lived ones included (JFR, M1-CDX-10): the start and the restart only.
+        java.util.List<String> commands = starts.commands();
+        starts.close();
+        assertEquals("two launches of joust-lsp: " + commands, 2, commands.size());
+        for (String c : commands) assertTrue(c, c.contains("joust-lsp.js") && c.contains("--stdio"));
         try (Stream<Path> s = Files.walk(base)) {
             assertEquals("I1: nothing planted ran", List.of(), s.filter(p -> p.getFileName().toString().startsWith("SENTINEL")).toList());
         }

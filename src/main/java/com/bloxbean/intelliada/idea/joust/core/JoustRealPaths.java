@@ -17,9 +17,23 @@ public final class JoustRealPaths {
 
     /** True when {@code realChild} is {@code realBase} or lies under it. Both must be real paths. */
     public static boolean isInside(Path realChild, Path realBase) {
+        return isInside(realChild, realBase, JoustPaths.Flavor.current() == JoustPaths.Flavor.WINDOWS);
+    }
+
+    /**
+     * On Windows {@code Path.equals} and {@code Files.isSameFile} fold case, and file keys are unavailable, so in a
+     * case-sensitive directory {@code Repo} and {@code repo} would compare equal (M1-CDX-3). There an ancestor must spell
+     * the base exactly: both are real paths, which Windows returns in their on-disk case. Elsewhere identity decides.
+     */
+    static boolean isInside(Path realChild, Path realBase, boolean windows) {
         if (realChild == null || realBase == null) return false;
+        String base = realBase.toString();
         for (Path p = realChild; p != null; p = p.getParent()) {
-            if (p.equals(realBase)) return true;
+            if (windows) {
+                if (p.toString().equals(base)) return true;
+                continue;
+            }
+            if (p.toString().equals(base)) return true;
             try {
                 if (p.getNameCount() == realBase.getNameCount() && Files.isSameFile(p, realBase)) return true;
             } catch (IOException | SecurityException ignored) {
@@ -27,5 +41,10 @@ public final class JoustRealPaths {
             }
         }
         return false;
+    }
+
+    /** For tests: the Windows rule on this platform's paths. */
+    public static boolean isInsideWindowsRule(Path realChild, Path realBase) {
+        return isInside(realChild, realBase, true);
     }
 }

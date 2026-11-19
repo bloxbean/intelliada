@@ -37,20 +37,45 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
         return Unit.INSTANCE;
     }
 
-    /** Why a configured tool lies inside {@code roots} (selected or real path), or {@code null}. Executes nothing. */
+    /**
+     * Why a configured tool lies inside {@code roots}, or {@code null}. Executes nothing. For joust-lsp the path checked
+     * is the one that runs, resolved as at launch (on Windows, by package layout), not only the selected launcher
+     * (M1-CDX-23).
+     */
     public static String conflict(String nodePath, String lspPath, List<Path> roots, JoustPaths.Flavor flavor) {
-        for (String[] tool : new String[][]{{"Node", nodePath}, {"joust-lsp", lspPath}}) {
-            if (tool[1] == null || tool[1].isBlank() || !JoustPaths.isAbsolute(tool[1].trim(), flavor)) continue;
-            Path selected = Path.of(tool[1].trim());
-            Path real;
-            try {
-                real = selected.toRealPath();
-            } catch (java.io.IOException e) {
-                real = selected;
-            }
-            String where = JoustToolValidator.locationProblem(selected, real, roots, flavor);
-            if (where != null) return tool[0] + " " + where;
+        return conflict(nodePath, lspPath, roots, flavor, flavor == JoustPaths.Flavor.WINDOWS);
+    }
+
+    public static String conflict(String nodePath, String lspPath, List<Path> roots, JoustPaths.Flavor flavor, boolean windowsLayout) {
+        String n = conflictOf("Node", nodePath, null, roots, flavor);
+        if (n != null) return n;
+        Path target = null;
+        if (lspPath != null && !lspPath.isBlank()) {
+            var r = JoustToolValidator.resolveJoustLsp(lspPath, List.of(), flavor, windowsLayout);
+            if (r.ok()) target = r.realPath();
+        }
+        return conflictOf("joust-lsp", lspPath, target, roots, flavor);
+    }
+
+    static String conflict(String[][] tools, List<Path> roots, JoustPaths.Flavor flavor) {
+        for (String[] t : tools) {
+            String c = conflictOf(t[0], t[1], null, roots, flavor);
+            if (c != null) return c;
         }
         return null;
+    }
+
+    private static String conflictOf(String what, String path, Path executionTarget, List<Path> roots, JoustPaths.Flavor flavor) {
+        if (path == null || path.isBlank() || !JoustPaths.isAbsolute(path.trim(), flavor)) return null;
+        Path selected = Path.of(path.trim());
+        Path real;
+        try {
+            real = selected.toRealPath();
+        } catch (java.io.IOException e) {
+            real = selected;
+        }
+        String where = JoustToolValidator.locationProblem(selected, real, roots, flavor);
+        if (where == null && executionTarget != null) where = JoustToolValidator.locationProblem(executionTarget, executionTarget, roots, flavor);
+        return where == null ? null : what + " " + where;
     }
 }

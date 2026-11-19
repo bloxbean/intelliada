@@ -24,10 +24,10 @@ public final class JoustStatusCache {
             return "JOUST " + (compiler.isEmpty() ? "" : compiler + " ") + "(" + (source.isEmpty() ? "bundled" : source) + ", " + m + ")";
         }
 
-        /** The summary, plus the project's declared version when it differs from the compiler's (D5's version skew). */
-        public String summary(String declared) {
-            if (declared == null || declared.isEmpty() || declared.equals(compiler)) return summary();
-            return summary() + "; project pins " + PlainText.label(declared, 40);
+        /** The summary, plus the project's declaration unless it is an exact pin equal to the compiler (D5's version skew). */
+        public String summary(com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.Declared declared) {
+            if (declared == null || (declared.exact() && declared.spec().equals(compiler))) return summary();
+            return summary() + "; " + declared.describe();
         }
     }
 
@@ -54,8 +54,43 @@ public final class JoustStatusCache {
         if (bar != null) bar.updateWidget(JoustStatusBarWidgetFactory.ID);
     }
 
+    /** Clears every status (the server stopped or restarted) and refreshes the widget (M1-CDX-15, M1-DES-12). */
     public void clear() {
         byUri.clear();
+        declared.clear();
+        refresh();
+    }
+
+    private final Map<String, java.util.Optional<com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.Declared>> declared =
+            new ConcurrentHashMap<>();
+
+    /**
+     * The project's declaration for a file, from a cache filled off the EDT (M1-DES-16); {@code null} until computed.
+     * The first call schedules the read and refreshes the widget when it is done.
+     */
+    public com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.Declared declaredFor(String uri, java.nio.file.Path file) {
+        var cached = declared.get(uri);
+        if (cached != null) return cached.orElse(null);
+        if (declared.size() >= MAX_FILES) declared.clear();
+        declared.put(uri, java.util.Optional.empty());
+        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                var base = com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.baseReal(project);
+                var d = com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.declared(file.toRealPath(), base);
+                declared.put(uri, java.util.Optional.ofNullable(d));
+                refresh();
+            } catch (java.io.IOException | RuntimeException ignored) {
+                // no declaration
+            }
+        });
+        return null;
+    }
+
+    private void refresh() {
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+            var bar = project.isDisposed() ? null : WindowManager.getInstance().getStatusBar(project);
+            if (bar != null) bar.updateWidget(JoustStatusBarWidgetFactory.ID);
+        }, project.getDisposed());
     }
 
     public static Status from(Map<String, Object> json) {

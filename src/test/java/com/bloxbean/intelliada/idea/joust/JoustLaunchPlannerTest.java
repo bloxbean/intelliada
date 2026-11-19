@@ -35,7 +35,7 @@ public class JoustLaunchPlannerTest {
     @Before
     public void setUp() throws Exception {
         Path base = tmp.getRoot().toPath().toRealPath();
-        node = JoustTestFiles.executable(base.resolve("tools/node"), "#!/bin/sh\necho v22.0.0\n");
+        node = JoustTestTools.nodeBinary(base.resolve("tools/node"));
         lspJs = JoustTestFiles.joustPackage(base.resolve("tools/npm"), "@julclang/joust", "0.1.0-pre2");
         lspShim = base.resolve("tools/npm/bin/joust-lsp");
         project = Files.createDirectories(base.resolve("repo"));
@@ -61,10 +61,9 @@ public class JoustLaunchPlannerTest {
     public void changedNodeIsRefusedWithoutRunningIt() throws Exception {
         int probes = NodeVersionProbe.invocations();
         // Same length, same mtime: only the SHA-256 differs, so the hash check alone must refuse it (M1-DES-10).
-        String original = Files.readString(node);
-        String evil = "#!/bin/sh\necho EVIL\n".substring(0, 0) + original.replace("v22.0.0", "vEVIL00");
-        assertEquals(original.length(), evil.length());
-        Files.writeString(node, evil);
+        byte[] bytes = Files.readAllBytes(node);
+        bytes[bytes.length / 2] ^= 0x5A;
+        Files.write(node, bytes);
         Files.setLastModifiedTime(node, FileTime.fromMillis(identity.modifiedMillis()));
         assertEquals(identity.size(), Files.size(node));
         assertEquals(identity.modifiedMillis(), Files.getLastModifiedTime(node).toMillis());

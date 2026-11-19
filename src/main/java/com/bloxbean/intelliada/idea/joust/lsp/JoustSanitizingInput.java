@@ -14,9 +14,8 @@ import java.util.Locale;
  * capped before LSP4J reads it. LSP4IJ shows the error of a request it issued itself (folding, semantic tokens,
  * document symbols, …) in an IDE notification, which renders HTML; this is the one place that covers all of them.
  *
- * <p>Frames are passed through byte for byte unless their body has a top-level {@code error} object with a string
- * {@code message}; only those are re-serialised. A frame over {@link #MAX_BODY} bytes, or a malformed header, ends the
- * stream: the connection is closed rather than parsed past.
+ * <p>Every frame is parsed and re-serialised ({@link #sanitize}); a frame that does not parse, one over
+ * {@link #MAX_BODY} bytes, or a malformed header ends the stream: the connection is closed rather than parsed past.
  */
 final class JoustSanitizingInput extends InputStream {
 
@@ -84,41 +83,98 @@ final class JoustSanitizingInput extends InputStream {
             if (header.size() > MAX_HEADER) return null;
             matched = (c == (matched % 2 == 0 ? '\r' : '\n')) ? matched + 1 : (c == '\r' ? 1 : 0);
         }
+        // Headers are normalised (M1-SEC-1, round 2): exactly one Content-Length of digits, at most one Content-Type
+        // whose charset is UTF-8, nothing else. Only Content-Length is re-emitted, so LSP4J decodes the body as UTF-8,
+        // exactly as it was parsed here.
         String head = header.toString(StandardCharsets.US_ASCII);
         int length = -1;
-        for (String line : head.split("\r\n")) {
+        boolean contentType = false;
+        for (String line : head.substring(0, head.length() - 4).split("\r\n", -1)) {
             int colon = line.indexOf(':');
-            if (colon > 0 && line.substring(0, colon).trim().toLowerCase(Locale.ROOT).equals("content-length")) {
-                try {
-                    length = Integer.parseInt(line.substring(colon + 1).trim());
-                } catch (NumberFormatException e) {
-                    return null;
-                }
+            if (colon <= 0) return null;
+            String name = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
+            String value = line.substring(colon + 1).trim();
+            if (name.equals("content-length")) {
+                if (length >= 0 || !value.matches("[0-9]{1,9}")) return null;
+                length = Integer.parseInt(value);
+            } else if (name.equals("content-type")) {
+                if (contentType || !utf8(value)) return null;
+                contentType = true;
+            } else {
+                return null;
             }
         }
         if (length < 0 || length > MAX_BODY) return null;
         byte[] body = in.readNBytes(length);
         if (body.length < length) return null;
         byte[] out = sanitize(body);
-        if (out == body) return concat(header.toByteArray(), body);
+        if (out == null) return null;
         return concat(("Content-Length: " + out.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII), out);
     }
 
-    /** The body with its error message escaped and capped, or the same array when there is none. */
+    /**
+     * The body, parsed <b>structurally</b> and always re-serialised in canonical form, or {@code null} when it cannot be
+     * parsed (the stream then ends). Re-serialising means LSP4J never sees a spelling IntelliAda's parser read
+     * differently: escaped member names, duplicate keys and lenient syntax all either canonicalise or end the stream
+     * (M1-CDX-22). Rules:
+     * <ul>
+     *   <li>{@code error.message}: escaped and capped; {@code error.data} dropped (LSP4IJ shows errors as HTML);</li>
+     *   <li>{@code window/logMessage}, {@code window/showMessage} and {@code window/showMessageRequest}
+     *   {@code params.message}: cleaned and capped as literal text;</li>
+     *   <li>every {@code collapsedText} (folding placeholders): cleaned and capped as literal text.</li>
+     * </ul>
+     */
     static byte[] sanitize(byte[] body) {
-        String text = new String(body, StandardCharsets.UTF_8);
-        if (!text.contains("\"error\"")) return body;
         JSONObject o;
         try {
-            o = new JSONObject(text);
+            o = new JSONObject(new String(body, StandardCharsets.UTF_8));
         } catch (RuntimeException e) {
-            return body;
+            return null;
         }
         JSONObject error = o.optJSONObject("error");
-        if (error == null || !(error.opt("message") instanceof String m)) return body;
-        error.put("message", PlainText.escape(PlainText.clean(m, ERROR_CAP)));
-        error.remove("data");
+        if (error != null) {
+            Object m = error.opt("message");
+            error.put("message", PlainText.escape(PlainText.clean(m instanceof String str ? str : "", ERROR_CAP)));
+            error.remove("data");
+        } else if (o.has("error")) {
+            o.remove("error");
+            o.put("error", new JSONObject().put("code", -32603).put("message", "error"));
+        }
+        Object method = o.opt("method");
+        if ("window/logMessage".equals(method) || "window/showMessage".equals(method) || "window/showMessageRequest".equals(method)) {
+            JSONObject params = o.optJSONObject("params");
+            if (params != null && params.opt("message") instanceof String m) params.put("message", PlainText.literal(m, MESSAGE_CAP));
+        }
+        literalCollapsedText(o, 0);
         return o.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    static final int MESSAGE_CAP = 4_000;
+    static final int FOLD_CAP = 200;
+
+    private static void literalCollapsedText(Object node, int depth) {
+        if (depth > 64) return;
+        if (node instanceof JSONObject obj) {
+            for (String k : obj.keySet()) {
+                Object v = obj.opt(k);
+                if (k.equals("collapsedText") && v instanceof String str) obj.put(k, PlainText.literal(str, FOLD_CAP));
+                else literalCollapsedText(v, depth + 1);
+            }
+        } else if (node instanceof org.json.JSONArray arr) {
+            for (int i = 0; i < arr.length(); i++) literalCollapsedText(arr.opt(i), depth + 1);
+        }
+    }
+
+    /** A Content-Type whose charset, if given, is UTF-8 (LSP's default); anything else ends the stream. */
+    static boolean utf8(String contentType) {
+        String v = contentType.toLowerCase(Locale.ROOT).replace(" ", "");
+        int i = v.indexOf("charset=");
+        if (i < 0) return true;
+        String cs = v.substring(i + "charset=".length());
+        int semi = cs.indexOf(';');
+        if (semi >= 0) cs = cs.substring(0, semi);
+        cs = cs.replace("\"", "");
+        return cs.equals("utf-8") || cs.equals("utf8");
     }
 
     private static byte[] concat(byte[] a, byte[] b) {

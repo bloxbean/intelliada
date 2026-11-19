@@ -23,11 +23,12 @@ public class JoustToolDetectorTest {
     @Test
     public void detectorReadsLayoutsAndSkipsShims() throws Exception {
         Path home = tmp.getRoot().toPath().toRealPath();
-        Path nvmNode = JoustTestFiles.executable(home.resolve(".nvm/versions/node/v22.12.0/bin/node"), "x");
-        JoustTestFiles.executable(home.resolve(".volta/bin/node"), "shim");
-        JoustTestFiles.executable(home.resolve(".asdf/shims/node"), "shim");
+        String exe = JoustTestTools.windows() ? "node.exe" : "node";
+        Path nvmNode = JoustTestFiles.executable(home.resolve(".nvm/versions/node/v22.12.0/bin/" + exe), "x");
+        JoustTestFiles.executable(home.resolve(".volta/bin/" + exe), "shim");
+        JoustTestFiles.executable(home.resolve(".asdf/shims/" + exe), "shim");
         Path pathDir = Files.createDirectories(home.resolve("custom/bin"));
-        Path pathNode = JoustTestFiles.executable(pathDir.resolve("node"), "x");
+        Path pathNode = JoustTestFiles.executable(pathDir.resolve(exe), "x");
         String path = String.join(File.pathSeparator, home.resolve(".volta/bin").toString(), home.resolve(".asdf/shims").toString(),
                 pathDir.toString(), "relative/bin");
         List<Path> found = JoustToolDetector.nodeCandidates(Map.of("PATH", path), home, JoustPaths.Flavor.current());

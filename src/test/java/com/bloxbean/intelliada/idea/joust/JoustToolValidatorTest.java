@@ -32,7 +32,7 @@ public class JoustToolValidatorTest {
         Path base = tmp.getRoot().toPath().toRealPath();
         tools = Files.createDirectories(base.resolve("tools"));
         project = Files.createDirectories(base.resolve("repo"));
-        node = JoustTestFiles.executable(tools.resolve("node/bin/node"), "#!/bin/sh\necho v22.1.0\n");
+        node = JoustTestTools.nodeBinary(tools.resolve("node/bin/node"));
         lspJs = JoustTestFiles.joustPackage(tools.resolve("npm"), "@julclang/joust", "0.1.0-pre2");
         roots = List.of(project);
     }
@@ -60,7 +60,7 @@ public class JoustToolValidatorTest {
 
     @Test
     public void refusesToolsInsideAProject() throws Exception {
-        Path inNode = JoustTestFiles.executable(project.resolve("node"), "#!/bin/sh\n");
+        Path inNode = JoustTestTools.nodeBinary(project.resolve("node"));
         assertFalse(JoustToolValidator.checkNode(inNode.toString(), roots, flavor).ok());
         Path inLsp = JoustTestFiles.joustPackage(project.resolve("npm"), "@julclang/joust", "9");
         assertFalse(JoustToolValidator.resolveJoustLsp(inLsp.toString(), roots, flavor).ok());
@@ -68,7 +68,7 @@ public class JoustToolValidatorTest {
 
     @Test
     public void refusesSymlinkFromOutsideIntoProject() throws Exception {
-        Path inNode = JoustTestFiles.executable(project.resolve("evil/node"), "#!/bin/sh\n");
+        Path inNode = JoustTestTools.nodeBinary(project.resolve("evil/node"));
         Path link = Files.createSymbolicLink(tools.resolve("node-link"), inNode);
         var r = JoustToolValidator.checkNode(link.toString(), roots, flavor);
         assertFalse(r.ok());
@@ -86,7 +86,7 @@ public class JoustToolValidatorTest {
         Path bin = Files.createDirectories(tools.resolve("other/node_modules/.bin"));
         Path selected = Files.createSymbolicLink(bin.resolve("joust-lsp"), lspJs);
         assertFalse(JoustToolValidator.resolveJoustLsp(selected.toString(), roots, flavor).ok());
-        Path realInBin = JoustTestFiles.executable(bin.resolve("node"), "#!/bin/sh\n");
+        Path realInBin = JoustTestTools.nodeBinary(bin.resolve("node"));
         Path outside = Files.createSymbolicLink(tools.resolve("node-via-bin"), realInBin);
         assertFalse(JoustToolValidator.checkNode(outside.toString(), roots, flavor).ok());
     }
@@ -94,7 +94,7 @@ public class JoustToolValidatorTest {
     @Test
     public void refusesPrefixLookAlike() throws Exception {
         Path evil = Files.createDirectories(project.resolveSibling("repo-evil"));
-        Path n = JoustTestFiles.executable(evil.resolve("node"), "#!/bin/sh\n");
+        Path n = JoustTestTools.nodeBinary(evil.resolve("node"));
         assertTrue("repo-evil is not inside repo", JoustToolValidator.checkNode(n.toString(), roots, flavor).ok());
         assertFalse(JoustToolValidator.checkNode(n.toString(), List.of(evil), flavor).ok());
     }
@@ -139,6 +139,19 @@ public class JoustToolValidatorTest {
         Path nodeToNpm = Files.createSymbolicLink(tools.resolve("bin3/node"), npm);
         assertFalse("node resolving to npm", JoustToolValidator.checkNode(nodeToNpm.toString(), roots, flavor).ok());
         assertTrue(JoustToolValidator.checkNode(node.toString(), roots, flavor).ok());
+    }
+
+    /** M1-CDX-5: a script named node (an npm or version-manager shim) is refused before anything could run it. */
+    @Test
+    public void aScriptNamedNodeIsRefused() throws Exception {
+        int probes = com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe.invocations();
+        Path script = JoustTestFiles.executable(tools.resolve("asdf/shims/node"), "#!/usr/bin/env bash\nexec asdf exec node \"$@\"\n");
+        var r = JoustToolValidator.checkNode(script.toString(), roots, flavor);
+        assertFalse(r.ok());
+        assertTrue(r.error(), r.error().contains("script"));
+        Path viaLink = Files.createSymbolicLink(tools.resolve("node-shim-link"), script);
+        assertFalse(JoustToolValidator.checkNode(viaLink.toString(), roots, flavor).ok());
+        assertEquals("nothing was run", probes, com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe.invocations());
     }
 
     @Test

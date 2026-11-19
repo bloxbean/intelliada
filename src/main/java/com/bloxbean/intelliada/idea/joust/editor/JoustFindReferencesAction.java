@@ -95,6 +95,11 @@ public final class JoustFindReferencesAction extends AnAction {
         return out;
     }
 
+    /** What choosing a row does: open it only through {@link JoustSafeOpen}, re-checked now. */
+    public static boolean choose(Project project, Hit h) {
+        return JoustSafeOpen.open(project, h.file(), h.offset(), true);
+    }
+
     private static void show(Project project, Editor editor, List<Hit> hits) {
         if (project.isDisposed() || editor.isDisposed()) return;
         if (hits.isEmpty()) {
@@ -110,7 +115,7 @@ public final class JoustFindReferencesAction extends AnAction {
                         append("  " + h.line(), SimpleTextAttributes.REGULAR_ATTRIBUTES);
                     }
                 })
-                .setItemChosenCallback(h -> JoustSafeOpen.open(project, h.file(), h.offset(), true))
+                .setItemChosenCallback(h -> choose(project, h))
                 .createPopup()
                 .showInBestPositionFor(editor);
     }

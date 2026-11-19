@@ -68,19 +68,12 @@ public final class JoustStatusBarWidgetFactory implements StatusBarWidgetFactory
             if (f == null || !JoustConstants.isJscName(f.getName())) return "";
             if (!JoustToolsState.getInstance().looksConfigured()) return "JOUST: not configured";
             if (JoustServerControl.status(project()) != com.redhat.devtools.lsp4ij.ServerStatus.started) return "JOUST: not running";
-            JoustStatusCache.Status s = JoustStatusCache.getInstance(project()).forUri(com.redhat.devtools.lsp4ij.LSPIJUtils.toUriAsString(f));
-            String declared = declaredVersion(f);
-            if (s == null) return "JOUST: advisory" + (declared == null ? "" : "; project pins " + declared);
+            String uri = com.redhat.devtools.lsp4ij.LSPIJUtils.toUriAsString(f);
+            JoustStatusCache cache = JoustStatusCache.getInstance(project());
+            var declared = f.isInLocalFileSystem() ? cache.declaredFor(uri, f.toNioPath()) : null;
+            JoustStatusCache.Status s = cache.forUri(uri);
+            if (s == null) return "JOUST: advisory" + (declared == null ? "" : "; " + declared.describe());
             return s.summary(declared);
-        }
-
-        private String declaredVersion(VirtualFile f) {
-            try {
-                java.nio.file.Path base = com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.baseReal(project());
-                return com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.forFile(f.toNioPath().toRealPath(), base);
-            } catch (java.io.IOException | RuntimeException e) {
-                return null;
-            }
         }
 
         @Override

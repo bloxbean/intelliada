@@ -60,6 +60,27 @@ public class JoustLanguageClient extends LanguageClientImpl {
         super(project);
     }
 
+    /**
+     * M1-CDX-24: diagnostics only for a local {@code file:} document this server has open. LSP4IJ would otherwise
+     * resolve any server-named URI through the VFS before checking it, so an unsolicited or remote URI is dropped from
+     * its text, before any lookup. A local file the user opened outside the project is still connected, so its advisory
+     * diagnostics stay.
+     */
+    @Override
+    public void publishDiagnostics(org.eclipse.lsp4j.PublishDiagnosticsParams params) {
+        if (params == null || JoustLocationPolicy.localPathOf(params.getUri()) == null) return;
+        java.net.URI uri;
+        try {
+            uri = new java.net.URI(params.getUri());
+        } catch (java.net.URISyntaxException e) {
+            return;
+        }
+        var features = getClientFeatures();
+        var wrapper = features == null ? null : features.getServerWrapper();
+        if (wrapper == null || !wrapper.isConnectedTo(uri)) return;
+        super.publishDiagnostics(params);
+    }
+
     @Override
     public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
         ApplyWorkspaceEditResponse r = new ApplyWorkspaceEditResponse(false);

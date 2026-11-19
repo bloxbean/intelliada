@@ -156,12 +156,12 @@ public class JoustClientFeatures extends LSPClientFeatures {
 
         @Override
         public String getPresentableText(DocumentSymbol symbol, PsiFile file) {
-            return PlainText.clean(super.getPresentableText(symbol, file), SYMBOL_TEXT_CAP).replace('\n', ' ');
+            return PlainText.literal(super.getPresentableText(symbol, file), SYMBOL_TEXT_CAP).replace('\n', ' ');
         }
 
         @Override
         public String getLocationString(DocumentSymbol symbol, PsiFile file) {
-            return PlainText.clean(super.getLocationString(symbol, file), SYMBOL_TEXT_CAP).replace('\n', ' ');
+            return PlainText.literal(super.getLocationString(symbol, file), SYMBOL_TEXT_CAP).replace('\n', ' ');
         }
     }
 
@@ -174,7 +174,7 @@ public class JoustClientFeatures extends LSPClientFeatures {
 
         @Override
         protected void updateMessage(String message, ProgressIndicator indicator) {
-            super.updateMessage(PlainText.clean(message, PROGRESS_TEXT_CAP).replace('\n', ' '), indicator);
+            super.updateMessage(PlainText.literal(message, PROGRESS_TEXT_CAP).replace('\n', ' '), indicator);
         }
     }
 
@@ -205,6 +205,16 @@ public class JoustClientFeatures extends LSPClientFeatures {
         caps.setLinkedEditingRangeProvider((Either<Boolean, org.eclipse.lsp4j.LinkedEditingRangeRegistrationOptions>) null);
         if (caps.getWorkspace() != null) caps.getWorkspace().setFileOperations(null);
         return caps;
+    }
+
+    /** The cached {@code joust/status} belongs to one server's lifetime, however it was stopped (M1-CDX-15). */
+    @Override
+    public void handleServerStatusChanged(com.redhat.devtools.lsp4ij.ServerStatus status) {
+        super.handleServerStatusChanged(status);
+        if (status == com.redhat.devtools.lsp4ij.ServerStatus.stopping || status == com.redhat.devtools.lsp4ij.ServerStatus.stopped) {
+            Project p = getProject();
+            if (p != null && !p.isDisposed()) JoustStatusCache.getInstance(p).clear();
+        }
     }
 
     @Override
