@@ -8,4 +8,11 @@
                             serviceImplementation="com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustGradleTasksImpl"/>
         <externalSystemTaskNotificationListener implementation="com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustAbiFailureListener"/>
     </extensions>
+    <actions>
+        <!-- ADR-004 D7: the JOUST actions in the Gradle tool window's project and module menus too -->
+        <reference ref="com.bloxbean.intelliada.idea.joust.JoustProjectGroup">
+            <add-to-group group-id="ExternalSystemView.ProjectMenu" anchor="last"/>
+            <add-to-group group-id="ExternalSystemView.ModuleMenu" anchor="last"/>
+        </reference>
+    </actions>
 </idea-plugin>

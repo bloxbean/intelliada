@@ -29,18 +29,29 @@ import java.util.regex.Pattern;
  * </ul>
  * Every path here is a real path inside the project's base directory; anything that resolves outside is ignored.
  */
-public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, List<NpmRoot> npmRoots) {
+public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, List<NpmRoot> npmRoots, boolean complete) {
+
+    /** A layout whose scan reached every directory it looks at. */
+    public JoustProjectLayout(Path base, List<GradleModule> gradleModules, List<NpmRoot> npmRoots) {
+        this(base, gradleModules, npmRoots, true);
+    }
 
     public static final String PLUGIN_ID = "org.julclang.joust";
-    static final int MAX_DEPTH = 5;
+    static final int MAX_DEPTH = 8;
     static final int MAX_DIRS = 5_000;
     static final long TEXT_CAP = 1024 * 1024;
-    static final Set<String> SKIP = Set.of(".git", ".gradle", ".idea", "build", "node_modules", "out", "target", "dist", ".joust");
+    // Never a project root: build output, dependencies, IDE metadata, and source trees (a module is never inside src/).
+    static final Set<String> SKIP = Set.of(".git", ".gradle", ".idea", "build", "node_modules", "out", "target", "dist", ".joust", "src");
     private static final Pattern VERSION = Pattern.compile(
             "org\\.julclang\\.joust['\"]\\s*\\)?\\s*version\\s*\\(?\\s*['\"]([A-Za-z0-9._+-]{1,40})['\"]");
 
     /** A Gradle project that applies {@code org.julclang.joust}. */
     public record GradleModule(Path dir, String pluginVersion) {
+        /** True when the module has {@code src/main/jsc}: only then does the plugin register the .jsc tasks (JoustPlugin). */
+        public boolean hasJsc() {
+            return Files.isDirectory(jscRoot());
+        }
+
         public Path jscRoot() {
             return dir.resolve("src").resolve("main").resolve("jsc");
         }
@@ -55,6 +66,57 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         public boolean cliInstalled() {
             return cli != null;
         }
+    }
+
+    /**
+     * Where a kind of JOUST project keeps its {@code .jsc} sources and writes generated Java: a Gradle module
+     * ({@code src/main/jsc}, {@code build/generated/sources/jsc/java/main}) or an npm root (its {@code contracts},
+     * {@code build/joust/generated}; {@code out} is never read, D7). Exactly one of {@code gradle} and {@code npm} is set.
+     */
+    public record SourceRoot(Path ownerDir, Path contracts, Path generated, GradleModule gradle, NpmRoot npm) {
+        /**
+         * The real contracts directory, verified to belong to its owner (M2-CDX-9): for Gradle exactly
+         * {@code <module>/src/main/jsc} with no link below the module; for npm inside the npm root; and inside
+         * {@code base}. Null otherwise.
+         */
+        public Path verifiedContracts(Path base) {
+            return verified(gradle != null ? ownerDir.relativize(contracts) : null, contracts, base);
+        }
+
+        /** The real generated-sources directory, verified the same way (exactly its spelled path under the owner). */
+        public Path verifiedGenerated(Path base) {
+            return verified(ownerDir.relativize(generated), generated, base);
+        }
+
+        private Path verified(Path exactRel, Path p, Path base) {
+            try {
+                Path ownerReal = ownerDir.toRealPath();
+                Path real = p.toRealPath();
+                if (!com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(ownerReal, base)) return null;
+                if (exactRel != null) return real.equals(ownerReal.resolve(exactRel)) ? real : null;
+                return com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(real, ownerReal) ? real : null;
+            } catch (IOException | RuntimeException e) {
+                return null;
+            }
+        }
+    }
+
+    /** Every source root: the Gradle modules', then the npm roots'. */
+    public List<SourceRoot> sourceRoots() {
+        List<SourceRoot> out = new ArrayList<>();
+        for (GradleModule m : gradleModules) out.add(new SourceRoot(m.dir(), m.jscRoot(), m.generatedRoot(), m, null));
+        for (NpmRoot r : npmRoots) {
+            out.add(new SourceRoot(r.dir(), r.contractsDir(), r.dir().resolve("build").resolve("joust").resolve("generated"), null, r));
+        }
+        return out;
+    }
+
+    /** The source root whose generated directory contains {@code realFile} (by spelled path; verify before use), or null. */
+    public SourceRoot rootGenerating(Path realFile, JoustPaths.Flavor flavor) {
+        for (SourceRoot r : sourceRoots()) {
+            if (JoustPaths.isInside(realFile.toString(), r.generated().toString(), flavor)) return r;
+        }
+        return null;
     }
 
     public boolean isJoust() {
@@ -97,28 +159,72 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
     public static JoustProjectLayout scan(Path base, JoustPaths.Flavor flavor) {
         List<GradleModule> gradle = new ArrayList<>();
         List<NpmRoot> npm = new ArrayList<>();
-        String settingsVersion = null;
-        for (String settings : new String[]{"settings.gradle", "settings.gradle.kts"}) {
-            String text = readText(base.resolve(settings));
-            if (text != null && text.contains(PLUGIN_ID)) settingsVersion = version(text);
-        }
         List<Path> dirs = new ArrayList<>();
-        collect(base, 0, dirs);
+        boolean[] truncated = new boolean[1];
+        collect(base, 0, dirs, truncated);
+        // A build's settings file may name the plugin (and its version) for the whole build (D7, F31).
+        java.util.Map<Path, String> settingsVersion = new java.util.HashMap<>();
+        java.util.Set<Path> settingsNamesPlugin = new java.util.HashSet<>();
         for (Path dir : dirs) {
+            for (String settings : new String[]{"settings.gradle", "settings.gradle.kts"}) {
+                String text = readText(dir.resolve(settings));
+                if (text != null && text.contains(PLUGIN_ID)) {
+                    settingsNamesPlugin.add(dir);
+                    settingsVersion.put(dir, version(text));
+                }
+            }
+        }
+        for (Path dir : dirs) {
+            String inherited = null;
+            for (Path d = dir; d != null && d.startsWith(base); d = d.getParent()) {
+                if (settingsVersion.containsKey(d)) {
+                    inherited = settingsVersion.get(d);
+                    break;
+                }
+            }
+            boolean added = false;
             for (String build : new String[]{"build.gradle", "build.gradle.kts"}) {
                 String text = readText(dir.resolve(build));
                 if (text != null && text.contains(PLUGIN_ID)) {
                     String v = version(text);
-                    gradle.add(new GradleModule(dir, v != null ? v : settingsVersion));
+                    gradle.add(new GradleModule(dir, v != null ? v : inherited));
+                    added = true;
                     break;
                 }
             }
+            // Settings-only: the build's root directory is a JOUST Gradle module (D7: "or settings.gradle(.kts)").
+            if (!added && settingsNamesPlugin.contains(dir)) gradle.add(new GradleModule(dir, inherited));
             NpmRoot n = npmRoot(dir, base, flavor);
             if (n != null) npm.add(n);
         }
         gradle.sort(Comparator.comparing(m -> m.dir().toString()));
         npm.sort(Comparator.comparing(r -> r.dir().toString()));
-        return new JoustProjectLayout(base, List.copyOf(gradle), List.copyOf(npm));
+        return new JoustProjectLayout(base, List.copyOf(gradle), List.copyOf(npm), !truncated[0]);
+    }
+
+    /** What owns a file: the nearest npm root or JOUST Gradle module walking up from it; npm wins in one directory. */
+    public record Owner(GradleModule gradle, NpmRoot npm) {
+    }
+
+    /**
+     * The owner of {@code realFile}, as JOUST's own {@code project.js} decides (ADR-0017 D4): walking up from the file,
+     * the first directory that is an npm root or part of a Gradle build decides, and npm wins in one directory. A
+     * Gradle build that does not apply the plugin owns the file too, so the result is then null. Reads only file
+     * existence; off the EDT.
+     */
+    public Owner owner(Path realFile) {
+        for (Path d = Files.isDirectory(realFile) ? realFile : realFile.getParent(); d != null && d.startsWith(base); d = d.getParent()) {
+            for (NpmRoot r : npmRoots) {
+                if (r.dir().equals(d)) return new Owner(null, r);
+            }
+            for (GradleModule m : gradleModules) {
+                if (m.dir().equals(d)) return new Owner(m, null);
+            }
+            for (String f : new String[]{"settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"}) {
+                if (Files.isRegularFile(d.resolve(f), LinkOption.NOFOLLOW_LINKS)) return null;
+            }
+        }
+        return null;
     }
 
     static String version(String text) {
@@ -187,20 +293,28 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         return JoustPaths.isInside(real.toString(), base.toString(), flavor) ? real : null;
     }
 
-    private static void collect(Path dir, int depth, List<Path> out) {
-        if (out.size() >= MAX_DIRS) return;
+    /** Directories to look at; {@code truncated[0]} is set when a limit stopped the scan before it saw everything. */
+    private static void collect(Path dir, int depth, List<Path> out, boolean[] truncated) {
+        if (out.size() >= MAX_DIRS) {
+            truncated[0] = true;
+            return;
+        }
         out.add(dir);
-        if (depth >= MAX_DEPTH) return;
         List<Path> children = new ArrayList<>();
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
             for (Path c : ds) {
                 if (Files.isDirectory(c, LinkOption.NOFOLLOW_LINKS) && !SKIP.contains(c.getFileName().toString())) children.add(c);
             }
         } catch (IOException ignored) {
+            truncated[0] = true;
+            return;
+        }
+        if (depth >= MAX_DEPTH) {
+            if (!children.isEmpty()) truncated[0] = true;
             return;
         }
         children.sort(null);
-        for (Path c : children) collect(c, depth + 1, out);
+        for (Path c : children) collect(c, depth + 1, out, truncated);
     }
 
     static String readText(Path p) {

@@ -1,0 +1,16 @@
+
+org/acme/Counter.jsc:1:1: error[JSC0002]: the ABI manifest Counter.abi.json differs from the committed one at line 8: committed ] }, now { "name": "note", "type": "Int", "data": "int" }: a datum or redeemer encoding changed, which strands deployed instances; if the change is intended, accept it with the acceptJscAbi task (npm: joust build --accept-abi) and commit the new manifest
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':generateJsc'.
+> Process 'command '/Users/satya/.sdkman/candidates/java/25.0.2-librca/bin/java'' finished with non-zero exit value 1
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to generate a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 2s

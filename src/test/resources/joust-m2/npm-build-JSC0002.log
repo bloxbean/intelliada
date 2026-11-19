@@ -1,0 +1,1 @@
+app/Counter.jsc:1:1: error[JSC0002]: the ABI manifest contracts/app/Counter.abi.json differs from the committed one at line 8: committed ] }, now { "name": "note", "type": "Int", "data": "int" }: a datum or redeemer encoding changed, which strands deployed instances; if the change is intended, run joust build --accept-abi and commit the new manifest

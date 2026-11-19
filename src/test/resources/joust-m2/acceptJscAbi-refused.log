@@ -1,0 +1,16 @@
+
+org/acme/Counter.jsc:1:1: error[JSC0002]: not accepted: the committed manifest Counter.abi.json is now 118ae30491d47001e414f092606d6ab56240eff386b2db056266ae6555e71dd9, not the 7bfe0cb6dabfb71e82dc10cfd9b550052ca5e9a7b5899b6e6b0375cd18287017 that was reviewed (it changed, a git pull say); review the diff again (jscAbiDiff, Accept ABI…)
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':acceptJscAbi'.
+> Process 'command '/Users/satya/.sdkman/candidates/java/25.0.2-librca/bin/java'' finished with non-zero exit value 1
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to generate a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 2s

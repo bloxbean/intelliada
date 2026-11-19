@@ -211,39 +211,89 @@ public final class JoustAbi {
 
     // ------------------------------------------------------------------ after accepting
 
-    /** SHA-256 of every {@code *.abi.json} under every contracts directory of the layout (I8's "only that manifest"). */
-    public static Map<Path, String> manifests(JoustProjectLayout layout) {
-        Map<Path, String> out = new TreeMap<>();
-        List<Path> roots = new ArrayList<>();
-        layout.gradleModules().forEach(m -> roots.add(m.jscRoot()));
-        layout.npmRoots().forEach(r -> roots.add(r.contractsDir()));
-        for (Path root : roots) {
-            if (!Files.isDirectory(root)) continue;
-            try (Stream<Path> s = Files.walk(root, 20)) {
-                s.filter(p -> p.getFileName().toString().endsWith(".abi.json") && Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
-                        .limit(10_000).forEach(p -> {
-                            try {
-                                out.put(p.toAbsolutePath().normalize(), JoustToolValidator.sha256(p));
-                            } catch (IOException e) {
-                                out.put(p.toAbsolutePath().normalize(), "unreadable");
-                            }
-                        });
-            } catch (IOException ignored) {
-                // nothing readable here
-            }
-        }
-        return out;
+    /**
+     * The manifests of a project: SHA-256 of every {@code *.abi.json} under every contracts directory, and why the
+     * inventory is incomplete (null when complete). Incomplete is a verification failure, never a silent pass (M2-CDX-7).
+     */
+    public record Snapshot(Map<Path, String> hashes, String incomplete) {
     }
 
-    /** Why the acceptance did not do exactly what was reviewed, or null. */
-    public static String verifyAccepted(Map<Path, String> before, Map<Path, String> after, Path manifest, String newSha) {
-        Path m = manifest.toAbsolutePath().normalize();
-        if (!newSha.equals(after.get(m))) return "the manifest " + m.getFileName() + " does not have the accepted SHA-256";
-        for (var e : before.entrySet()) {
-            if (!e.getKey().equals(m) && !e.getValue().equals(after.get(e.getKey()))) return "another manifest changed: " + e.getKey();
+    static final int MAX_MANIFESTS = 10_000;
+    static final int MAX_MANIFEST_DEPTH = 32;
+
+    /** Every manifest under every contracts directory of {@code layout} (I8's "only that manifest"). */
+    public static Snapshot manifests(JoustProjectLayout layout) {
+        Map<Path, String> out = new TreeMap<>();
+        if (!layout.complete()) return new Snapshot(out, "the project scan stopped at its limit");
+        String[] incomplete = new String[1];
+        for (JoustProjectLayout.SourceRoot r : layout.sourceRoots()) {
+            if (!Files.exists(r.contracts(), LinkOption.NOFOLLOW_LINKS)) continue;
+            Path root = r.verifiedContracts(layout.base());
+            if (root == null) {
+                incomplete[0] = "a contracts directory is redirected out of its module: " + r.contracts();
+                break;
+            }
+            try {
+                Files.walkFileTree(root, java.util.EnumSet.noneOf(java.nio.file.FileVisitOption.class), MAX_MANIFEST_DEPTH + 1,
+                        new java.nio.file.SimpleFileVisitor<>() {
+                            @Override
+                            public java.nio.file.FileVisitResult visitFile(Path p, java.nio.file.attribute.BasicFileAttributes attrs) {
+                                if (root.relativize(p).getNameCount() > MAX_MANIFEST_DEPTH) {
+                                    incomplete[0] = "a contracts directory is deeper than " + MAX_MANIFEST_DEPTH + " levels";
+                                    return java.nio.file.FileVisitResult.TERMINATE;
+                                }
+                                if (!p.getFileName().toString().endsWith(".abi.json")) return java.nio.file.FileVisitResult.CONTINUE;
+                                if (!attrs.isRegularFile()) {
+                                    incomplete[0] = "a manifest is not a regular file: " + p;
+                                    return java.nio.file.FileVisitResult.TERMINATE;
+                                }
+                                if (out.size() >= MAX_MANIFESTS) {
+                                    incomplete[0] = "more than " + MAX_MANIFESTS + " manifests";
+                                    return java.nio.file.FileVisitResult.TERMINATE;
+                                }
+                                try {
+                                    out.put(p.toAbsolutePath().normalize(), JoustToolValidator.sha256(p));
+                                } catch (IOException e) {
+                                    incomplete[0] = "a manifest could not be read: " + p;
+                                    return java.nio.file.FileVisitResult.TERMINATE;
+                                }
+                                return java.nio.file.FileVisitResult.CONTINUE;
+                            }
+
+                            @Override
+                            public java.nio.file.FileVisitResult visitFileFailed(Path p, IOException e) {
+                                incomplete[0] = "a directory could not be read: " + p;
+                                return java.nio.file.FileVisitResult.TERMINATE;
+                            }
+                        });
+            } catch (IOException e) {
+                incomplete[0] = "a contracts directory could not be read: " + root;
+            }
+            if (incomplete[0] != null) break;
         }
-        for (Path p : after.keySet()) {
-            if (!p.equals(m) && !before.containsKey(p)) return "another manifest appeared: " + p;
+        return new Snapshot(out, incomplete[0]);
+    }
+
+    /**
+     * Why the acceptance did not do exactly what was reviewed, or null (D8 step 4, M2-CDX-6): before it, the manifest
+     * was the reviewed baseline (absent for {@code none}); after it, it has the new hash; every other manifest is
+     * unchanged, none appeared, and both inventories are complete.
+     */
+    public static String verifyAccepted(Snapshot before, Snapshot after, Path manifest, Diff d) {
+        if (before.incomplete() != null) return "the manifests could not all be checked before accepting: " + before.incomplete();
+        if (after.incomplete() != null) return "the manifests could not all be checked after accepting: " + after.incomplete();
+        Path m = manifest.toAbsolutePath().normalize();
+        String was = before.hashes().get(m);
+        String expected = d.committedSha().equals("none") ? null : d.committedSha();
+        if (!java.util.Objects.equals(was, expected)) {
+            return "before accepting, " + m.getFileName() + " was " + (was == null ? "absent" : was) + ", not the reviewed " + d.committedSha();
+        }
+        if (!d.nowSha().equals(after.hashes().get(m))) return "the manifest " + m.getFileName() + " does not have the accepted SHA-256";
+        for (var e : before.hashes().entrySet()) {
+            if (!e.getKey().equals(m) && !e.getValue().equals(after.hashes().get(e.getKey()))) return "another manifest changed or disappeared: " + e.getKey();
+        }
+        for (Path p : after.hashes().keySet()) {
+            if (!p.equals(m) && !before.hashes().containsKey(p)) return "another manifest appeared: " + p;
         }
         return null;
     }

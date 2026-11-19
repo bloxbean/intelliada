@@ -53,6 +53,13 @@ public final class JoustAbiDialogUi implements JoustAbiReview.Ui {
         JoustNotifications.show(project, title, text, error ? NotificationType.ERROR : NotificationType.INFORMATION);
     }
 
+    @Override
+    public void refused(String title, String text, Runnable reviewAgain) {
+        var n = JoustNotifications.create(title, text, NotificationType.ERROR);
+        n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring("Review ABI change again…", reviewAgain));
+        n.notify(project);
+    }
+
     final class ReviewDialog extends DialogWrapper {
         private final String module;
         private final JoustAbi.Diff diff;
@@ -63,7 +70,7 @@ public final class JoustAbiDialogUi implements JoustAbiReview.Ui {
             this.module = module;
             this.diff = diff;
             this.refusal = refusal;
-            setTitle("Review ABI Change: " + PlainText.label(diff.contract(), 120));
+            setTitle("Review ABI Change: " + PlainText.title(diff.contract(), 120));
             setOKButtonText("Accept This Change…");
             setOKActionEnabled(refusal == null);
             init();

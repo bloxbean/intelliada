@@ -4,13 +4,18 @@ import com.bloxbean.intelliada.idea.joust.abi.JoustAbiReview;
 import com.bloxbean.intelliada.idea.joust.core.JoustPaths;
 import com.bloxbean.intelliada.idea.joust.core.JoustRealPaths;
 import com.bloxbean.intelliada.idea.joust.core.JoustToolValidator;
+import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.project.JoustProjectLayout;
 import com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots;
 import com.bloxbean.intelliada.idea.joust.settings.JoustToolsState;
 import com.intellij.execution.configurations.GeneralCommandLine;
-import com.intellij.execution.process.CapturingProcessHandler;
-import com.intellij.execution.process.ProcessOutput;
+import com.intellij.execution.process.OSProcessHandler;
+import com.intellij.execution.process.ProcessEvent;
+import com.intellij.execution.process.ProcessListener;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Key;
+import org.jetbrains.annotations.NotNull;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -18,13 +23,15 @@ import java.util.List;
 
 /**
  * ADR-004 D7: the npm project's own CLI, {@code <node> node_modules/@julclang/joust/bin/joust.js <args>}, run only
- * under D1 (the caller checks trust and a user action). Node is the user's validated Node, re-checked (path and
- * identity) without executing it; the CLI's real path must lie inside the project; the working directory is the npm
- * root. Registered with {@link JoustTaskTracker}.
+ * under D1 for a live {@link JoustRunGuard}. Node is the user's validated Node, re-checked (path and identity) without
+ * executing it; the CLI's real path must lie inside the project; the working directory is the npm root. The run is
+ * registered with {@link JoustTaskTracker} before the process starts (I20); its output goes to a Run console (where
+ * JOUST diagnostics become links) and is captured up to a cap as it arrives (M2-CDX-14, M2-CDX-15).
  */
 public final class JoustNpmTasks {
 
     static final int TIMEOUT_MS = 15 * 60 * 1000;
+    public static final int OUTPUT_CAP = 4 * 1024 * 1024;
 
     private JoustNpmTasks() {
     }
@@ -48,24 +55,53 @@ public final class JoustNpmTasks {
         return cmd;
     }
 
-    /** Runs the CLI, blocking; output captured and capped. */
-    public static JoustAbiReview.Result run(Project project, JoustProjectLayout.NpmRoot root, List<String> args) throws Exception {
-        List<String> cmd = command(project, root, args);
-        GeneralCommandLine cl = new GeneralCommandLine(cmd).withWorkDirectory(root.dir().toFile())
-                .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
-        CapturingProcessHandler handler = new CapturingProcessHandler(cl);
+    /** Runs the CLI for a live guard, blocking. Cancelled (and nothing started) when the guard is not live. */
+    public static JoustAbiReview.Result run(JoustRunGuard guard, JoustProjectLayout.NpmRoot root, List<String> args, String title)
+            throws Exception {
+        Project project = guard.project();
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
-        int generation = tracker.generation();
-        JoustTaskTracker.Handle h = handler::destroyProcess;
-        tracker.register(h);
+        JoustTaskTracker.Run run = tracker.start(guard);
+        if (run == null) return new JoustAbiReview.Result(false, "", true);
         try {
-            ProcessOutput out = handler.runProcess(TIMEOUT_MS);
-            if (out.isCancelled() || !tracker.current(generation)) return new JoustAbiReview.Result(false, "", true);
-            String text = out.getStdout() + out.getStderr();
-            if (text.length() > 4 * 1024 * 1024) text = text.substring(0, 4 * 1024 * 1024);
-            return new JoustAbiReview.Result(out.getExitCode() == 0 && !out.isTimeout(), text, false);
+            List<String> cmd = command(project, root, args);
+            if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
+            GeneralCommandLine cl = new GeneralCommandLine(cmd).withWorkDirectory(root.dir().toFile())
+                    .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
+            OSProcessHandler handler = new OSProcessHandler(cl);
+            run.attach(handler::destroyProcess);   // runs at once if cancelled while starting
+            StringBuilder out = new StringBuilder();
+            handler.addProcessListener(new ProcessListener() {
+                @Override
+                public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
+                    String t = event.getText();
+                    synchronized (out) {
+                        if (t != null && out.length() < OUTPUT_CAP) out.append(t, 0, Math.min(t.length(), OUTPUT_CAP - out.length()));
+                    }
+                }
+            });
+            if (showsConsole()) {
+                ApplicationManager.getApplication().invokeAndWait(() -> new com.intellij.execution.RunContentExecutor(project, handler)
+                        .withTitle(PlainText.title(title, 120)).withActivateToolWindow(true).run());
+            } else {
+                handler.startNotify();
+            }
+            if (!handler.waitFor(TIMEOUT_MS)) {
+                handler.destroyProcess();
+                return new JoustAbiReview.Result(false, "joust did not finish within " + TIMEOUT_MS / 60000 + " minutes", false);
+            }
+            if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
+            Integer code = handler.getExitCode();
+            synchronized (out) {
+                return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false);
+            }
         } finally {
-            tracker.done(h);
+            tracker.done(run);
         }
+    }
+
+    /** A Run console in the IDE; tests without one read the captured output only. */
+    static boolean showsConsole() {
+        var app = ApplicationManager.getApplication();
+        return !app.isUnitTestMode() && !app.isHeadlessEnvironment();
     }
 }

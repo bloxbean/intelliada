@@ -1,36 +1,50 @@
 package com.bloxbean.intelliada.idea.joust.tasks.gradle;
 
 import com.bloxbean.intelliada.idea.joust.abi.JoustAbiReview;
-import com.bloxbean.intelliada.idea.joust.core.JoustRealPaths;
+import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustGradleTasks;
+import com.bloxbean.intelliada.idea.joust.tasks.JoustRunGuard;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker;
+import com.intellij.execution.ExecutionListener;
+import com.intellij.execution.ExecutionManager;
 import com.intellij.execution.executors.DefaultRunExecutor;
+import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessOutputType;
+import com.intellij.execution.runners.ExecutionEnvironment;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.externalSystem.model.execution.ExternalSystemTaskExecutionSettings;
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId;
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskNotificationListener;
-import com.intellij.openapi.externalSystem.service.execution.ProgressExecutionMode;
+import com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunnableState;
 import com.intellij.openapi.externalSystem.service.internal.ExternalSystemProcessingManager;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
-import com.intellij.openapi.externalSystem.util.task.TaskExecutionSpec;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.util.messages.MessageBusConnection;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.plugins.gradle.util.GradleConstants;
-
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** {@link JoustGradleTasks} on IntelliJ's Gradle integration ({@code ExternalSystemUtil.runTask}). */
+/**
+ * {@link JoustGradleTasks} on IntelliJ's Gradle integration. Each run builds a fresh execution environment and
+ * <b>clears its before-launch tasks</b>, which IntelliJ would otherwise copy from the project's Gradle run-configuration
+ * template (M2-CDX-4): only the requested tasks run. The run is registered before it starts, and a cancellation that
+ * arrives before Gradle reports the task id cancels it as soon as the id arrives (M2-CDX-3).
+ */
 public final class JoustGradleTasksImpl implements JoustGradleTasks {
 
     static final int OUTPUT_CAP = 4 * 1024 * 1024;
+    static final long TIMEOUT_MINUTES = 120;
 
     @Override
     public Linked linked(Project project, Path moduleDir) {
@@ -53,59 +67,133 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
     }
 
     @Override
-    public JoustAbiReview.Result run(Project project, Path rootDir, List<String> args, String title) throws InterruptedException {
+    public Path selectedModuleDir(AnActionEvent e) {
+        if (!GradleConstants.SYSTEM_ID.equals(e.getData(com.intellij.openapi.externalSystem.model.ExternalSystemDataKeys.EXTERNAL_SYSTEM_ID))) return null;
+        var nodes = e.getData(com.intellij.openapi.externalSystem.model.ExternalSystemDataKeys.SELECTED_NODES);
+        if (nodes == null || nodes.size() != 1) return null;
+        Object data = nodes.get(0).getData();
+        if (!(data instanceof com.intellij.openapi.externalSystem.model.project.ExternalConfigPathAware a) || a.getLinkedExternalProjectPath() == null) {
+            return null;
+        }
+        try {
+            return Path.of(a.getLinkedExternalProjectPath()).toRealPath();
+        } catch (java.io.IOException | RuntimeException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * The execution environment for {@code settings}, with no before-launch tasks. Package-visible for the test that
+     * plants a before-launch task in the template.
+     */
+    static ExecutionEnvironment environment(Project project, ExternalSystemTaskExecutionSettings settings) {
+        ExecutionEnvironment env = ExternalSystemUtil.createExecutionEnvironment(project, GradleConstants.SYSTEM_ID, settings,
+                DefaultRunExecutor.EXECUTOR_ID);
+        if (env == null) return null;
+        var rcs = env.getRunnerAndConfigurationSettings();
+        if (rcs != null) rcs.getConfiguration().setBeforeRunTasks(List.of());
+        return env;
+    }
+
+    static ExternalSystemTaskExecutionSettings settings(Path rootDir, List<String> args, String title) {
         ExternalSystemTaskExecutionSettings settings = new ExternalSystemTaskExecutionSettings();
         settings.setExternalProjectPath(rootDir.toString());
         settings.setExternalSystemIdString(GradleConstants.SYSTEM_ID.getId());
         settings.setTaskNames(new ArrayList<>(args));
-        settings.setExecutionName(title);
-        StringBuilder out = new StringBuilder();
-        AtomicReference<ExternalSystemTaskId> id = new AtomicReference<>();
-        CompletableFuture<Boolean> done = new CompletableFuture<>();
+        settings.setExecutionName(PlainText.title(title, 120));
+        return settings;
+    }
+
+    @Override
+    public JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) throws InterruptedException {
+        Project project = guard.project();
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
-        int generation = tracker.generation();
-        JoustTaskTracker.Handle handle = () -> {
-            ExternalSystemTaskId t = id.get();
-            var task = t == null ? null : ExternalSystemProcessingManager.getInstance().findTask(t);
-            if (task != null) task.cancel();
-            done.cancel(false);
-        };
-        tracker.register(handle);
+        JoustTaskTracker.Run run = tracker.start(guard);
+        if (run == null) return new JoustAbiReview.Result(false, "", true);
+        StringBuilder out = new StringBuilder();
+        CompletableFuture<Boolean> done = new CompletableFuture<>();
+        AtomicReference<ExecutionEnvironment> envRef = new AtomicReference<>();
+        run.attach(() -> done.cancel(false));
         ExternalSystemTaskNotificationListener listener = new ExternalSystemTaskNotificationListener() {
             @Override
-            public void onStart(ExternalSystemTaskId taskId, String workingDir) {
-                id.set(taskId);
+            public void onStart(@NotNull ExternalSystemTaskId taskId, String workingDir) {
+                // A cancellation that came before the id cancels the task now (Run.attach runs it at once).
+                run.attach(() -> {
+                    var task = ExternalSystemProcessingManager.getInstance().findTask(taskId);
+                    if (task != null) task.cancel();
+                });
             }
 
             @Override
-            public void onTaskOutput(ExternalSystemTaskId taskId, String text, ProcessOutputType type) {
+            public void onTaskOutput(@NotNull ExternalSystemTaskId taskId, @NotNull String text, @NotNull ProcessOutputType type) {
                 synchronized (out) {
                     if (out.length() < OUTPUT_CAP) out.append(text, 0, Math.min(text.length(), OUTPUT_CAP - out.length()));
                 }
             }
+
+            @Override
+            public void onSuccess(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
+                done.complete(true);
+            }
+
+            @Override
+            public void onFailure(@NotNull String projectPath, @NotNull ExternalSystemTaskId id, @NotNull Exception e) {
+                done.complete(false);
+            }
+
+            @Override
+            public void onCancel(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
+                done.cancel(false);
+            }
+
+            @Override
+            public void onEnd(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
+                done.complete(false);
+            }
         };
+        MessageBusConnection bus = project.getMessageBus().connect();
         try {
-            TaskExecutionSpec spec = TaskExecutionSpec.create(project, GradleConstants.SYSTEM_ID, DefaultRunExecutor.EXECUTOR_ID, settings)
-                    .withListener(listener)
-                    .withCallback(done)
-                    .withProgressExecutionMode(ProgressExecutionMode.IN_BACKGROUND_ASYNC)
-                    .withActivateToolWindowBeforeRun(true)
-                    .build();
-            ExternalSystemUtil.runTask(spec);
+            ExecutionEnvironment env = environment(project, settings(rootDir, args, title));
+            if (env == null) return new JoustAbiReview.Result(false, "IntelliJ cannot run Gradle tasks here.", false);
+            env.putUserData(ExternalSystemRunnableState.TASK_NOTIFICATION_LISTENER_KEY, listener);
+            envRef.set(env);
+            bus.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
+                @Override
+                public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e) {
+                    if (e == envRef.get()) done.complete(false);
+                }
+
+                @Override
+                public void processStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e, @NotNull ProcessHandler handler) {
+                    if (e == envRef.get()) run.attach(handler::destroyProcess);
+                }
+            });
+            if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
+            AtomicReference<Exception> failed = new AtomicReference<>();
+            ApplicationManager.getApplication().invokeAndWait(() -> {
+                try {
+                    if (!run.cancelled() && guard.live()) env.getRunner().execute(env);
+                    else done.cancel(false);
+                } catch (Exception e) {
+                    failed.set(e);
+                }
+            });
+            if (failed.get() != null) return new JoustAbiReview.Result(false, String.valueOf(failed.get().getMessage()), false);
             boolean ok;
             try {
-                ok = Boolean.TRUE.equals(done.get());
+                ok = Boolean.TRUE.equals(done.get(TIMEOUT_MINUTES, TimeUnit.MINUTES));
             } catch (java.util.concurrent.CancellationException e) {
                 return new JoustAbiReview.Result(false, "", true);
-            } catch (java.util.concurrent.ExecutionException e) {
+            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
                 ok = false;
             }
-            if (!tracker.current(generation)) return new JoustAbiReview.Result(false, "", true);
+            if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
             synchronized (out) {
                 return new JoustAbiReview.Result(ok, out.toString(), false);
             }
         } finally {
-            tracker.done(handle);
+            bus.disconnect();
+            tracker.done(run);
         }
     }
 }

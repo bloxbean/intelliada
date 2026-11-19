@@ -350,6 +350,8 @@
             <action id="Joust.Gradle.AcceptLock" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustGradleTaskAction$AcceptLock" text="Accept joust.lock…"/>
             <action id="Joust.Gradle.RunTests" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustGradleTaskAction$RunTests" text="Run Tests"/>
             <action id="Joust.Npm.Build" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustNpmActions$Build" text="Build (npm)"/>
+            <action id="Joust.Npm.RunTests" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustNpmActions$RunTests" text="Run Tests (npm)"/>
+            <action id="Joust.Npm.AcceptLock" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustNpmActions$AcceptLock" text="Accept joust.lock… (npm)"/>
             <action id="Joust.Npm.Format" class="com.bloxbean.intelliada.idea.joust.project.actions.JoustNpmActions$Format" text="Format File (joust fmt)"/>
         </group>
     </actions>

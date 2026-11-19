@@ -26,22 +26,28 @@ public final class JoustGeneratedBannerProvider implements EditorNotificationPro
     @Override
     public @Nullable Function<? super @NotNull FileEditor, ? extends @Nullable JComponent> collectNotificationData(@NotNull Project project,
                                                                                                                      @NotNull VirtualFile file) {
-        JoustProjectLayout.GradleModule module = JoustGeneratedSourcesFilter.moduleOf(file, project);
-        if (module == null) return null;
+        JoustProjectLayout.SourceRoot root = JoustGeneratedSourcesFilter.rootOf(file, project);
+        if (root == null) return null;
         return editor -> {
             EditorNotificationPanel panel = new EditorNotificationPanel(editor, EditorNotificationPanel.Status.Info);
             String source = file.getNameWithoutExtension() + ".jsc";
-            panel.setText(PlainText.label("Generated from " + source + " by generateJsc: edit the .jsc", 200));
-            panel.createActionLabel("Open " + PlainText.label(source, 100), () -> openSource(project, module, file, editor));
+            String by = root.gradle() != null
+                    ? "generateJsc" + (root.gradle().pluginVersion() != null ? " (" + PLUGIN + " " + root.gradle().pluginVersion() + ")" : "")
+                    : "joust build";
+            panel.setText(PlainText.label("Generated from " + source + " by " + by + ": edit the .jsc", 200));
+            panel.createActionLabel("Open " + PlainText.label(source, 100), () -> openSource(project, root, file, editor));
             return panel;
         };
     }
 
+    static final String PLUGIN = JoustProjectLayout.PLUGIN_ID;
+
     /** Opens the {@code .jsc} position for the editor's caret line; true when opened. */
-    static boolean openSource(Project project, JoustProjectLayout.GradleModule module, VirtualFile java, FileEditor editor) {
+    static boolean openSource(Project project, JoustProjectLayout.SourceRoot root, VirtualFile java, FileEditor editor) {
         int line = editor instanceof TextEditor te ? te.getEditor().getCaretModel().getLogicalPosition().line + 1 : 1;
         try {
-            var target = JoustGeneratedSources.jscFor(module, java.toNioPath().toRealPath(), line);
+            Path base = com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.baseReal(project);
+            var target = JoustGeneratedSources.jscFor(root, base, java.toNioPath().toRealPath(), line);
             if (target == null) return false;
             VirtualFile jsc = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target.jsc());
             return jsc != null && JoustSafeOpen.open(project, jsc, target.line() - 1, target.column() - 1, true);
@@ -52,7 +58,8 @@ public final class JoustGeneratedBannerProvider implements EditorNotificationPro
 
     /** For tests and the action: the target for a generated file and line. */
     static JoustGeneratedSources.JscTarget targetFor(Project project, VirtualFile java, int line) throws java.io.IOException {
-        JoustProjectLayout.GradleModule module = JoustGeneratedSourcesFilter.moduleOf(java, project);
-        return module == null ? null : JoustGeneratedSources.jscFor(module, java.toNioPath().toRealPath(), line);
+        JoustProjectLayout.SourceRoot root = JoustGeneratedSourcesFilter.rootOf(java, project);
+        return root == null ? null : JoustGeneratedSources.jscFor(root, com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.baseReal(project),
+                java.toNioPath().toRealPath(), line);
     }
 }

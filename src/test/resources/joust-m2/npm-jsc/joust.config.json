@@ -1,0 +1,8 @@
+{
+  "contracts": "contracts",
+  "out": "build/joust",
+  "network": "devkit",
+  "networks": {
+    "devkit": { "chain": "http://localhost:8080/api/v1", "admin": "http://localhost:10000", "networkId": 0 }
+  }
+}

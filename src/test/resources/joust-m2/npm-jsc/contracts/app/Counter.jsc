@@ -1,0 +1,38 @@
+jsc 1
+package app
+
+// A counter anyone can increment and only its owner can reset or close.
+//
+// `joust build` compiles this file to a Cardano validator (UPLC) and a typed JavaScript client in build/joust/.
+// The same code runs in your app (to compute the next state) and on chain (to check it).
+// .jsc is a language preview (ADR-0018): the language and the compiler's output may change before it leaves preview,
+// so this file may compile to a different script hash in a later JOUST. Use it on DevKit and testnets; don't deploy it
+// to hold value. Counter.abi.json beside this file records how the state and the calls are encoded.
+contract Counter(maxDatumBytes = 128) {
+  // The state, stored as the inline datum of the state UTxO.
+  state { count: Int, owner: Key }
+
+  // The deployer becomes the owner; the count starts at 0.
+  init() {
+    return { count: 0, owner: caller }
+  }
+
+  // Anyone can increment by a positive amount (it never reads caller: no signature needed, cheaper).
+  action increment(by: Int) {
+    require(by > 0, "increment must be positive")
+    return { ...state, count: count + by }
+  }
+
+  // Only the owner can reset.
+  action reset() only owner {
+    return { ...state, count: 0 }
+  }
+
+  // Only the owner can close the counter; the deposit goes back to them.
+  destroy close() only owner {
+    pay(owner, balance)
+  }
+
+  // A read-only view (off-chain, no transaction).
+  view count(): Int = count
+}

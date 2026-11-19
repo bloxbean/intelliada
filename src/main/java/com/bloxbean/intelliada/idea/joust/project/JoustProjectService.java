@@ -27,15 +27,44 @@ public final class JoustProjectService {
             @Override
             public void after(List<? extends VFileEvent> events) {
                 for (VFileEvent e : events) {
-                    String p = e.getPath();
-                    String name = p.substring(p.lastIndexOf('/') + 1);
-                    if (name.startsWith("build.gradle") || name.startsWith("settings.gradle") || name.equals("package.json")
-                            || name.equals("joust.config.json") || e.getFile() == null || e.getFile().isDirectory()) {
+                    if (affectsLayout(e.getPath(), e.getFile() == null || e.getFile().isDirectory())) {
                         layout = null;
                         return;
                     }
                 }
             }
+        });
+    }
+
+    /**
+     * Whether a change at {@code path} can change the layout (M2-DES-4): a build or settings file, {@code package.json},
+     * {@code joust.config.json}, the project's {@code @julclang/joust}, or a directory outside build output,
+     * {@code node_modules} and IDE metadata. A Gradle or npm build writing its outputs does not.
+     */
+    static boolean affectsLayout(String path, boolean directoryOrGone) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        if (name.startsWith("build.gradle") || name.startsWith("settings.gradle") || name.equals("package.json")
+                || name.equals("joust.config.json")) {
+            return true;
+        }
+        if (path.contains("/node_modules/@julclang/joust")) return true;
+        if (!directoryOrGone) return false;
+        return !(path.contains("/build/") || path.endsWith("/build") || path.contains("/node_modules/") || path.contains("/.gradle")
+                || path.contains("/.idea") || path.contains("/.git/") || path.contains("/out/"));
+    }
+
+    private final java.util.concurrent.atomic.AtomicBoolean computing = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** Computes the layout on a pooled thread (once at a time), then refreshes editor banners and generated markers. */
+    public void computeInBackground() {
+        if (!computing.compareAndSet(false, true)) return;
+        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                layout();
+            } finally {
+                computing.set(false);
+            }
+            if (!project.isDisposed()) com.intellij.ui.EditorNotifications.getInstance(project).updateAllNotifications();
         });
     }
 

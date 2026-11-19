@@ -83,6 +83,14 @@ public final class PlainText {
      * A short label for a Swing component that may render HTML (a status bar widget, a list cell): only letters, digits
      * and {@code . _ - + ( ) : / ;} and spaces survive, capped.
      */
+    /**
+     * A title IntelliJ may show in an HTML tooltip without escaping (task and progress titles, M1-SEC-8, M2-SEC-1):
+     * literal text on one line, with {@code <} and {@code >} as single guillemets so no tag can form.
+     */
+    public static String title(String s, int cap) {
+        return literal(s, cap).replace('\n', ' ').replace('\r', ' ').replace('<', '\u2039').replace('>', '\u203A');
+    }
+
     public static String label(String s, int cap) {
         if (s == null) return "";
         StringBuilder sb = new StringBuilder();

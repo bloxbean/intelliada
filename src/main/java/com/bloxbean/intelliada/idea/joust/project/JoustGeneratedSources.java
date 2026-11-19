@@ -32,15 +32,22 @@ public final class JoustGeneratedSources {
     public record JscTarget(Path jsc, int line, int column) {
     }
 
-    /** The {@code .jsc} position for a one-based line of a generated Java file, or {@code null}. */
+    /** As {@link #jscFor(JoustProjectLayout.SourceRoot, Path, Path, int)} for a Gradle module. */
     public static JscTarget jscFor(JoustProjectLayout.GradleModule module, Path realJava, int javaLine) {
-        if (module == null || realJava == null || !realJava.getFileName().toString().endsWith(".java")) return null;
-        Path jscRoot;
-        try {
-            jscRoot = module.jscRoot().toRealPath();
-        } catch (IOException e) {
-            return null;
-        }
+        if (module == null) return null;
+        return jscFor(new JoustProjectLayout.SourceRoot(module.dir(), module.jscRoot(), module.generatedRoot(), module, null),
+                module.dir(), realJava, javaLine);
+    }
+
+    /**
+     * The {@code .jsc} position for a one-based line of a generated Java file, or {@code null}. The Java must lie in the
+     * root's verified generated directory, and the {@code .jsc} in its verified contracts directory (I18, M2-CDX-9).
+     */
+    public static JscTarget jscFor(JoustProjectLayout.SourceRoot root, Path base, Path realJava, int javaLine) {
+        if (root == null || realJava == null || !realJava.getFileName().toString().endsWith(".java")) return null;
+        Path jscRoot = root.verifiedContracts(base);
+        Path generated = root.verifiedGenerated(base);
+        if (jscRoot == null || generated == null || !JoustRealPaths.isInside(realJava, generated)) return null;
         String name = realJava.getFileName().toString();
         Path map = realJava.resolveSibling(name.substring(0, name.length() - ".java".length()) + ".jscmap.json");
         JSONObject o;

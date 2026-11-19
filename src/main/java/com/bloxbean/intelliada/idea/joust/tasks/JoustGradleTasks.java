@@ -30,5 +30,13 @@ public interface JoustGradleTasks {
      * Runs {@code args} (qualified task names and their options, as a list) on the linked build, blocking until it ends.
      * The task is registered with {@link JoustTaskTracker}, so losing trust or closing the project cancels it.
      */
-    JoustAbiReview.Result run(Project project, Path rootDir, List<String> args, String title) throws InterruptedException;
+    JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) throws InterruptedException;
+
+    /**
+     * The module directory selected in the Gradle tool window (a project or module node), or null. Lets the JOUST
+     * actions appear there too (D7).
+     */
+    default Path selectedModuleDir(com.intellij.openapi.actionSystem.AnActionEvent e) {
+        return null;
+    }
 }

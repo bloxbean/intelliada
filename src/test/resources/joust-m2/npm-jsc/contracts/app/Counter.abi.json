@@ -1,0 +1,41 @@
+{
+  "abi": 2,
+  "contract": "app.Counter",
+  "source": "Counter.jsc",
+  "datum": { "name": "State", "constr": 0, "fields": [
+      { "name": "count", "type": "Int", "data": "int" },
+      { "name": "owner", "type": "Key", "data": "bytes28" }
+    ] },
+  "redeemers": {
+    "spend": [
+      { "name": "Increment", "constr": 0, "fields": [
+          { "name": "by", "type": "Int", "data": "int" }
+        ] },
+      { "name": "Reset", "constr": 1, "fields": [] },
+      { "name": "Close", "constr": 2, "fields": [
+          { "name": "ctx", "type": "Ctx", "data": "Ctx" }
+        ] }
+    ],
+    "mint": [
+      { "name": "CreateInstance", "constr": 0, "fields": [
+          { "name": "seed", "type": "TxOutRef", "data": "TxOutRef" },
+          { "name": "ctx", "type": "Ctx", "data": "Ctx" }
+        ] },
+      { "name": "BurnInstance", "constr": 1, "fields": [] }
+    ]
+  },
+  "types": {
+    "Ctx": { "kind": "api", "constructors": [{ "name": "Ctx", "constr": 0, "fields": [
+        { "name": "caller", "type": "Key", "data": "bytes28" },
+        { "name": "received", "type": "Int", "data": "int" },
+        { "name": "balance", "type": "Int", "data": "int" },
+        { "name": "validFrom", "type": "Int", "data": "int" },
+        { "name": "validTo", "type": "Int", "data": "int" }
+      ] }] },
+    "TxOutRef": { "kind": "ledger", "constructors": [{ "name": "TxOutRef", "constr": 0, "fields": [
+        { "name": "txId", "type": "Bytes", "data": "bytes" },
+        { "name": "index", "type": "Int", "data": "int" }
+      ] }] }
+  },
+  "timeFields": []
+}
