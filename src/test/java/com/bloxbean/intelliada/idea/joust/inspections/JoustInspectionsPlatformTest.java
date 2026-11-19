@@ -215,6 +215,86 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
                 """);
     }
 
+    public void testFiniteCheckGuardsOnlyItsOwnBoundAndUsesAfterIt() {
+        check("Fb2", """
+                @StateContract
+                public class Fb2 {
+                    static boolean oppositeBounds(Interval i, BigInteger t) {
+                        Require.that(i.from().boundType() instanceof IntervalBoundType.Finite, "lower bounded");
+                        return IntervalLib.finiteLowerBound(i).compareTo(t) <= 0
+                                && IntervalLib.<weak_warning descr="IntervalLib.finiteUpperBound returns -1 for an infinite bound; check IntervalBoundType.Finite before comparing it">finiteUpperBound</weak_warning>(i).compareTo(t) >= 0;
+                    }
+                    static boolean oppositeBoundsSwapped(Interval i, BigInteger t) {
+                        if (!(i.to().boundType() instanceof IntervalBoundType.Finite)) return false;
+                        BigInteger lo = IntervalLib.<weak_warning>finiteLowerBound</weak_warning>(i);
+                        return IntervalLib.finiteUpperBound(i).compareTo(t) >= 0 && lo.compareTo(t) <= 0;
+                    }
+                    static boolean anotherInterval(Interval i, Interval j, BigInteger t) {
+                        Require.that(j.to().boundType() instanceof IntervalBoundType.Finite, "j bounded");
+                        return IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
+                    }
+                    static boolean checkAfterTheUse(Interval i, BigInteger t) {
+                        boolean before = IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
+                        Require.that(i.to().boundType() instanceof IntervalBoundType.Finite, "late");
+                        return before;
+                    }
+                    static boolean checkInABranch(Interval i, BigInteger t, boolean strict) {
+                        if (strict) {
+                            Require.that(i.to().boundType() instanceof IntervalBoundType.Finite, "bounded");
+                        }
+                        return IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
+                    }
+                    static boolean notAFiniteCheck(Interval i, BigInteger t) {
+                        Object unused = new IntervalBoundType.Finite(t);
+                        return IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
+                    }
+                }
+                """);
+    }
+
+    public void testFiniteChecksThatGuardTheUse() {
+        check("Fb3", """
+                @StateContract
+                public class Fb3 {
+                    static boolean bothRequired(Interval i) {
+                        Require.that(i.from().boundType() instanceof IntervalBoundType.Finite
+                                && i.to().boundType() instanceof IntervalBoundType.Finite, "bounded");
+                        return IntervalLib.finiteLowerBound(i).compareTo(IntervalLib.finiteUpperBound(i)) <= 0;
+                    }
+                    static boolean ifGuard(Interval i, BigInteger t) {
+                        if (i.to().boundType() instanceof IntervalBoundType.Finite) {
+                            return IntervalLib.finiteUpperBound(i).compareTo(t) < 0;
+                        }
+                        return false;
+                    }
+                    static boolean andGuard(Interval i, BigInteger t) {
+                        return i.from().boundType() instanceof IntervalBoundType.Finite f
+                                && IntervalLib.finiteLowerBound(i).compareTo(t) <= 0;
+                    }
+                    static boolean throughLocals(org.julclang.ledger.Interval range, BigInteger t) {
+                        Interval i = range;
+                        org.julclang.ledger.IntervalBound hi = i.to();
+                        var type = hi.boundType();
+                        Require.that(type instanceof IntervalBoundType.Finite, "bounded");
+                        BigInteger upper = IntervalLib.finiteUpperBound(range);
+                        return upper.compareTo(t) < 0;
+                    }
+                    static boolean switched(Interval i, BigInteger t) {
+                        return switch (i.to().boundType()) {
+                            case IntervalBoundType.Finite f -> IntervalLib.finiteUpperBound(i).compareTo(t) < 0;
+                            default -> false;
+                        };
+                    }
+                    static boolean recordPattern(Interval i, BigInteger t) {
+                        if (!(i instanceof Interval(var lo, org.julclang.ledger.IntervalBound(IntervalBoundType.Finite f, var inc)))) {
+                            return false;
+                        }
+                        return IntervalLib.finiteUpperBound(i).compareTo(t) < 0;
+                    }
+                }
+                """);
+    }
+
     // ---- scope: only inside a resolved @StateContract class
 
     public void testSilentOutsideAStateContract() {
@@ -300,6 +380,7 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
                     }
                 }
                 """);
+        assertCompilesAndResolves();
     }
 
     public void testQuickFixOnEqualsObjectsEqualsAndArraysEquals() {
@@ -334,10 +415,110 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
                     static boolean c(byte[] x, byte[] y) { return ByteStringLib.equals(x, y); }
                 }
                 """);
+        assertCompilesAndResolves();
     }
 
+    public void testQuickFixIsOfferedOnlyWhenBothOperandsAreByteArrays() {
+        myFixture.configureByText("NoFix.java", HEADER + """
+                @StateContract
+                public class NoFix {
+                    static boolean a(byte[] x, Object y) { return <warning descr="Objects.equals on byte[] compares references on the JVM and bytes on chain; use ByteStringLib.equals(a, b) (JuLC JULC0087)">Objects.equals(y, x)</warning>; }
+                    static boolean b(byte[] x, Object y) { return <warning descr="byte[].equals compares references on the JVM and bytes on chain; use ByteStringLib.equals(a, b) (JuLC JULC0087)">x.equals(y)</warning>; }
+                    static boolean c(byte[] x) { return <warning descr="byte[] == compares references on the JVM and bytes on chain; use ByteStringLib.equals(a, b) (JuLC JULC0086)">x == null</warning>; }
+                }
+                """);
+        myFixture.checkHighlighting(true, false, true);
+        for (String at : List.of("Objects.equals(y", "x.equals(y", "x == null")) {
+            myFixture.getEditor().getCaretModel().moveToOffset(myFixture.getFile().getText().indexOf(at) + 1);
+            assertEmpty("no fix at " + at, myFixture.filterAvailableIntentions(FIX));
+        }
+    }
+
+    public void testQuickFixUsesAnOnDemandImport() {
+        myFixture.configureByText("Fix3.java", """
+                import org.julclang.state.api.StateContract;
+                import org.julclang.stdlib.lib.*;
+
+                @StateContract
+                public class Fix3 {
+                    static boolean m(byte[] x, byte[] y) { return x =<caret>= y; }
+                }
+                """);
+        applyFix();
+        myFixture.checkResult("""
+                import org.julclang.state.api.StateContract;
+                import org.julclang.stdlib.lib.*;
+
+                @StateContract
+                public class Fix3 {
+                    static boolean m(byte[] x, byte[] y) { return ByteStringLib.equals(x, y); }
+                }
+                """);
+        assertCompilesAndResolves();
+    }
+
+    public void testQuickFixQualifiesWhenAnotherByteStringLibIsImported() {
+        myFixture.addFileToProject("other/ByteStringLib.java",
+                "package other; public class ByteStringLib { public static String name() { return \"other\"; } }");
+        myFixture.configureByText("Fix4.java", """
+                import org.julclang.state.api.StateContract;
+                import other.ByteStringLib;
+
+                @StateContract
+                public class Fix4 {
+                    static String n() { return ByteStringLib.name(); }
+                    static boolean m(byte[] x, byte[] y) { return x !<caret>= y; }
+                }
+                """);
+        applyFix();
+        myFixture.checkResult("""
+                import org.julclang.state.api.StateContract;
+                import other.ByteStringLib;
+
+                @StateContract
+                public class Fix4 {
+                    static String n() { return ByteStringLib.name(); }
+                    static boolean m(byte[] x, byte[] y) { return !org.julclang.stdlib.lib.ByteStringLib.equals(x, y); }
+                }
+                """);
+        assertCompilesAndResolves();
+    }
+
+    public void testQuickFixQualifiesWhenANestedByteStringLibShadowsIt() {
+        myFixture.configureByText("Fix5.java", """
+                import org.julclang.state.api.StateContract;
+                import java.util.Objects;
+
+                @StateContract
+                public class Fix5 {
+                    static class ByteStringLib {}
+                    static boolean m(byte[] x, byte[] y) { return Objects.equ<caret>als(x, y); }
+                }
+                """);
+        applyFix();
+        myFixture.checkResult("""
+                import org.julclang.state.api.StateContract;
+                import java.util.Objects;
+
+                @StateContract
+                public class Fix5 {
+                    static class ByteStringLib {}
+                    static boolean m(byte[] x, byte[] y) { return org.julclang.stdlib.lib.ByteStringLib.equals(x, y); }
+                }
+                """);
+        assertCompilesAndResolves();
+    }
+
+    /** The fixed file has no error highlighting: every call resolves and type-checks (no unresolved references). */
+    private void assertCompilesAndResolves() {
+        List<HighlightInfo> errors = myFixture.doHighlighting(HighlightSeverity.ERROR);
+        assertEmpty("errors after the fix: " + errors, errors);
+    }
+
+    private static final String FIX = "Replace with ByteStringLib.equals(a, b)";
+
     private void applyFix() {
-        IntentionAction fix = myFixture.findSingleIntention("Replace with ByteStringLib.equals(a, b)");
+        IntentionAction fix = myFixture.findSingleIntention(FIX);
         myFixture.launchAction(fix);
     }
 }
