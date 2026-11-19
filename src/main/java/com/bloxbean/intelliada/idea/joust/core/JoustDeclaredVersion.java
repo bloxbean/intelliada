@@ -35,7 +35,8 @@ public final class JoustDeclaredVersion {
         }
     }
 
-    private static final Pattern EXACT = Pattern.compile("[0-9][A-Za-z0-9._+-]{0,39}");
+    /** An exact semver version (npm's {@code semver.valid}): major.minor.patch, an optional pre-release and build. */
+    static final Pattern EXACT = Pattern.compile("v?(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?");
 
     /** The declared version for {@code realFile}, with its kind, or {@code null}. */
     public static Declared declared(Path realFile, Path baseReal) {
@@ -43,7 +44,7 @@ public final class JoustDeclaredVersion {
         if (found == null) return null;
         String spec = spec(found[0]);
         if (spec.isEmpty()) return null;
-        boolean exact = found[1].equals("gradle") || EXACT.matcher(spec).matches();
+        boolean exact = EXACT.matcher(spec.startsWith("=") ? spec.substring(1).trim() : spec).matches();
         return new Declared(spec, exact);
     }
 
@@ -54,7 +55,7 @@ public final class JoustDeclaredVersion {
             char c = s.charAt(i);
             if (Character.isLetterOrDigit(c) && c < 128 || "._+-^~*|= <>".indexOf(c) >= 0) sb.append(c);
         }
-        return PlainText.literal(sb.toString().trim(), 40);
+        return PlainText.clean(sb.toString().trim(), 40);
     }
 
     /** The declared version spec for {@code realFile}, or {@code null}. Both paths are real paths. */

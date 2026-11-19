@@ -46,6 +46,72 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
                 .collect(java.util.stream.Collectors.toSet());
     }
 
+    /**
+     * I1 over the whole interval (M1-CDX-10): a sentinel project is prepared, its trust state set, and JFR started
+     * <b>before</b> the project is loaded; then the project opens, a .jsc opens and the project is refreshed and indexed.
+     * In each trust state the only process the JVM starts is the user's joust-lsp, and no sentinel appears.
+     */
+    public void testProjectOpenInEachTrustState() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        String lsp = JoustTestTools.env("JOUST_LSP", getName());
+        if (node == null || lsp == null) return;
+        JoustToolsState state = JoustToolsState.getInstance();
+        saved = state.getState();
+        JoustToolsState.Data d = new JoustToolsState.Data();
+        d.nodePath = node;
+        d.joustLspPath = lsp;
+        state.loadState(d);
+        state.setValidatedNode(JoustToolValidator.identityOf(Path.of(node).toRealPath()), "test");
+        for (boolean trusted : new boolean[]{false, true}) {
+            Path dir = java.nio.file.Files.createTempDirectory("joust-open-" + trusted).toRealPath();
+            plant(dir);
+            com.intellij.ide.trustedProjects.TrustedProjects.setProjectTrusted(dir, trusted);
+            try (JoustProcessStarts starts = new JoustProcessStarts()) {
+                com.intellij.openapi.project.Project p = PlatformTestUtil.loadAndOpenProject(dir, getTestRootDisposable());
+                try {
+                    // T1: loading and indexing the project start nothing (M1-CDX-10).
+                    com.intellij.testFramework.IndexingTestUtil.waitUntilIndexesAreReady(p);
+                    PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+                    Thread.sleep(1500);
+                    assertEquals("trusted=" + trusted + ": started on load: " + starts.commands(), List.of(), starts.commands());
+                    assertEquals("the loaded project's effective trust", trusted, com.intellij.ide.trustedProjects.TrustedProjects.isProjectTrusted(p));
+                    VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(dir.resolve("contracts/app/Counter.jsc"));
+                    ApplicationManager.getApplication().invokeAndWait(() -> FileEditorManager.getInstance(p).openFile(vf, true));
+                    PlatformTestUtil.waitWithEventsDispatching("started", () -> JoustServerControl.status(p) == ServerStatus.started, 60);
+                    com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, LocalFileSystem.getInstance().refreshAndFindFileByNioFile(dir));
+                    com.intellij.testFramework.IndexingTestUtil.waitUntilIndexesAreReady(p);
+                    Thread.sleep(2000);
+                    java.util.List<String> commands = starts.commands();
+                    assertEquals("trusted=" + trusted + ": " + commands, 1, commands.size());
+                    assertTrue(commands.get(0), commands.get(0).contains("joust-lsp.js") && commands.get(0).contains("--stdio"));
+                    try (Stream<Path> s = Files.walk(dir)) {
+                        assertEquals("I1: nothing planted ran", List.of(), s.filter(x -> x.getFileName().toString().startsWith("SENTINEL")).toList());
+                    }
+                } finally {
+                    PlatformTestUtil.forceCloseProjectWithoutSaving(p);
+                    com.intellij.openapi.util.io.FileUtil.delete(dir);
+                }
+            }
+        }
+    }
+
+    private static void plant(Path base) throws Exception {
+        Path jsc = base.resolve("contracts/app/Counter.jsc");
+        Files.createDirectories(jsc.getParent());
+        Files.writeString(jsc, "jsc 1\npackage app\n\ncontract Counter {\n  state { count: Int }\n  init() {\n    return { count: 0 }\n  }\n}\n");
+        Files.writeString(base.resolve("joust.config.json"), "{\"contracts\":\"contracts\"}");
+        Files.writeString(base.resolve("package.json"), "{\"name\":\"p\",\"scripts\":{\"prepare\":\"touch SENTINEL-npm\",\"postinstall\":\"touch SENTINEL-npm\"},"
+                + "\"devDependencies\":{\"@julclang/joust\":\"0.1.0-pre2\"}}");
+        Path engine = Files.createDirectories(base.resolve("node_modules/@julclang/joust/engine"));
+        Files.writeString(base.resolve("node_modules/@julclang/joust/package.json"), "{\"name\":\"@julclang/joust\",\"version\":\"0.1.0-pre2\"}");
+        Files.writeString(engine.resolve("joust-toolchain.js"), "import('node:fs').then(f=>f.writeFileSync('" + base.resolve("SENTINEL-engine") + "','x'))\n");
+        Files.write(engine.resolve("joust-toolchain.js.wasm"), new byte[]{0, 'a', 's', 'm', 1, 0, 0, 0});
+        JoustTestFiles.executable(base.resolve("node_modules/.bin/joust-lsp"), "#!/bin/sh\ntouch '" + base.resolve("SENTINEL-bin") + "'\n");
+        JoustTestFiles.executable(base.resolve("node"), "#!/bin/sh\ntouch '" + base.resolve("SENTINEL-node") + "'\n");
+        JoustTestFiles.executable(base.resolve("gradlew"), "#!/bin/sh\ntouch '" + base.resolve("SENTINEL-gradle") + "'\n");
+        Files.writeString(base.resolve("build.gradle"), "new File('" + base.resolve("SENTINEL-gradle-script") + "').text = 'x'\n");
+    }
+
     public void testOpeningAJscStartsOnlyTheUsersServer() throws Exception {
         String node = JoustTestTools.env("JOUST_NODE", getName());
         String lsp = JoustTestTools.env("JOUST_LSP", getName());

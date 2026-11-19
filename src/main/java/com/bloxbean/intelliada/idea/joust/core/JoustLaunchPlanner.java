@@ -21,7 +21,7 @@ public final class JoustLaunchPlanner {
      * through the nearest <b>existing</b> ancestor's real path <b>before</b> anything is created, so a symlinked ancestor
      * into a project is refused without writing there; the created directory's real path is checked again.
      */
-    static Path verifiedStorage(Path storageDir, Collection<Path> forbiddenRoots, JoustPaths.Flavor flavor) {
+    public static Path verifiedStorage(Path storageDir, Collection<Path> forbiddenRoots, JoustPaths.Flavor flavor) {
         if (storageDir == null || !JoustPaths.isAbsolute(storageDir.toString(), flavor)) return null;
         Path p = storageDir.toAbsolutePath().normalize();
         Path existing = p;

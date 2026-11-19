@@ -23,13 +23,14 @@ public final class JoustWorkspaceFolders {
     public static List<Path> confine(List<Path> contentRootsReal, Path baseReal) {
         List<Path> inside = new ArrayList<>();
         for (Path r : contentRootsReal) {
-            if (r != null && !inside.contains(r) && JoustRealPaths.isInside(r, baseReal)) inside.add(r);
+            // Deduplicated by exact spelling: on Windows Path.equals folds case (M1-CDX-12).
+            if (r != null && inside.stream().noneMatch(x -> x.toString().equals(r.toString())) && JoustRealPaths.isInside(r, baseReal)) inside.add(r);
         }
         List<Path> top = new ArrayList<>();
         for (Path r : inside) {
             boolean nested = false;
             for (Path o : inside) {
-                if (!o.equals(r) && JoustRealPaths.isInside(r, o)) {
+                if (!o.toString().equals(r.toString()) && JoustRealPaths.isInside(r, o)) {
                     nested = true;
                     break;
                 }

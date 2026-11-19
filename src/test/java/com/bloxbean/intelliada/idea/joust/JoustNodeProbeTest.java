@@ -16,6 +16,12 @@ public class JoustNodeProbeTest {
     @Rule
     public TemporaryFolder tmp = new TemporaryFolder();
 
+    @org.junit.Before
+    public void unixOnly() {
+        // The fixtures are /bin/sh scripts (M1-CDX-20); the probe itself is platform-neutral.
+        org.junit.Assume.assumeFalse(JoustTestTools.windows());
+    }
+
     @Test
     public void answersAVersion() throws Exception {
         Path node = JoustTestFiles.executable(tmp.getRoot().toPath().resolve("ok/node"), "#!/bin/sh\necho v22.1.0\n");

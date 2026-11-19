@@ -27,6 +27,12 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
 
     @Override
     public @Nullable Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
+        check(project);
+        return Unit.INSTANCE;
+    }
+
+    /** The check itself, run when a project opens. */
+    public static void check(Project project) {
         JoustToolsState state = JoustToolsState.getInstance();
         String cli = state.getState().joustCliPath;
         if (cli != null && !cli.isBlank()) {
@@ -34,14 +40,14 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
             String c = conflict(new String[][]{{"joust", cli}}, JoustForbiddenRoots.of(project), JoustPaths.Flavor.current());
             if (c != null) JoustNotifications.show(project, "JOUST new-project wizard disabled", c, NotificationType.WARNING);
         }
-        if (!state.looksConfigured()) return Unit.INSTANCE;
+        if (!state.looksConfigured()) return;
         String problem = conflict(state.getState().nodePath, state.getState().joustLspPath, JoustForbiddenRoots.of(project),
                 JoustPaths.Flavor.current());
         if (problem != null) {
             JoustServerControl.stopAll("a configured JOUST tool is inside " + project.getName());
             JoustNotifications.show(project, "JOUST language server stopped", problem, NotificationType.WARNING);
         }
-        return Unit.INSTANCE;
+        return;
     }
 
     /**
@@ -56,12 +62,32 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
     public static String conflict(String nodePath, String lspPath, List<Path> roots, JoustPaths.Flavor flavor, boolean windowsLayout) {
         String n = conflictOf("Node", nodePath, null, roots, flavor);
         if (n != null) return n;
-        Path target = null;
-        if (lspPath != null && !lspPath.isBlank()) {
-            var r = JoustToolValidator.resolveJoustLsp(lspPath, List.of(), flavor, windowsLayout);
-            if (r.ok()) target = r.realPath();
+        String l = conflictOf("joust-lsp", lspPath, executionTarget(lspPath, windowsLayout), roots, flavor);
+        if (l != null) return l;
+        // The paths a running server was actually started with, whatever the configuration says now (M1-CDX-23).
+        for (Path launched : com.bloxbean.intelliada.idea.joust.lsp.JoustStreamConnectionProvider.launchedPaths()) {
+            String w = JoustToolValidator.locationProblem(launched, launched, roots, flavor);
+            if (w != null) return "a running JOUST server " + w;
         }
-        return conflictOf("joust-lsp", lspPath, target, roots, flavor);
+        return null;
+    }
+
+    /**
+     * The file that runs for a configured joust-lsp, found the way the launch finds it but without requiring its package
+     * to be valid: on Windows, the package layout beside the launcher; elsewhere, the selected path's real target.
+     */
+    static Path executionTarget(String lspPath, boolean windowsLayout) {
+        if (lspPath == null || lspPath.isBlank()) return null;
+        try {
+            Path selected = Path.of(lspPath.trim());
+            if (windowsLayout && JoustPaths.fileName(selected.toString()).equalsIgnoreCase("joust-lsp") && selected.getParent() != null) {
+                Path js = selected.getParent().resolve("node_modules").resolve("@julclang").resolve("joust").resolve("bin").resolve("joust-lsp.js");
+                return java.nio.file.Files.exists(js) ? js.toRealPath() : null;
+            }
+            return selected.toRealPath();
+        } catch (java.io.IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     static String conflict(String[][] tools, List<Path> roots, JoustPaths.Flavor flavor) {

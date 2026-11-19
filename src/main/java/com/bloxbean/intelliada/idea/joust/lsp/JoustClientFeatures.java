@@ -169,7 +169,11 @@ public class JoustClientFeatures extends LSPClientFeatures {
     static final class SafeProgressFeature extends LSPProgressFeature {
         @Override
         public String getProgressTaskTitle(String title) {
-            return PlainText.label(super.getProgressTaskTitle(PlainText.clean(title, PROGRESS_TEXT_CAP)), PROGRESS_TEXT_CAP);
+            // The status bar puts the title in a tooltip, which IntelliJ renders as HTML without escaping plain text
+            // (M1-SEC-8): angle brackets become their single-guillemet look-alikes, so List<T> reads List‹T› and no
+            // tag can form. Every other character is kept (r9 E6, M1-CDX-13).
+            return PlainText.literal(super.getProgressTaskTitle(PlainText.clean(title, PROGRESS_TEXT_CAP)), PROGRESS_TEXT_CAP)
+                    .replace('\n', ' ').replace('<', '\u2039').replace('>', '\u203A');
         }
 
         @Override
@@ -205,6 +209,20 @@ public class JoustClientFeatures extends LSPClientFeatures {
         caps.setLinkedEditingRangeProvider((Either<Boolean, org.eclipse.lsp4j.LinkedEditingRangeRegistrationOptions>) null);
         if (caps.getWorkspace() != null) caps.getWorkspace().setFileOperations(null);
         return caps;
+    }
+
+    /** For tests: every URI LSP4IJ asks this server's features to resolve (M1-CDX-24). */
+    private static volatile java.util.function.Consumer<String> uriLookups;
+
+    public static void setUriLookupRecorderForTests(java.util.function.Consumer<String> recorder) {
+        uriLookups = recorder;
+    }
+
+    @Override
+    public com.intellij.openapi.vfs.VirtualFile findFileByUri(String uri) {
+        var r = uriLookups;
+        if (r != null) r.accept(uri);
+        return super.findFileByUri(uri);
     }
 
     /** The cached {@code joust/status} belongs to one server's lifetime, however it was stopped (M1-CDX-15). */

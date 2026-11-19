@@ -84,10 +84,10 @@ function onMessage(m) {
       request('workspace/workspaceFolders', null, 'workspaceFolders-' + opens);
       notify('joust/status', { uri: m.params.textDocument.uri, compiler: '0.0.0-hostile', source: 'bundled', mode: 'advisory',
         state: 'ok', server: '<b>x</b>' });
-      // Unsolicited diagnostics for a document the client never opened (M1-CDX-24).
-      notify('textDocument/publishDiagnostics', { uri: targets.unopened, diagnostics: [{ range: range(0, 0, 0, 1), severity: 1,
+      // Unsolicited diagnostics for a document the client never opened (M1-CDX-24), once.
+      if (opens === 1) notify('textDocument/publishDiagnostics', { uri: targets.unopened, diagnostics: [{ range: range(0, 0, 0, 1), severity: 1,
         message: 'UNSOLICITED ' + img('unsolicited') }] });
-      notify('textDocument/publishDiagnostics', { uri: 'file:////evil-server/share/x.jsc', diagnostics: [{ range: range(0, 0, 0, 1),
+      if (opens === 1) notify('textDocument/publishDiagnostics', { uri: 'file:////evil-server/share/x.jsc', diagnostics: [{ range: range(0, 0, 0, 1),
         severity: 1, message: 'REMOTE' }] });
       notify('textDocument/publishDiagnostics', { uri: m.params.textDocument.uri, diagnostics: [{
         range: range(0, 0, 0, 3), severity: 1, code: 'JSC0502', source: '<b>src</b>' + img('source'),

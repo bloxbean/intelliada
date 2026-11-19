@@ -1,13 +1,15 @@
 package com.bloxbean.intelliada.idea.joust.lsp;
 
 import com.bloxbean.intelliada.idea.joust.core.PlainText;
-import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * ADR-004 I15, T6 (M1-SEC-1): the server's stdout, re-framed so that every JSON-RPC <b>error message</b> is escaped and
@@ -125,43 +127,81 @@ final class JoustSanitizingInput extends InputStream {
      * </ul>
      */
     static byte[] sanitize(byte[] body) {
-        JSONObject o;
+        return sanitize(body, JoustStrictJson.DEFAULT, MAX_BODY);
+    }
+
+    static byte[] sanitize(byte[] body, JoustStrictJson.Budget budget) {
+        return sanitize(body, budget, MAX_BODY);
+    }
+
+    /** As {@link #sanitize(byte[])}, with the rewritten body bounded by {@code maxOut} bytes (M1-CDX-31). */
+    @SuppressWarnings("unchecked")
+    static byte[] sanitize(byte[] body, JoustStrictJson.Budget budget, int maxOut) {
+        String text;
         try {
-            o = new JSONObject(new String(body, StandardCharsets.UTF_8));
-        } catch (RuntimeException e) {
+            // Strict UTF-8: malformed bytes end the stream instead of being replaced (M1-CDX-22).
+            text = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(body)).toString();
+        } catch (java.nio.charset.CharacterCodingException e) {
             return null;
         }
-        JSONObject error = o.optJSONObject("error");
-        if (error != null) {
-            Object m = error.opt("message");
-            error.put("message", PlainText.escape(PlainText.clean(m instanceof String str ? str : "", ERROR_CAP)));
-            error.remove("data");
-        } else if (o.has("error")) {
-            o.remove("error");
-            o.put("error", new JSONObject().put("code", -32603).put("message", "error"));
+        // One strict RFC 8259 object, nothing after it, read within the depth, container and value budgets
+        // (M1-CDX-22, M1-CDX-27): trailing commas, single quotes, unquoted names, NUL, duplicate members, deep or
+        // very wide frames all end the stream before a large tree exists.
+        Map<String, Object> o;
+        try {
+            Object v = JoustStrictJson.parse(text, budget);
+            if (!(v instanceof Map<?, ?> m)) return null;
+            o = (Map<String, Object>) m;
+        } catch (JoustStrictJson.Refused e) {
+            return null;
         }
-        Object method = o.opt("method");
-        if ("window/logMessage".equals(method) || "window/showMessage".equals(method) || "window/showMessageRequest".equals(method)) {
-            JSONObject params = o.optJSONObject("params");
-            if (params != null && params.opt("message") instanceof String m) params.put("message", PlainText.literal(m, MESSAGE_CAP));
+        Object error = o.get("error");
+        if (error instanceof Map<?, ?> em) {
+            Map<String, Object> e = (Map<String, Object>) em;
+            Object m = e.get("message");
+            e.put("message", PlainText.escape(PlainText.clean(m instanceof String str ? str : "", ERROR_CAP)));
+            e.remove("data");
+        } else if (error == JoustStrictJson.NULL) {
+            o.remove("error");   // "error": null is no error (M1-SEC-7)
+        } else if (o.containsKey("error")) {
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("code", new JoustStrictJson.Num("-32603"));
+            e.put("message", "error");
+            o.put("error", e);
+        }
+        Object method = o.get("method");
+        if (("window/logMessage".equals(method) || "window/showMessage".equals(method) || "window/showMessageRequest".equals(method))
+                && o.get("params") instanceof Map<?, ?> pm && pm.get("message") instanceof String m) {
+            // r9 E6: literal text; an <html> start is defused (M1-CDX-13).
+            ((Map<String, Object>) pm).put("message", PlainText.literal(m, MESSAGE_CAP));
         }
         literalCollapsedText(o, 0);
-        return o.toString().getBytes(StandardCharsets.UTF_8);
+        try {
+            return JoustStrictJson.writeUtf8(o, maxOut);
+        } catch (JoustStrictJson.Refused e) {
+            return null;
+        }
     }
 
     static final int MESSAGE_CAP = 4_000;
     static final int FOLD_CAP = 200;
 
+    @SuppressWarnings("unchecked")
     private static void literalCollapsedText(Object node, int depth) {
-        if (depth > 64) return;
-        if (node instanceof JSONObject obj) {
-            for (String k : obj.keySet()) {
-                Object v = obj.opt(k);
-                if (k.equals("collapsedText") && v instanceof String str) obj.put(k, PlainText.literal(str, FOLD_CAP));
-                else literalCollapsedText(v, depth + 1);
+        if (depth > 70) return;
+        if (node instanceof Map<?, ?> obj) {
+            for (var e : ((Map<String, Object>) obj).entrySet()) {
+                if (e.getKey().equals("collapsedText") && e.getValue() instanceof String str) {
+                    e.setValue(PlainText.literal(str, FOLD_CAP).replace('\n', ' '));
+                } else {
+                    literalCollapsedText(e.getValue(), depth + 1);
+                }
             }
-        } else if (node instanceof org.json.JSONArray arr) {
-            for (int i = 0; i < arr.length(); i++) literalCollapsedText(arr.opt(i), depth + 1);
+        } else if (node instanceof List<?> arr) {
+            for (Object x : arr) literalCollapsedText(x, depth + 1);
         }
     }
 

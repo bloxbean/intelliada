@@ -39,7 +39,8 @@ public class JoustNewPlannerTest {
     public void setUp() throws Exception {
         Assume.assumeTrue("Unix file system", File.separatorChar == '/');
         base = tmp.getRoot().toPath().toRealPath();
-        joust = JoustTestFiles.executable(base.resolve("tools/joust/bin/joust"), "#!/bin/sh\necho joust 0.1.0-pre2 native\n");
+        // A native executable stands in for the native joust: D4 now refuses scripts for every tool (M1-CDX-5).
+        joust = JoustTestTools.nodeBinary(base.resolve("tools/joust/bin/joust"));
         node = JoustTestTools.nodeBinary(base.resolve("tools/node/bin/node"));
         Path npmCli = JoustTestFiles.executable(base.resolve("tools/node/lib/node_modules/npm/bin/npm-cli.js"), "#!/bin/sh\n");
         Files.createSymbolicLink(base.resolve("tools/node/bin/npm"), npmCli);
@@ -95,7 +96,9 @@ public class JoustNewPlannerTest {
         JoustNewPlanner.Plan p = plan(JoustTemplate.GRADLE, JoustLanguage.JAVA, null, base.resolve("a"), unvalidated);
         assertFalse(p.ok());
         assertTrue(p.error(), p.error().contains("has not been validated"));
-        Files.writeString(joust, "#!/bin/sh\necho replaced\n");
+        // Replaced by another native executable: still refused, by identity.
+        Files.copy(Path.of(JoustTestTools.windows() ? "C:\\Windows\\System32\\hostname.exe" : "/bin/cat"), joust,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         p = plan(JoustTemplate.GRADLE, JoustLanguage.JAVA, null, base.resolve("b"), tools);
         assertFalse(p.ok());
         assertTrue(p.error(), p.error().contains("changed since it was validated"));
