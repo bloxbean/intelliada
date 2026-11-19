@@ -679,14 +679,15 @@ without changing it; none relaxes an invariant.
 |---|---|---|---|
 | E1 | D3a item 4, I18 | IntelliAda opens a server-named file only in a **text editor** (`FileEditorManager.openTextEditor`), never `OpenFileDescriptor.navigate()`, which hands native file types to their associated application. Binary, native and generated files are refused, and the real-path check runs again at the moment of opening | M1-CDX-1, M1-CDX-2 |
 | E2 | D3a item 7, I18, I25 | "Inside the project" is decided by **file identity** walking up from the real path, not by spelling. Remote, UNC and device URI forms are refused from the URI text before any file-system access | M1-CDX-3, M1-SEC-2 |
-| E3 | D3a, I15 | LSP4IJ shows the error message of a request it issued itself (folding, semantic tokens, …) as an HTML notification. IntelliAda therefore filters the server's stdout and escapes and caps every JSON-RPC error message before LSP4J reads it | M1-SEC-1 |
+| E3 | D3a, I15 | LSP4IJ shows the error message of a request it issued itself (folding, semantic tokens, …) as an HTML notification. IntelliAda therefore re-frames the server's stdout: headers are normalised (one `Content-Length`, a UTF-8 `Content-Type` at most), every body is parsed structurally and re-serialised as canonical UTF-8 JSON, error messages are escaped and capped, log and show messages and folding placeholders become literal text; anything that does not parse ends the stream | M1-SEC-1, M1-CDX-22 |
 | E4 | D3a item 1, I5 | The server's **editing capabilities** (completion, code actions, code lens, execute command, formatting, rename, document links, inlay hints, signature help) and **workspace file operations** are stripped from its initialize answer before LSP4IJ sees them, and IntelliAda declares no file operations. LSP4IJ would otherwise apply a `willRenameFiles` edit directly | M1-DES-1 |
 | E5 | D3 commands, I15 | **Show generated Java** opens the server's text as read-only **plain text**, not as a Java file, because Quick Documentation renders Javadoc as HTML | M1-SEC-4 |
 | E6 | D3a, I15 | Progress titles and messages, document-symbol names and the Ctrl+hover hint of a navigation target are cleaned, capped and escaped by IntelliAda | M1-CDX-13, M1-SEC-3 |
 | E7 | D3 commands | `joust/status` is taken from the server's **pushed** notification, not requested: joust-lsp uses the same method name for both, and LSP4J keeps one method table for both directions | implementation |
 | E8 | D3, D4 | Signatures crossing into LSP4J use plain `java.util.Map`, never Gson types (IntelliAda bundles its own Gson). A refused start gives LSP4IJ a fixed message with no paths; the details go in IntelliAda's escaped notification | implementation, M1-CDX-7 |
 | E9 | D1, D5, I4 | Restarts and stops keep the user's enablement: only a running server is restarted, and a stop for a temporary conflict never disables the server | M1-CDX-6, M1-DES-5 |
-| E10 | D4 | Node's real target must be a node binary (`node`, `node.exe`, `nodejs`); `npx`, `npm`, `corepack` and script shims are refused. The storage directory is resolved through its nearest existing ancestor's real path before anything is created | M1-CDX-4, M1-CDX-5 |
+| E10 | D4 | Node's real target must be a node binary (`node`, `node.exe`, `nodejs`) and not a script (`#!`); `npx`, `npm`, `corepack` and script shims are refused. The storage directory is resolved through its nearest existing ancestor's real path before anything is created. The project-open check tests joust-lsp's execution target, not only the selected launcher | M1-CDX-4, M1-CDX-5, M1-CDX-23 |
+| E11 | D3a item 7, I18 | Diagnostics are accepted only for a local `file:` document the server has open; an unsolicited or remote URI is dropped before any lookup. On Windows, where path equality folds case, an ancestor must spell the project base exactly | M1-CDX-24, M1-CDX-3 |
 
 LSP4IJ 0.10.0's `EditorFeatureManager` clears the inlay-hint cache on a pooled thread when a server starts or stops,
 which IntelliJ 2026.1 reports as a soft threading assertion. It is a defect of the pinned dependency, tracked for the
@@ -773,3 +774,4 @@ LSP4IJ upgrade (Q11).
   - **SEC-19:** T6 and I18 are scoped to surfaces IntelliAda renders; IntelliJ's console filters are accepted.
   - **SEC-20:** only the tooltip is escaped, and `getMessage` stays plain.
 - **r7** (2026-11-19, after M1 review round 1 on PR #19): §12 E1–E10 record implementation refinements; no decision changed.
+- **r8** (2026-11-19, after M1 review round 2): §12 E3, E10 refined; E11 added.
