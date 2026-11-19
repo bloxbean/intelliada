@@ -276,7 +276,15 @@ public final class JoustToolValidator {
         int sections = Short.toUnsignedInt(p.getShort(6));
         int optional = Short.toUnsignedInt(p.getShort(20));
         int characteristics = Short.toUnsignedInt(p.getShort(22));
-        return machine != 0 && sections >= 1 && optional > 0 && (characteristics & 0x2) != 0 && optional <= size - off - 24;
+        if (machine == 0 || sections < 1 || optional < 2 || (characteristics & 0x2) == 0) return false;
+        // The optional header is PE32 (0x10b) or PE32+ (0x20b), and the whole section table (40 bytes per section)
+        // follows it inside the file (M1-CDX-5).
+        java.nio.ByteBuffer m = read(ch, size, off + 24, 2);
+        if (m == null) return false;
+        int format = Short.toUnsignedInt(m.order(java.nio.ByteOrder.LITTLE_ENDIAN).getShort(0));
+        if (format != 0x10b && format != 0x20b) return false;
+        long tableEnd = off + 24 + optional + 40L * sections;
+        return tableEnd <= size;
     }
 
     /** True when the file is not a native executable (kept for callers that ask the opposite question). */

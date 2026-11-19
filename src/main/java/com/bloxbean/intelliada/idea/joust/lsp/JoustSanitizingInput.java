@@ -127,11 +127,16 @@ final class JoustSanitizingInput extends InputStream {
      * </ul>
      */
     static byte[] sanitize(byte[] body) {
-        return sanitize(body, JoustStrictJson.DEFAULT);
+        return sanitize(body, JoustStrictJson.DEFAULT, MAX_BODY);
     }
 
-    @SuppressWarnings("unchecked")
     static byte[] sanitize(byte[] body, JoustStrictJson.Budget budget) {
+        return sanitize(body, budget, MAX_BODY);
+    }
+
+    /** As {@link #sanitize(byte[])}, with the rewritten body bounded by {@code maxOut} bytes (M1-CDX-31). */
+    @SuppressWarnings("unchecked")
+    static byte[] sanitize(byte[] body, JoustStrictJson.Budget budget, int maxOut) {
         String text;
         try {
             // Strict UTF-8: malformed bytes end the stream instead of being replaced (M1-CDX-22).
@@ -174,7 +179,11 @@ final class JoustSanitizingInput extends InputStream {
             ((Map<String, Object>) pm).put("message", PlainText.literal(m, MESSAGE_CAP));
         }
         literalCollapsedText(o, 0);
-        return JoustStrictJson.write(o).getBytes(StandardCharsets.UTF_8);
+        try {
+            return JoustStrictJson.writeUtf8(o, maxOut);
+        } catch (JoustStrictJson.Refused e) {
+            return null;
+        }
     }
 
     static final int MESSAGE_CAP = 4_000;

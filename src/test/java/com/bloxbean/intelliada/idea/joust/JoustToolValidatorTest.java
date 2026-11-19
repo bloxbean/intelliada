@@ -203,6 +203,27 @@ public class JoustToolValidatorTest {
         mz[0x3F] = (byte) 0xFF;
         Files.write(f, mz);
         assertFalse(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
+        // A structurally complete PE32+ header with two sections: accepted on Windows; truncated inside its section
+        // table, refused (M1-CDX-5).
+        byte[] pe = new byte[0x40 + 24 + 240 + 80];
+        pe[0] = 'M'; pe[1] = 'Z'; pe[0x3C] = 0x40;
+        int o = 0x40;
+        pe[o] = 'P'; pe[o + 1] = 'E';
+        pe[o + 4] = 0x64; pe[o + 5] = (byte) 0x86;   // AMD64
+        pe[o + 6] = 2;                                // two sections
+        pe[o + 20] = (byte) 240;                      // optional header size
+        pe[o + 22] = 0x22;                            // executable image, large address aware
+        pe[o + 24] = 0x0b; pe[o + 25] = 0x02;         // PE32+
+        Files.write(f, pe);
+        assertTrue(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
+        assertFalse(JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.MAC));
+        Files.write(f, java.util.Arrays.copyOf(pe, pe.length - 1));
+        assertFalse("section table cut short", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
+        Files.write(f, java.util.Arrays.copyOf(pe, 0x40 + 24 + 240));
+        assertFalse("truncated right after the optional header", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
+        pe[o + 24] = 0x07;
+        Files.write(f, pe);
+        assertFalse("not a PE32/PE32+ optional header", JoustToolValidator.isNativeExecutable(f, JoustPaths.Flavor.WINDOWS));
         byte[] cafe = new byte[4096];
         cafe[0] = (byte) 0xCA; cafe[1] = (byte) 0xFE; cafe[2] = (byte) 0xBA; cafe[3] = (byte) 0xBE; cafe[7] = 65;
         Files.write(f, cafe);

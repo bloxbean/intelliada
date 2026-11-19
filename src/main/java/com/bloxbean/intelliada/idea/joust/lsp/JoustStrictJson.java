@@ -169,7 +169,7 @@ final class JoustStrictJson {
                     if (i + 4 > s.length()) throw new Refused("short unicode escape");
                     int cp = 0;
                     for (int k = 0; k < 4; k++) {
-                        int d = Character.digit(s.charAt(i + k), 16);
+                        int d = hex(s.charAt(i + k));   // ASCII HEXDIG only (RFC 8259 §7; M1-CDX-22)
                         if (d < 0) throw new Refused("bad unicode escape");
                         cp = cp * 16 + d;
                     }
@@ -179,6 +179,13 @@ final class JoustStrictJson {
                 default -> throw new Refused("bad escape");
             }
         }
+    }
+
+    private static int hex(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
     }
 
     private Num number() throws Refused {
@@ -233,6 +240,19 @@ final class JoustStrictJson {
         return sb.toString();
     }
 
+    /**
+     * Canonical JSON as UTF-8, refused when it would exceed {@code maxBytes} (M1-CDX-31). Valid surrogate pairs are
+     * written as themselves (four UTF-8 bytes), so the output is never much larger than the input.
+     */
+    static byte[] writeUtf8(Object v, int maxBytes) throws Refused {
+        String json = write(v);
+        // A char is at most 3 UTF-8 bytes: refuse early before encoding a string that cannot fit.
+        if ((long) json.length() > maxBytes) throw new Refused("rewritten frame too large");
+        byte[] out = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (out.length > maxBytes) throw new Refused("rewritten frame too large");
+        return out;
+    }
+
     @SuppressWarnings("unchecked")
     private static void write(Object v, StringBuilder sb) {
         if (v == NULL || v == null) {
@@ -266,6 +286,8 @@ final class JoustStrictJson {
         }
     }
 
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
+
     private static void quote(String s, StringBuilder sb) {
         sb.append('"');
         for (int k = 0; k < s.length(); k++) {
@@ -279,8 +301,13 @@ final class JoustStrictJson {
                 case '\b' -> sb.append("\\b");
                 case '\f' -> sb.append("\\f");
                 default -> {
-                    if (c < 0x20 || (c >= 0xD800 && c <= 0xDFFF)) sb.append(String.format("\\u%04x", (int) c));
-                    else sb.append(c);
+                    if (Character.isHighSurrogate(c) && k + 1 < s.length() && Character.isLowSurrogate(s.charAt(k + 1))) {
+                        sb.append(c).append(s.charAt(++k));   // a valid pair: written as itself
+                    } else if (c < 0x20 || Character.isSurrogate(c)) {
+                        sb.append("\\u").append(HEX[(c >> 12) & 15]).append(HEX[(c >> 8) & 15]).append(HEX[(c >> 4) & 15]).append(HEX[c & 15]);
+                    } else {
+                        sb.append(c);
+                    }
                 }
             }
         }

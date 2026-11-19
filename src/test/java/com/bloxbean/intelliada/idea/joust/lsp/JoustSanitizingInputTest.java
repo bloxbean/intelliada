@@ -140,6 +140,10 @@ public class JoustSanitizingInputTest {
         // Brackets inside single-quoted strings cannot skew the depth count: single quotes are refused (M1-CDX-27).
         assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":['" + "]".repeat(70) + "']}").getBytes(StandardCharsets.UTF_8)).size());
         assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{x:1}}").getBytes(StandardCharsets.UTF_8)).size());
+        // Unicode escapes take ASCII hex digits only: a fullwidth 'Ａ' ends the stream; the ASCII form is read (M1-CDX-22).
+        assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":\"\\u00\uFF21\uFF21\"}").getBytes(StandardCharsets.UTF_8)).size());
+        assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":\"\\u0\u0661AA\"}").getBytes(StandardCharsets.UTF_8)).size());
+        assertEquals(1, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":\"\\u00AA\"}").getBytes(StandardCharsets.UTF_8)).size());
         // A trailing comma is not JSON (M1-CDX-22).
         assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":1,}").getBytes(StandardCharsets.UTF_8)).size());
         assertEquals(0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":[1,]}").getBytes(StandardCharsets.UTF_8)).size());
@@ -199,5 +203,21 @@ public class JoustSanitizingInputTest {
         // The default budget refuses millions of tiny arrays before building them.
         String many = "{\"r\":[" + "[],".repeat(150_000) + "[]]}";
         assertNull(JoustSanitizingInput.sanitize(many.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** M1-CDX-31: supplementary characters round-trip as themselves, and the rewritten body is bounded. */
+    @Test
+    public void unicodeRoundTripsAndTheOutputIsBounded() throws Exception {
+        String emoji = "\uD83D\uDE00".repeat(100);
+        byte[] in = ("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":\"" + emoji + "\"}").getBytes(StandardCharsets.UTF_8);
+        byte[] out = JoustSanitizingInput.sanitize(in);
+        assertNotNull(out);
+        assertEquals("written as itself, no growth", in.length, out.length);
+        assertEquals(emoji, new JSONObject(new String(out, StandardCharsets.UTF_8)).getString("result"));
+        // A lone surrogate (from an escape) is escaped again, not written raw.
+        byte[] lone = JoustSanitizingInput.sanitize("{\"r\":\"\\uD800x\"}".getBytes(StandardCharsets.UTF_8));
+        assertEquals("{\"r\":\"\\ud800x\"}", new String(lone, StandardCharsets.UTF_8));
+        assertNotNull(JoustSanitizingInput.sanitize(in, JoustStrictJson.DEFAULT, in.length));
+        assertNull(JoustSanitizingInput.sanitize(in, JoustStrictJson.DEFAULT, in.length - 1));
     }
 }
