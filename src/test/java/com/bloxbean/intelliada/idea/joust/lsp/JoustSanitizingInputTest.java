@@ -72,11 +72,11 @@ public class JoustSanitizingInputTest {
     public void messagesAndFoldingPlaceholdersBecomeLiteral() throws Exception {
         var log = through(frame("{\"jsonrpc\":\"2.0\",\"method\":\"window/logMessage\",\"params\":{\"type\":3,\"message\":\"\\u001b[31m<html><b>x</b>\"}}")).get(0);
         String m = log.getJSONObject("params").getString("message");
-        assertFalse(m.contains("<") || m.contains("\u001b"));
+        assertEquals("the user's characters are kept; only controls go (M1-CDX-13)", "[31m<html><b>x</b>".replace("[31m", ""), m);
         var fold = through(frame("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":[{\"startLine\":0,\"endLine\":2,\"collapsedText\":\"<html><img src=x>"
                 + "z".repeat(1000) + "\"}]}")).get(0);
         String c = fold.getJSONArray("result").getJSONObject(0).getString("collapsedText");
-        assertFalse(c.contains("<"));
+        assertTrue("an <html> start is defused, the text kept", c.startsWith("\u200B<html><img src=x>"));
         assertTrue(c.length() <= 210);
     }
 
@@ -115,6 +115,45 @@ public class JoustSanitizingInputTest {
                 assertEquals("form " + i + " (duplicate keys, UTF-16) ends the stream", List.of(), got);
             }
         }
+    }
+
+    /** M1-CDX-22, M1-CDX-27, M1-SEC-7, through LSP4J's reader: nothing partial, malformed or too deep is delivered. */
+    @Test
+    public void strictBodiesThroughLsp4j() throws Exception {
+        String ok = "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":null}";
+        assertEquals(1, lsp4jRead(frame(ok).getBytes(StandardCharsets.UTF_8)).size());
+        assertEquals("trailing input", 0, lsp4jRead(frame(ok + "{\"id\":\"2\",\"error\":{\"code\":1,\"message\":\"<img>\"}}")
+                .getBytes(StandardCharsets.UTF_8)).size());
+        byte[] body = ("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"error\":{\"code\":1,\"message\":\"a\u00ff\"}}").getBytes(StandardCharsets.ISO_8859_1);
+        byte[] framed = concat(("Content-Length: " + body.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII), body);
+        assertEquals("malformed UTF-8", 0, lsp4jRead(framed).size());
+        String deep = "[".repeat(64) + "1" + "]".repeat(64);
+        assertEquals("depth 64 is allowed", 1, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":" + deep.substring(1, deep.length() - 1) + "}")
+                .getBytes(StandardCharsets.UTF_8)).size());
+        String deeper = "[".repeat(65) + "1" + "]".repeat(65);
+        assertEquals("depth 65 ends the stream", 0, lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":" + deeper + "}")
+                .getBytes(StandardCharsets.UTF_8)).size());
+        var nullError = lsp4jRead(frame("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{\"x\":1},\"error\":null}").getBytes(StandardCharsets.UTF_8));
+        assertEquals(1, nullError.size());
+        assertNull("error:null is no error", ((org.eclipse.lsp4j.jsonrpc.messages.ResponseMessage) nullError.get(0)).getError());
+    }
+
+    private static List<org.eclipse.lsp4j.jsonrpc.messages.Message> lsp4jRead(byte[] raw) {
+        var handler = new org.eclipse.lsp4j.jsonrpc.json.MessageJsonHandler(java.util.Map.of(), gson -> {});
+        List<org.eclipse.lsp4j.jsonrpc.messages.Message> got = new ArrayList<>();
+        try {
+            new org.eclipse.lsp4j.jsonrpc.json.StreamMessageProducer(new JoustSanitizingInput(new ByteArrayInputStream(raw)), handler).listen(got::add);
+        } catch (RuntimeException ignored) {
+            // judged by what was read
+        }
+        return got;
+    }
+
+    private static byte[] concat(byte[] a, byte[] b) {
+        byte[] r = new byte[a.length + b.length];
+        System.arraycopy(a, 0, r, 0, a.length);
+        System.arraycopy(b, 0, r, a.length, b.length);
+        return r;
     }
 
     @Test

@@ -125,9 +125,24 @@ final class JoustSanitizingInput extends InputStream {
      * </ul>
      */
     static byte[] sanitize(byte[] body) {
+        if (depthExceeds(body, MAX_DEPTH)) return null;
+        String text;
+        try {
+            // Strict UTF-8: malformed bytes end the stream instead of being replaced (M1-CDX-22).
+            text = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(body)).toString();
+        } catch (java.nio.charset.CharacterCodingException e) {
+            return null;
+        }
         JSONObject o;
         try {
-            o = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            org.json.JSONTokener t = new org.json.JSONTokener(text);
+            Object v = t.nextValue();
+            // One object, and nothing after it: org.json stops at the closing brace, LSP4J would read on (M1-CDX-22).
+            if (!(v instanceof JSONObject obj) || t.nextClean() != 0) return null;
+            o = obj;
         } catch (RuntimeException e) {
             return null;
         }
@@ -136,6 +151,8 @@ final class JoustSanitizingInput extends InputStream {
             Object m = error.opt("message");
             error.put("message", PlainText.escape(PlainText.clean(m instanceof String str ? str : "", ERROR_CAP)));
             error.remove("data");
+        } else if (o.has("error") && o.isNull("error")) {
+            o.remove("error");   // "error": null is no error (M1-SEC-7)
         } else if (o.has("error")) {
             o.remove("error");
             o.put("error", new JSONObject().put("code", -32603).put("message", "error"));
@@ -143,13 +160,35 @@ final class JoustSanitizingInput extends InputStream {
         Object method = o.opt("method");
         if ("window/logMessage".equals(method) || "window/showMessage".equals(method) || "window/showMessageRequest".equals(method)) {
             JSONObject params = o.optJSONObject("params");
-            if (params != null && params.opt("message") instanceof String m) params.put("message", PlainText.literal(m, MESSAGE_CAP));
+            if (params != null && params.opt("message") instanceof String m) params.put("message", PlainText.clean(m, MESSAGE_CAP));
         }
         literalCollapsedText(o, 0);
         return o.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     static final int MESSAGE_CAP = 4_000;
+    /** Nesting deeper than this ends the stream; checked on the bytes, before any tree is built (M1-CDX-27). */
+    static final int MAX_DEPTH = 64;
+
+    /** True when objects and arrays nest deeper than {@code max}, outside strings. */
+    static boolean depthExceeds(byte[] body, int max) {
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (byte b : body) {
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (b == '\\') escaped = true;
+                else if (b == '"') inString = false;
+                continue;
+            }
+            if (b == '"') inString = true;
+            else if (b == '{' || b == '[') {
+                if (++depth > max) return true;
+            } else if (b == '}' || b == ']') depth--;
+        }
+        return false;
+    }
     static final int FOLD_CAP = 200;
 
     private static void literalCollapsedText(Object node, int depth) {
@@ -157,7 +196,7 @@ final class JoustSanitizingInput extends InputStream {
         if (node instanceof JSONObject obj) {
             for (String k : obj.keySet()) {
                 Object v = obj.opt(k);
-                if (k.equals("collapsedText") && v instanceof String str) obj.put(k, PlainText.literal(str, FOLD_CAP));
+                if (k.equals("collapsedText") && v instanceof String str) obj.put(k, PlainText.literal(str, FOLD_CAP).replace('\n', ' '));
                 else literalCollapsedText(v, depth + 1);
             }
         } else if (node instanceof org.json.JSONArray arr) {

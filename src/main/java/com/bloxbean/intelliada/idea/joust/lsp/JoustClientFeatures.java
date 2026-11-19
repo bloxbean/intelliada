@@ -207,6 +207,20 @@ public class JoustClientFeatures extends LSPClientFeatures {
         return caps;
     }
 
+    /** For tests: every URI LSP4IJ asks this server's features to resolve (M1-CDX-24). */
+    private static volatile java.util.function.Consumer<String> uriLookups;
+
+    public static void setUriLookupRecorderForTests(java.util.function.Consumer<String> recorder) {
+        uriLookups = recorder;
+    }
+
+    @Override
+    public com.intellij.openapi.vfs.VirtualFile findFileByUri(String uri) {
+        var r = uriLookups;
+        if (r != null) r.accept(uri);
+        return super.findFileByUri(uri);
+    }
+
     /** The cached {@code joust/status} belongs to one server's lifetime, however it was stopped (M1-CDX-15). */
     @Override
     public void handleServerStatusChanged(com.redhat.devtools.lsp4ij.ServerStatus status) {

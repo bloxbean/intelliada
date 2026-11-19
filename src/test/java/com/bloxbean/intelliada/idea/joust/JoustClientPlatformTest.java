@@ -48,13 +48,16 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
     private Path base;
     private Path inside;
     private Path outside;
+    private Path outsideDir;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
         base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
         inside = Files.writeString(Files.createDirectories(base.resolve("contracts/app")).resolve("Counter.jsc"), "jsc 1\n");
-        outside = Files.writeString(Files.createTempFile("joust-outside", ".jsc"), "secret");
+        // A private directory: never the JVM's whole temp directory as a content root (M1-CDX-26).
+        outsideDir = Files.createTempDirectory("joust-outside");
+        outside = Files.writeString(outsideDir.resolve("outside.jsc"), "secret");
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside);
     }
 
@@ -69,7 +72,7 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
                     // already closed
                 }
             }
-            Files.deleteIfExists(outside);
+            com.intellij.openapi.util.io.FileUtil.delete(outsideDir);
         } finally {
             super.tearDown();
         }

@@ -36,6 +36,27 @@ public final class JoustStatusCache {
 
     public JoustStatusCache(Project project) {
         this.project = project;
+        // A declaration changes when a build file or package.json does (M1-CDX-15).
+        project.getMessageBus().connect().subscribe(com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES,
+                new com.intellij.openapi.vfs.newvfs.BulkFileListener() {
+                    @Override
+                    public void after(java.util.List<? extends com.intellij.openapi.vfs.newvfs.events.VFileEvent> events) {
+                        for (var e : events) {
+                            String path = e.getPath();
+                            String name = path.substring(path.lastIndexOf('/') + 1);
+                            if (name.equals("package.json") || name.startsWith("build.gradle") || name.startsWith("settings.gradle")) {
+                                invalidateDeclarations();
+                                return;
+                            }
+                        }
+                    }
+                });
+    }
+
+    /** Forgets every cached declaration and refreshes the widget. */
+    public void invalidateDeclarations() {
+        declared.clear();
+        refresh();
     }
 
     public static JoustStatusCache getInstance(Project project) {

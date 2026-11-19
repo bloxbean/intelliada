@@ -61,10 +61,7 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         JButton detectNode = new JButton("Detect…");
         JButton revalidate = new JButton("Validate Node Again");
         revalidate.setToolTipText("Record the Node at this path again, after it was upgraded in place");
-        revalidate.addActionListener(e -> {
-            pendingRevalidation = true;
-            status.setText(PlainText.html("Node will be checked again when you click Apply."));
-        });
+        revalidate.addActionListener(e -> requestRevalidation());
         detectNode.addActionListener(e -> detectNode());
         JButton detectLsp = new JButton("Detect…");
         detectLsp.addActionListener(e -> detectLsp());
@@ -98,6 +95,12 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         return panel;
     }
 
+    /** Validate Node Again: Apply records Node again even with its path, size and mtime unchanged (M1-CDX-14). */
+    public void requestRevalidation() {
+        pendingRevalidation = true;
+        if (status != null) status.setText(PlainText.html("Node will be checked again when you click Apply."));
+    }
+
     @Override
     public boolean isModified() {
         JoustToolsState.Data d = JoustToolsState.getInstance().getState();
@@ -115,6 +118,7 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
             state.getState().joustLspPath = "";
             state.setValidatedNode(null, null);
             state.getState().joustVersion = null;
+            pendingRevalidation = false;
             JoustServerControl.restartAll("JOUST tools were cleared");
             reset();
             return;
@@ -132,6 +136,7 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
 
     @Override
     public void reset() {
+        pendingRevalidation = false;
         if (nodeField == null) return;
         JoustToolsState.Data d = JoustToolsState.getInstance().getState();
         nodeField.setText(nz(d.nodePath));
@@ -161,8 +166,11 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         try {
             // The identity is taken before the probe and checked after it: what was run is what is recorded (M1-DES-9).
             Object[] r = ProgressManager.getInstance().runProcessWithProgressSynchronously(() -> {
+                var ind = ProgressManager.getInstance().getProgressIndicator();
                 NodeIdentity before = JoustToolValidator.identityOf(n.realPath());
-                String v = NodeVersionProbe.probe(n.realPath());
+                ProgressManager.checkCanceled();
+                String v = NodeVersionProbe.probe(n.realPath(), () -> ind != null && ind.isCanceled());
+                ProgressManager.checkCanceled();
                 NodeIdentity after = JoustToolValidator.identityOf(n.realPath());
                 if (!before.equals(after)) throw new IOException("Node changed while it was being checked");
                 return new Object[]{v, after};

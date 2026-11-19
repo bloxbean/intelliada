@@ -154,6 +154,15 @@ public class JoustToolValidatorTest {
         assertEquals("nothing was run", probes, com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe.invocations());
     }
 
+    /** M1-CDX-5: an executable text file without a shebang (the JDK would run it through /bin/sh) is refused. */
+    @Test
+    public void aTextFileNamedNodeIsRefused() throws Exception {
+        int probes = com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe.invocations();
+        Path text = JoustTestFiles.executable(tools.resolve("plain/node"), "touch /tmp/should-not-run\n");
+        assertFalse(JoustToolValidator.checkNode(text.toString(), roots, flavor).ok());
+        assertEquals(probes, com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe.invocations());
+    }
+
     @Test
     public void nodeMajor() {
         assertEquals(22, JoustToolValidator.nodeMajor("v22.12.0"));

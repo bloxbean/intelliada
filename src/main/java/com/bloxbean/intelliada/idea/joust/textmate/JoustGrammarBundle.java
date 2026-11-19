@@ -47,9 +47,21 @@ public final class JoustGrammarBundle {
 
     /** The bundle directory, created or refreshed as needed, with every file verified. */
     public static synchronized Path extracted() throws IOException {
+        return extracted(Path.of(PathManager.getSystemPath()),
+                com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.ofOpenProjects());
+    }
+
+    /**
+     * As {@link #extracted()}, under {@code systemDir}. The destination is resolved through its real ancestors and must
+     * lie outside every open project before anything is written (M1-CDX-28, I21).
+     */
+    public static synchronized Path extracted(Path systemDir, java.util.Collection<Path> forbiddenRoots) throws IOException {
         Map<String, String> rec = record();
         String tag = rec.getOrDefault("tag", "unknown").replaceAll("[^A-Za-z0-9._-]", "_");
-        Path dir = Path.of(PathManager.getSystemPath(), "intelliada", "joust-textmate", tag);
+        Path dir = com.bloxbean.intelliada.idea.joust.core.JoustLaunchPlanner.verifiedStorage(
+                systemDir.resolve("intelliada").resolve("joust-textmate").resolve(tag), forbiddenRoots,
+                com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current());
+        if (dir == null) throw new IOException("the TextMate bundle directory would be inside an open project");
         for (String f : FILES) {
             byte[] bytes = resource(f);
             String expected = rec.get(f);

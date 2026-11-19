@@ -76,6 +76,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
     private JoustProcessStarts processStarts;
     private Path tmp;
     private Path unopened;
+    private Path lspJs;
 
     @Override
     protected void setUp() throws Exception {
@@ -83,12 +84,13 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
         processStarts = new JoustProcessStarts();
         tmp = Files.createTempDirectory("joust-hostile").toRealPath();
+        com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess.allowRootAccess(getTestRootDisposable(), tmp.toString());
         prefix = tmp.resolve("prefix");
         Path pkg = Files.createDirectories(prefix.resolve("lib/node_modules/@julclang/joust/bin"));
         Files.write(pkg.getParent().resolve("package.json"), resource("fake-joust-lsp/package.json"));
         JoustTestFiles.executable(pkg.resolve("joust-lsp.js"), new String(resource("fake-joust-lsp/bin/joust-lsp.js"), StandardCharsets.UTF_8));
-        Files.createDirectories(prefix.resolve("bin"));
-        Files.createSymbolicLink(prefix.resolve("bin/joust-lsp"), pkg.resolve("joust-lsp.js"));
+        // The package's own entry point is selected directly: portable, no npm shim (M1-CDX-20).
+        lspJs = pkg.resolve("joust-lsp.js");
         log = pkg.getParent().resolve("log.jsonl");
 
         loopback = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -106,7 +108,8 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         Files.createDirectories(base.resolve("libs/mod2"));
         outside = Files.writeString(tmp.resolve("outside.jsc"), "secret\n");
         Files.deleteIfExists(base.resolve("mod1/contracts/Link.jsc"));
-        Path symlink = Files.createSymbolicLink(base.resolve("mod1/contracts/Link.jsc"), outside);
+        Path symlink = JoustTestTools.windows() ? base.resolve("mod1/contracts/Link.jsc")
+                : Files.createSymbolicLink(base.resolve("mod1/contracts/Link.jsc"), outside);
         Path external = Files.createDirectories(tmp.resolve("external-module"));
         // A file whose name is markup (not a valid Windows name: plain there, M1-CDX-20).
         Path markupName = base.resolve(JoustTestTools.windows() ? "mod1/contracts/Bmarkup.jsc" : "mod1/contracts/<b>B<img src=http:127.0.0.1:9>.jsc");
@@ -149,6 +152,8 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
             if (loopback != null) loopback.stop(0);
             for (VirtualFile r : addedRoots) PsiTestUtil.removeContentEntry(getModule(), r);
             if (processStarts != null) processStarts.close();
+            com.bloxbean.intelliada.idea.joust.lsp.JoustClientFeatures.setUriLookupRecorderForTests(null);
+            if (tmp != null) com.intellij.openapi.util.io.FileUtil.delete(tmp);
         } finally {
             super.tearDown();
         }
@@ -162,7 +167,9 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
             System.out.println("JOUST-SKIPPED " + getName() + ": Unix layout");
             return;
         }
-        configure(node, prefix.resolve("bin/joust-lsp").toString());
+        configure(node, lspJs.toString());
+        List<String> lookups = new CopyOnWriteArrayList<>();
+        com.bloxbean.intelliada.idea.joust.lsp.JoustClientFeatures.setUriLookupRecorderForTests(lookups::add);
         Set<Long> before = descendants();
         List<String> before1 = listing(base);
 
@@ -278,6 +285,9 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
             assertFalse(n.getContent(), n.getContent().contains("<img") || n.getContent().contains("<a "));
             assertTrue(n.getContent().length() < 4000);
         }
+        // The user sees exactly what the server wrote, as text (M1-CDX-13).
+        String shownMessage = "boom <img src=\"http://127.0.0.1:" + loopback.getAddress().getPort() + "/message\"> <a href=\"file:///etc/passwd\">open</a>";
+        assertTrue(notifications.stream().anyMatch(n -> n.getContent().equals(com.bloxbean.intelliada.idea.joust.core.PlainText.fragment(shownMessage, 2_000))));
 
         // --- a progress message that starts with <html> is literal (M1-DES-7)
         var ind = new com.intellij.openapi.progress.util.ProgressIndicatorBase();
@@ -285,7 +295,8 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         begin.setTitle("t");
         begin.setMessage("<html><img src=\"http://127.0.0.1:" + loopback.getAddress().getPort() + "/p\">");
         features.getProgressFeature().onProgressBegin(begin, ind);
-        assertFalse(String.valueOf(ind.getText2()), String.valueOf(ind.getText2()).contains("<"));
+        // The text is kept as written; a zero-width space in front stops Swing taking it for HTML (M1-CDX-13, M1-DES-7).
+        assertEquals("\u200B" + begin.getMessage(), ind.getText2());
 
         // --- joust/status arrives through LSP4IJ, as labels (M1-DES-12)
         var status = com.bloxbean.intelliada.idea.joust.lsp.JoustStatusCache.getInstance(getProject()).forUri(inside.toUri().toString())
@@ -297,13 +308,19 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         assertFalse(status.server().contains("<"));
 
         // --- the user-visible actions (M1-CDX-11): navigate, choose a row, open documentation, render hover
-        for (PsiElement t : targets) {
+        // Each choice lands on its own file at its own offset; the second target is a different file (M1-CDX-11).
+        for (int i = targets.length - 1; i >= 0; i--) {
+            PsiElement t = targets[i];
             ApplicationManager.getApplication().invokeAndWait(() -> ((com.intellij.pom.Navigatable) t).navigate(true));
-            VirtualFile shownFile = FileEditorManager.getInstance(getProject()).getSelectedFiles()[0];
-            assertTrue(shownFile.getPath(), com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(shownFile.toNioPath().toRealPath(), base));
+            var editor = FileEditorManager.getInstance(getProject()).getSelectedTextEditor();
+            assertEquals(t.getContainingFile().getVirtualFile(), FileEditorManager.getInstance(getProject()).getSelectedFiles()[0]);
+            assertEquals(t.getTextOffset(), editor.getCaretModel().getOffset());
         }
-        for (var h : hits) {
+        for (int i = hits.size() - 1; i >= 0; i--) {
+            var h = hits.get(i);
             ApplicationManager.getApplication().invokeAndWait(() -> assertTrue(JoustFindReferencesAction.choose(getProject(), h)));
+            assertEquals(h.file(), FileEditorManager.getInstance(getProject()).getSelectedFiles()[0]);
+            assertEquals(h.offset(), FileEditorManager.getInstance(getProject()).getSelectedTextEditor().getCaretModel().getOffset());
         }
         List<String> browsed = new CopyOnWriteArrayList<>();
         com.intellij.testFramework.ServiceContainerUtil.replaceService(ApplicationManager.getApplication(), com.intellij.ide.browsers.BrowserLauncher.class,
@@ -350,15 +367,34 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         var regions = myFixture.getEditor().getFoldingModel().getAllFoldRegions();
         assertTrue("a folding region from the server; requests: " + received("textDocument/foldingRange").size(), regions.length > 0);
         for (var r : regions) {
-            assertFalse(r.getPlaceholderText(), r.getPlaceholderText().contains("<"));
+            assertTrue(r.getPlaceholderText(), r.getPlaceholderText().startsWith("\u200B<html><img"));
             assertTrue(r.getPlaceholderText().length() <= 210);
         }
 
 
-        // --- diagnostics for a document the server never had opened are dropped (M1-CDX-24)
-        myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(unopened));
-        Thread.sleep(1000);
-        assertTrue(myFixture.doHighlighting().stream().noneMatch(i -> i.getDescription() != null && i.getDescription().contains("UNSOLICITED")));
+        // --- a module removed during the session is no longer a folder (I25, M1-CDX-12)
+        VirtualFile mod3Vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(mod3);
+        PsiTestUtil.removeContentEntry(getModule(), mod3Vf);
+        addedRoots.remove(mod3Vf);
+        Path third = Files.writeString(base.resolve("mod1/contracts/Third.jsc"), "jsc 1\n");
+        String tag3 = "workspaceFolders-" + (received("textDocument/didOpen").size() + 1);
+        myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(third));
+        assertEquals(Set.of(base.resolve("mod1"), base.resolve("libs/mod2")), folders(waitForAnswers(tag3).get(tag3).getJSONArray("result")));
+        assertTrue(received("workspace/didChangeWorkspaceFolders").isEmpty());
+
+        // --- unsolicited and remote diagnostics never reach URI resolution (M1-CDX-24) ...
+        assertFalse("an unopened document was resolved: " + lookups, lookups.contains(unopened.toUri().toString()));
+        assertFalse(lookups.stream().anyMatch(u -> u.contains("evil-server")));
+        // ... while a connected local file outside the project still gets its (advisory) diagnostics.
+        myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(outside));
+        long end = System.currentTimeMillis() + 30_000;
+        boolean outsideDiag = false;
+        while (!outsideDiag && System.currentTimeMillis() < end) {
+            outsideDiag = myFixture.doHighlighting().stream().anyMatch(i -> i.getDescription() != null && i.getDescription().startsWith("List<T>"));
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(200);
+        }
+        assertTrue("diagnostics for a connected file outside the project", outsideDiag);
 
         // --- every process the JVM started during the test (JFR, M1-CDX-10)
         List<String> commands = processStarts.commands();
@@ -368,14 +404,14 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         // --- nothing anywhere fetched a URL (I15)
         Thread.sleep(500);
         assertEquals("loopback requests", 0, fetched.get());
-        assertEquals("the project's files are unchanged, apart from the module this test added (I21)", before1,
-                listing(base).stream().filter(e -> !e.startsWith("mod3")).toList());
+        assertEquals("the project's files are unchanged, apart from what this test added (I21)", before1,
+                listing(base).stream().filter(e -> !e.startsWith("mod3") && !e.startsWith("mod1/contracts/Third.jsc")).toList());
     }
 
     public void testRestartStopAndUserChoice() throws Exception {
         String node = JoustTestTools.env("JOUST_NODE", getName());
         if (node == null) return;
-        configure(node, prefix.resolve("bin/joust-lsp").toString());
+        configure(node, lspJs.toString());
         TrustedProjects.setProjectTrusted(getProject(), true);
         Set<Long> before = descendants();
         myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside));
@@ -392,9 +428,17 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         PlatformTestUtil.waitWithEventsDispatching("restarted again", () -> !ProcessHandle.of(second).map(ProcessHandle::isAlive).orElse(false), 30);
         waitStatus(ServerStatus.started);
 
-        // stopAll (a conflict) stops without disabling (M1-CDX-6, M1-DES-5).
-        JoustServerControl.stopAll("test");
-        waitStatus(ServerStatus.stopped);
+        // Opening a project that contains the running joust-lsp stops it, without disabling it (M1-CDX-23, M1-DES-5).
+        long running = newDescendant(before);
+        VirtualFile toolsRoot = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(lspJs.getParent().getParent());
+        PsiTestUtil.addContentRoot(getModule(), toolsRoot);
+        try {
+            com.bloxbean.intelliada.idea.joust.trust.JoustProjectOpenCheck.check(getProject());
+            waitStatus(ServerStatus.stopped);
+            PlatformTestUtil.waitWithEventsDispatching("the running PID exits", () -> !ProcessHandle.of(running).map(ProcessHandle::isAlive).orElse(false), 30);
+        } finally {
+            PsiTestUtil.removeContentEntry(getModule(), toolsRoot);
+        }
         assertTrue(LanguageServersRegistry.getInstance().getServerDefinition(JoustConstants.SERVER_ID).isEnabled(getProject()));
 
         // A server the user disabled stays down through a trust change (M1-CDX-6).
@@ -418,7 +462,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
     public void testClosingTheProjectStopsItsServer() throws Exception {
         String node = JoustTestTools.env("JOUST_NODE", getName());
         if (node == null) return;
-        configure(node, prefix.resolve("bin/joust-lsp").toString());
+        configure(node, lspJs.toString());
         Path dir = Files.createTempDirectory("joust-close").toRealPath();
         Path jsc = Files.createDirectories(dir.resolve("contracts")).resolve("Counter.jsc");
         Files.writeString(jsc, "jsc 1\n");
@@ -441,7 +485,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
     public void testARefusedStartShowsOnlyEscapedText() throws Exception {
         String node = JoustTestTools.env("JOUST_NODE", getName());
         if (node == null) return;
-        configure(node, prefix.resolve("bin/joust-lsp").toString());
+        configure(node, lspJs.toString());
         JoustToolsState.getInstance().getState().joustLspPath = "/nonexistent/<b>evil</b>/joust-lsp";
         Set<Long> before = descendants();
         myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside));
@@ -485,11 +529,25 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         Files.createDirectories(copy.getParent());
         Files.copy(Path.of(node).toRealPath(), copy);
         copy.toFile().setExecutable(true);
-        configure(copy.toString(), prefix.resolve("bin/joust-lsp").toString());
+        configure(copy.toString(), lspJs.toString());
         var configurable = new com.bloxbean.intelliada.idea.joust.settings.JoustToolsConfigurable();
         ApplicationManager.getApplication().invokeAndWait(() -> {
             configurable.createComponent();
             configurable.reset();
+            assertFalse(configurable.isModified());
+        });
+        // Validate Node Again with nothing changed on disk: Apply is offered; Reset withdraws it (M1-CDX-14).
+        ApplicationManager.getApplication().invokeAndWait(() -> {
+            configurable.requestRevalidation();
+            assertTrue(configurable.isModified());
+            configurable.reset();
+            assertFalse(configurable.isModified());
+            configurable.requestRevalidation();
+            try {
+                configurable.apply();
+            } catch (com.intellij.openapi.options.ConfigurationException e) {
+                throw new AssertionError(e);
+            }
             assertFalse(configurable.isModified());
         });
         Files.setLastModifiedTime(copy, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 5_000));

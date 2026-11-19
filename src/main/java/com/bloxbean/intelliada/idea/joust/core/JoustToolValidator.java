@@ -62,7 +62,7 @@ public final class JoustToolValidator {
         }
         if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) return Result.fail(selected, "Node must be a file: " + real);
         if (!Files.isExecutable(real)) return Result.fail(selected, "Node is not executable: " + real);
-        if (JoustPaths.hasRefusedExtension(real.toString()) || isScript(real)) {
+        if (JoustPaths.hasRefusedExtension(real.toString()) || !isNativeExecutable(real)) {
             return Result.fail(selected, "Node resolves to a script, not the node binary: " + real
                     + " (a version-manager or npm shim chooses what it runs; select the installed binary).");
         }
@@ -136,14 +136,29 @@ public final class JoustToolValidator {
         return new Result(selected, real, null);
     }
 
-    /** True when the file starts with {@code #!}: a script, never a Node binary (M1-CDX-5). */
-    static boolean isScript(Path real) {
+    /**
+     * True only for a native executable: ELF, Mach-O (thin or universal) or PE. A script, with or without {@code #!},
+     * is never a Node binary: the JDK would run a shebang-less text file through {@code /bin/sh} (M1-CDX-5).
+     */
+    static boolean isNativeExecutable(Path real) {
+        byte[] h;
         try (InputStream in = Files.newInputStream(real)) {
-            byte[] head = in.readNBytes(2);
-            return head.length == 2 && head[0] == '#' && head[1] == '!';
+            h = in.readNBytes(4);
         } catch (IOException e) {
-            return true;
+            return false;
         }
+        if (h.length < 2) return false;
+        if (h[0] == 'M' && h[1] == 'Z') return true;
+        if (h.length < 4) return false;
+        int be = ((h[0] & 0xff) << 24) | ((h[1] & 0xff) << 16) | ((h[2] & 0xff) << 8) | (h[3] & 0xff);
+        return be == 0x7F454C46                                         // ELF
+                || be == 0xFEEDFACE || be == 0xFEEDFACF || be == 0xCEFAEDFE || be == 0xCFFAEDFE   // Mach-O
+                || be == 0xCAFEBABE || be == 0xBEBAFECA;                 // universal Mach-O
+    }
+
+    /** True when the file is not a native executable (kept for callers that ask the opposite question). */
+    static boolean isScript(Path real) {
+        return !isNativeExecutable(real);
     }
 
     /** The {@code @julclang/joust} version, read as text from the package.json beside the package; never by running it. */

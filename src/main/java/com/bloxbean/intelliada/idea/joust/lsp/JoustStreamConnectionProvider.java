@@ -30,6 +30,13 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
     /** Tests observe every command line IntelliAda launches here (I1, I3). */
     private static volatile Consumer<List<String>> launchRecorder;
 
+    private static final java.util.Set<Path> LAUNCHED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** The Node and joust-lsp real paths servers were started with in this session (the project-open check uses them). */
+    public static java.util.Set<Path> launchedPaths() {
+        return java.util.Set.copyOf(LAUNCHED);
+    }
+
     /** For tests: receives each command line just before it is started; {@code null} to stop. */
     public static void setLaunchRecorderForTests(Consumer<List<String>> recorder) {
         launchRecorder = recorder;
@@ -68,6 +75,8 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
         setIncludeSystemEnvironmentVariables(true);
         Consumer<List<String>> rec = launchRecorder;
         if (rec != null) rec.accept(launch.command());
+        LAUNCHED.add(Path.of(launch.command().get(0)));
+        LAUNCHED.add(Path.of(launch.command().get(1)));
         try {
             super.start();
         } catch (RuntimeException e) {
