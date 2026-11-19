@@ -818,7 +818,7 @@ public class JoustAbiTest {
         assertEquals("My Contracts", JoustAbi.npmDiffArgs("org.acme.Counter", "My Contracts", Path.of("/tmp/x")).get(4));
         assertEquals("My Contracts", JoustAbi.npmAcceptArgs(d, "My Contracts").get(2));
         assertEquals(".", JoustAbi.npmAcceptArgs(d, ".").get(2));
-        for (String bad : new String[]{"../x", "a/../b", "-x", "/abs", "C:\\x", "", "a//b", "a\nb"}) {
+        for (String bad : new String[]{"../x", "a/../b", "-x", "/abs", "C:\\x", "", "a//b", "a\nb", "a\u0085b", "a\u202Eb", "a\u200Bb"}) {
             try {
                 JoustAbi.npmAcceptArgs(d, bad);
                 fail(bad);

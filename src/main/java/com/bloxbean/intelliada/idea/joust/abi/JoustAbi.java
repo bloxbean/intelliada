@@ -119,7 +119,8 @@ public final class JoustAbi {
      */
     static String requireSrc(String src) throws AbiException {
         if (src == null || src.isEmpty() || src.length() > 1000 || src.startsWith("-") || src.startsWith("/") || src.startsWith("\\")
-                || src.matches("^[A-Za-z]:.*") || src.chars().anyMatch(c -> c < 0x20 || c == 0x7f)) {
+                || src.matches("^[A-Za-z]:.*")
+                || src.codePoints().anyMatch(c -> Character.isISOControl(c) || Character.getType(c) == Character.FORMAT)) {   // M2-SEC-7
             throw new AbiException("not a contracts directory: " + src);
         }
         for (String seg : src.split("[/\\\\]", -1)) {
