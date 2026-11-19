@@ -71,6 +71,9 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
     protected void setUp() throws Exception {
         super.setUp();
         base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
+        try (var old = Files.list(base)) {
+            for (Path p : old.toList()) com.intellij.openapi.util.io.FileUtil.delete(p);   // the light project's directory is shared
+        }
         Path src = Path.of(getClass().getClassLoader().getResource("joust-m2/SOURCE.txt").toURI()).getParent().resolve("gradle-jsc");
         copy(src, base);
         web = Files.createDirectories(base.resolve("web"));

@@ -38,6 +38,9 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
     protected void setUp() throws Exception {
         super.setUp();
         base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
+        try (var old = Files.list(base)) {
+            for (Path p : old.toList()) com.intellij.openapi.util.io.FileUtil.delete(p);   // the light project's directory is shared
+        }
         Path src = Path.of(getClass().getClassLoader().getResource("joust-m2/SOURCE.txt").toURI()).getParent().resolve("gradle-jsc");
         for (Path dst : new Path[]{base, base.resolve("other")}) {
             try (var s = Files.walk(src)) {
@@ -125,11 +128,13 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
     public void testTheFailingModuleIsNamed() throws Exception {
         var listener = new JoustAbiFailureListener();
         var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
-        feed(listener, id, "> Task :other:generateJsc FAILED\n" + log());
+        // The recorded log names the root's task; this run is the other module's.
+        String other = log().lines().filter(l -> l.contains("error[JSC0002]")).findFirst().orElseThrow();
+        feed(listener, id, "> Task :other:generateJsc FAILED\n" + other + "\nExecution failed for task ':other:generateJsc'.\n");
         listener.onEnd(id);
         waitForTitles(1);
         assertEquals(titles.toString(), 1, titles.size());
-        assertTrue(titles.get(0), titles.get(0).startsWith("ABI change in Counter") && titles.get(0).contains(" in other."));
+        assertTrue(titles.get(0), titles.get(0).startsWith("ABI change in Counter") && titles.get(0).contains("Counter in other changed"));
     }
 
     /** M2-DES-5: the same source in two modules with no failed task in the output: named, with no action. */
