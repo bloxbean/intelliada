@@ -18,6 +18,8 @@
     <depends>com.intellij.modules.lang</depends>
     <!-- JOUST .jsc highlighting (ADR-004 D2): optional, so .jsc stays plain text with diagnostics when TextMate is absent -->
     <depends optional="true" config-file="intelliada-textmate.xml">org.jetbrains.plugins.textmate</depends>
+    <!-- JOUST M2: wizard (ADR-004 D9): links the Gradle build it created; optional, the wizard works without Gradle -->
+    <depends optional="true" config-file="intelliada-gradle.xml">com.intellij.gradle</depends>
 
     <extensions defaultExtensionNs="com.intellij">
 
@@ -198,6 +200,9 @@
                                 implementation="com.bloxbean.intelliada.idea.joust.lsp.JoustStatusBarWidgetFactory"/>
         <colorSettingsPage implementation="com.bloxbean.intelliada.idea.joust.highlight.JoustColorSettingsPage"/>
         <postStartupActivity implementation="com.bloxbean.intelliada.idea.joust.trust.JoustProjectOpenCheck"/>
+
+        <!-- JOUST M2: wizard (ADR-004 D9): File | New | Project… | JOUST runs the user's native joust new -->
+        <moduleBuilder builderClass="com.bloxbean.intelliada.idea.joust.wizard.JoustModuleBuilder"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">

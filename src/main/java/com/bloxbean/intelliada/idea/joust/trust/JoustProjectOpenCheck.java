@@ -19,13 +19,22 @@ import java.util.List;
 
 /**
  * ADR-004 D4: when a project opens whose roots contain a configured tool path (or its real target), the JOUST servers
- * stop and the user is told. Nothing is executed: this is the text and real-path check only.
+ * stop and the user is told. Nothing is executed: this is the text and real-path check only. The native {@code joust} of
+ * D9 gets the same check, and the user is told that the wizard will not run it.
  */
 public final class JoustProjectOpenCheck implements ProjectActivity {
 
     @Override
     public @Nullable Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
         JoustToolsState state = JoustToolsState.getInstance();
+        String cli = state.getState().joustCliPath;
+        if (cli != null && !cli.isBlank()) {
+            // ADR-004 D9: the native joust is held to D4's rule too; the wizard refuses it while this project is open.
+            var c = JoustToolValidator.checkExecutable(cli, "joust", JoustForbiddenRoots.of(project), JoustPaths.Flavor.current());
+            if (!c.ok() && c.error() != null && (c.error().contains("inside an open project") || c.error().contains("node_modules/.bin"))) {
+                JoustNotifications.show(project, "JOUST new-project wizard disabled", c.error(), NotificationType.WARNING);
+            }
+        }
         if (!state.looksConfigured()) return Unit.INSTANCE;
         List<Path> roots = JoustForbiddenRoots.of(project);
         JoustPaths.Flavor flavor = JoustPaths.Flavor.current();

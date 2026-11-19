@@ -46,20 +46,33 @@ public final class JoustToolValidator {
      * and neither the selected path nor its real target inside a forbidden root or under {@code node_modules/.bin}.
      */
     public static Result checkNode(String configured, Collection<Path> forbiddenRoots, JoustPaths.Flavor flavor) {
-        Result base = checkAbsolute(configured, flavor, "Node");
+        return checkExecutable(configured, "Node", forbiddenRoots, flavor);
+    }
+
+    /**
+     * D4's rule for any user-installed executable named by absolute path (the Node binary; the native {@code joust} of
+     * D9): an absolute path, not a {@code .cmd/.bat/.ps1} shim (selected or real), an existing executable regular file,
+     * and neither the selected path nor its real target inside a forbidden root or under {@code node_modules/.bin}.
+     * Executes nothing.
+     */
+    public static Result checkExecutable(String configured, String what, Collection<Path> forbiddenRoots, JoustPaths.Flavor flavor) {
+        Result base = checkAbsolute(configured, flavor, what);
         if (!base.ok()) return base;
         Path selected = base.selected();
-        if (!Files.exists(selected)) return Result.fail(selected, "Node was not found at " + selected + ".");
+        if (!Files.exists(selected)) return Result.fail(selected, what + " was not found at " + selected + ".");
         Path real;
         try {
             real = selected.toRealPath();
         } catch (IOException e) {
-            return Result.fail(selected, "Node's real path could not be resolved: " + e.getMessage());
+            return Result.fail(selected, what + "'s real path could not be resolved: " + e.getMessage());
         }
-        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) return Result.fail(selected, "Node must be a file: " + real);
-        if (!Files.isExecutable(real)) return Result.fail(selected, "Node is not executable: " + real);
+        if (JoustPaths.hasRefusedExtension(real.toString())) {
+            return Result.fail(selected, what + " resolves to a script shim, which is never run: " + real);
+        }
+        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) return Result.fail(selected, what + " must be a file: " + real);
+        if (!Files.isExecutable(real)) return Result.fail(selected, what + " is not executable: " + real);
         String where = locationProblem(selected, real, forbiddenRoots, flavor);
-        if (where != null) return Result.fail(selected, "Node " + where);
+        if (where != null) return Result.fail(selected, what + " " + where);
         return new Result(selected, real, null);
     }
 
