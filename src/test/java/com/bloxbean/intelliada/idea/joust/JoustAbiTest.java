@@ -827,4 +827,15 @@ public class JoustAbiTest {
             }
         }
     }
+
+    /** M2-DES-11: the real acceptJscAbi success output is evidence; the real refusal is not. */
+    @Test
+    public void theRecordedGradleOutputsClassifyCorrectly() throws Exception {
+        String accepted = JoustM2Fixtures.text("acceptJscAbi-accepted.log");
+        String refused = JoustM2Fixtures.text("acceptJscAbi-refused.log");
+        assertTrue(JoustAbi.reportsAccepted(accepted, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
+        assertNull(JoustAbi.refusal(accepted, "org/acme/Counter.jsc", "org.acme.Counter"));
+        assertFalse(JoustAbi.reportsAccepted(refused, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
+        assertNotNull(JoustAbi.refusal(refused, "org/acme/Counter.jsc", "org.acme.Counter"));
+    }
 }
