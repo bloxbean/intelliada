@@ -78,6 +78,9 @@ public final class JoustNpmTasks {
             GeneralCommandLine cl = new GeneralCommandLine(cmd).withWorkDirectory(root.dir().toFile())
                     .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
             OSProcessHandler handler = new OSProcessHandler(cl);   // the process runs from here
+            // IntelliAda owns the tree cleanup: IntelliJ's recursive destruction tree-kills by PID without checking that the
+            // process still lives (M2-CDX-32), so the handler only ever destroys its own process.
+            handler.setShouldDestroyProcessRecursively(false);
             proc = handler.getProcess();
             launch = new Launch(handler);
             launch.sample();
@@ -210,6 +213,8 @@ public final class JoustNpmTasks {
         final java.util.Set<ProcessHandle> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
         /** Whether the latest listing of descendants, taken while the process lived, succeeded. */
         volatile boolean enumerated;
+        /** Whether the tree was frozen (SIGSTOP) and listed until stable while it lived: a complete listing (M2-CDX-3). */
+        volatile boolean frozen;
         /** Whether IntelliJ's own tree kill reported success. */
         volatile boolean treeKilled;
         /** Whether IntelliAda had to end it (cancellation, failure): only then must the tree be shown gone. */
@@ -271,10 +276,47 @@ public final class JoustNpmTasks {
      * Ends {@code p} and its whole tree by every means available: the descendants it lists now and the ones observed
      * while it ran (their own handles), IntelliJ's tree kill (which walks the tree with {@code ps}), then the process.
      */
+    /**
+     * POSIX only: stops the live tree (the process first, so it can start no child, then each descendant as it is
+     * found), re-listing until no new descendant appears, and records them. True when the tree was frozen and listed
+     * completely while the process lived. Each signal goes to a handle checked alive just before.
+     */
+    static boolean freezeAndList(Launch launch, Process p) {
+        if (com.intellij.openapi.util.SystemInfo.isWindows || !p.isAlive() || !signal("STOP", p.toHandle())) return false;
+        for (int round = 0; round < 16; round++) {
+            List<ProcessHandle> now = descendants(p);
+            if (now == null || !p.isAlive()) return false;
+            boolean added = false;
+            for (ProcessHandle h : now) {
+                if (launch.seen.add(h)) added = true;
+                signal("STOP", h);
+            }
+            if (!added) return true;   // stable: nothing new appeared while all were stopped
+        }
+        return false;
+    }
+
+    static boolean signal(String sig, ProcessHandle h) {
+        if (freezeFailsForTests || !h.isAlive()) return false;
+        try {
+            Process k = new ProcessBuilder("/bin/kill", "-" + sig, String.valueOf(h.pid())).redirectErrorStream(true).start();
+            return k.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && k.exitValue() == 0;
+        } catch (java.io.IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /** For tests: when true, the tree cannot be frozen. */
+    static volatile boolean freezeFailsForTests;
+
     static void destroyTree(Launch launch, Process p) {
         // Listing and IntelliJ's tree kill go by PID: only while the process itself lives (M2-CDX-32, M2-SEC-10). After
         // its exit, only the handles kept from the launch are acted on; they carry their start time.
         if (p.isAlive()) {
+            if (launch.killed && freezeAndList(launch, p)) launch.frozen = true;
             List<ProcessHandle> now = descendants(p);
             boolean stillAlive = p.isAlive();
             launch.enumerated = now != null && stillAlive;
@@ -302,7 +344,9 @@ public final class JoustNpmTasks {
      * lived or by IntelliJ's tree kill reporting success. An empty sample from a refused listing proves nothing.
      */
     static boolean treeGone(Launch launch) {
-        boolean known = !launch.killed || launch.enumerated || launch.treeKilled;
+        // For a run IntelliAda had to end, a snapshot is no proof (a child may start after it): only a frozen, stable
+        // listing or IntelliJ's tree kill reporting success knows the tree (M2-CDX-3).
+        boolean known = !launch.killed || launch.frozen || launch.treeKilled;
         return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty() && known;
     }
 
@@ -322,8 +366,15 @@ public final class JoustNpmTasks {
             release.run();
             return;
         }
-        // Only the handles kept from the launch are acted on now: never the dead parent's PID (M2-CDX-32, M2-SEC-10).
-        for (ProcessHandle d : launch.liveSeen()) d.destroyForcibly();
+        // Only the handles kept from the launch are acted on now: never the dead parent's PID (M2-CDX-32, M2-SEC-10). A run
+        // that ended normally is only observed; forcing is for runs IntelliAda had to end (M2-CDX-36).
+        List<ProcessHandle> live = launch.liveSeen();
+        if (launch.killed) for (ProcessHandle d : live) d.destroyForcibly();
+        if (!launch.handler.getProcess().isAlive() && live.isEmpty()) {
+            // Nothing is left to observe and the tree cannot become known: the run stays tracked, with nothing scheduled
+            // (M2-CDX-37).
+            return;
+        }
         long delay = attempt < MAX_TREE_KILL_RETRIES ? 200L << attempt : 30_000L;
         com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
                 .schedule(() -> releaseWhenTreeGone(launch, release, attempt + 1), delay, java.util.concurrent.TimeUnit.MILLISECONDS);

@@ -119,7 +119,10 @@ public final class JoustOutputCapture {
     /** Files one complete line where it belongs; {@code commit} false classifies into a copy (for a pending last line). */
     private void classify(String line, boolean beyondHead, boolean commit) {
         if (!commit) return;
-        if (failure(line) && failures.size() < MAX_FAILURES) failures.add(line);
+        // Only a line the pinned parser reads as a failure takes a slot (M2-CDX-24).
+        if (failure(line) && failures.size() < MAX_FAILURES && !com.bloxbean.intelliada.idea.joust.abi.JoustAbi.failures(line).isEmpty()) {
+            failures.add(line);
+        }
         if (watch != null && watch.test(line)) {
             if (firstRefusal == null && line.contains("error[JSC0002]")) firstRefusal = line;
             else if (watchedLines < MAX_WATCHED_LINES) {
@@ -153,7 +156,10 @@ public final class JoustOutputCapture {
         StringBuilder out = new StringBuilder();
         for (String f : failures) out.append(f).append('\n');
         for (Line line : streams.values()) {
-            if (!line.isEmpty() && failure(line.text()) && failures.size() < MAX_FAILURES) out.append(line.text()).append('\n');
+            if (!line.isEmpty() && failure(line.text()) && failures.size() < MAX_FAILURES
+                    && !com.bloxbean.intelliada.idea.joust.abi.JoustAbi.failures(line.text()).isEmpty()) {
+                out.append(line.text()).append('\n');
+            }
         }
         return out.toString();
     }

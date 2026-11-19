@@ -34,6 +34,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             JoustNpmTasks.killHookForTests = null;
             JoustNpmTasks.enumerationDeniedForTests = false;
             JoustNpmTasks.treeKillFailsForTests = false;
+            JoustNpmTasks.freezeFailsForTests = false;
             JoustTaskTracker.getInstance(getProject()).forgetAllForTests();
             JoustToolsState.getInstance().loadState(saved);
             TrustedProjects.setProjectTrusted(getProject(), true);
@@ -217,6 +218,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         if (node == null) return;
         JoustNpmTasks.enumerationDeniedForTests = true;
         JoustNpmTasks.treeKillFailsForTests = true;
+        JoustNpmTasks.freezeFailsForTests = true;
         var d = new JoustToolsState.Data();
         d.nodePath = node;
         JoustToolsState.getInstance().loadState(d);
@@ -271,5 +273,96 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         Thread.sleep(2_000);   // several release checks
         assertEquals("no tree kill by a dead parent's PID", before, JoustNpmTasks.treeKillCalls.get());
         assertFalse("its tree was never known: still tracked", released.get());
+    }
+
+    private JoustProjectLayout.NpmRoot npmRoot(String name, String cli) throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        var d = new JoustToolsState.Data();
+        d.nodePath = node;
+        JoustToolsState.getInstance().loadState(d);
+        JoustToolsState.getInstance().setValidatedNode(JoustToolValidator.identityOf(Path.of(node).toRealPath()), "test");
+        Path base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
+        Path web = Files.createDirectories(base.resolve(name));
+        Files.writeString(web.resolve("joust.config.json"), "{}");
+        Path bin = Files.createDirectories(web.resolve("node_modules/@julclang/joust/bin"));
+        Files.writeString(bin.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\"}");
+        Files.writeString(bin.resolve("joust.js"), cli);
+        return JoustProjectLayout.scan(base, com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current()).npmRoots().stream()
+                .filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+    }
+
+    private void await(java.util.concurrent.Future<?> f, long ms) throws Exception {
+        long end = System.currentTimeMillis() + ms;
+        while (!f.isDone() && System.currentTimeMillis() < end) {
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(50);
+        }
+        assertTrue(f.isDone());
+    }
+
+    /** M2-CDX-3: a CLI that keeps starting children: after loss of trust, every child it started is gone, and only then released. */
+    public void testChildrenStartedAfterTheSnapshotAreEndedToo() throws Exception {
+        if (JoustTestTools.env("JOUST_NODE", getName()) == null || com.intellij.openapi.util.SystemInfo.isWindows) return;
+        var root = npmRoot("web-spawner", "const { spawn } = require('child_process'); const fs = require('fs');\n"
+                + "fs.writeFileSync('pid', String(process.pid));\n"
+                + "setInterval(() => { const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' });"
+                + " fs.appendFileSync('children', c.pid + '\\n'); }, 50);\n");
+        Path web = root.dir();
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("test"), "test"));
+        long end = System.currentTimeMillis() + 20_000;
+        while ((!Files.exists(web.resolve("children")) || Files.readAllLines(web.resolve("children")).size() < 5) && System.currentTimeMillis() < end) {
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(50);
+        }
+        TrustedProjects.setProjectTrusted(getProject(), false);
+        await(result, 30_000);
+        end = System.currentTimeMillis() + 15_000;
+        while (JoustTaskTracker.getInstance(getProject()).runningCount() != 0 && System.currentTimeMillis() < end) Thread.sleep(50);
+        assertEquals("released", 0, JoustTaskTracker.getInstance(getProject()).runningCount());
+        for (String pid : Files.readAllLines(web.resolve("children"))) {
+            assertFalse("child " + pid + " outlived the cancellation", alive(Long.parseLong(pid.trim())));
+        }
+        assertFalse(alive(Long.parseLong(Files.readString(web.resolve("pid")).trim())));
+    }
+
+    /** M2-CDX-36: a run that ends normally does not kill a descendant finishing its own work; it waits for it. */
+    public void testANormalEndOnlyObservesDescendants() throws Exception {
+        if (JoustTestTools.env("JOUST_NODE", getName()) == null) return;
+        var root = npmRoot("web-helper", "const { spawn } = require('child_process');\n"
+                + "const c = spawn(process.execPath, ['-e', \"setTimeout(() => require('fs').writeFileSync('helper-done', 'x'), 1500)\"],"
+                + " { stdio: 'ignore', detached: false });\n"
+                + "require('fs').writeFileSync('helper', String(c.pid));\n"
+                + "setTimeout(() => process.exit(0), 300);\n");
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("build"), "build"));
+        await(result, 30_000);
+        assertTrue(result.get().ok());
+        long end = System.currentTimeMillis() + 10_000;
+        while (!Files.exists(root.dir().resolve("helper-done")) && System.currentTimeMillis() < end) Thread.sleep(50);
+        assertTrue("the helper finished its work: it was not killed", Files.exists(root.dir().resolve("helper-done")));
+        end = System.currentTimeMillis() + 10_000;
+        while (JoustTaskTracker.getInstance(getProject()).runningCount() != 0 && System.currentTimeMillis() < end) Thread.sleep(50);
+        assertEquals("released once it exited", 0, JoustTaskTracker.getInstance(getProject()).runningCount());
+    }
+
+    /** M2-CDX-32: IntelliAda's handler never destroys recursively (IntelliJ's recursive path tree-kills by PID). */
+    public void testTheHandlerDoesNotDestroyRecursively() throws Exception {
+        if (JoustTestTools.env("JOUST_NODE", getName()) == null) return;
+        var root = npmRoot("web-flag", "setTimeout(() => {}, 100);\n");
+        java.util.concurrent.atomic.AtomicReference<Boolean> recursive = new java.util.concurrent.atomic.AtomicReference<>();
+        JoustNpmTasks.setConsoleOpenerForTests(h -> {
+            try {
+                var m = OSProcessHandler.class.getDeclaredMethod("shouldDestroyProcessRecursively");
+                m.setAccessible(true);
+                recursive.set((Boolean) m.invoke(h));
+            } catch (ReflectiveOperationException e) {
+                throw new RuntimeException(e);
+            }
+        });
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("build"), "build"));
+        await(result, 30_000);
+        assertEquals(Boolean.FALSE, recursive.get());
     }
 }

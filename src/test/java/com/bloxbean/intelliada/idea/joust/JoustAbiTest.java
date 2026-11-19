@@ -1110,4 +1110,13 @@ public class JoustAbiTest {
         capture.append(JoustM2Fixtures.text("npm-build-JSC0002.log"), "stderr");
         assertEquals(1, JoustAbi.failures(capture.failures()).size());
     }
+
+    /** M2-CDX-24: lines that merely mention error[JSC0002] cannot use up the failure slots. */
+    @Test
+    public void unparseableMentionsDoNotUseFailureSlots() throws Exception {
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP);
+        capture.append("expected error[JSC0002] diagnostic\n".repeat(300), "stdout");
+        capture.append(JoustM2Fixtures.text("npm-build-JSC0002.log"), "stderr");
+        assertEquals(1, JoustAbi.failures(capture.failures()).size());
+    }
 }
