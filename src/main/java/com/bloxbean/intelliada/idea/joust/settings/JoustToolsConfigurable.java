@@ -10,6 +10,7 @@ import com.bloxbean.intelliada.idea.joust.lsp.JoustServerControl;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.options.SearchableConfigurable;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
@@ -229,23 +230,45 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         List<Path> roots = JoustForbiddenRoots.ofOpenProjects();
         JoustToolValidator.Result r = JoustToolValidator.checkExecutable(cli, "joust", roots, JoustPaths.Flavor.current());
         if (!r.ok()) throw new ConfigurationException(r.error(), "joust");
-        String line;
-        NodeIdentity id;
+        ProbedCli probed;
         try {
             // M2-CDX-11: a private directory under the IDE's own temporary directory, checked before it is created.
             Path tempBase = Path.of(com.intellij.openapi.application.PathManager.getTempPath());
-            line = ProgressManager.getInstance().runProcessWithProgressSynchronously(
-                    () -> JoustCliVersionProbe.probe(r.realPath(), tempBase, roots), "Checking joust", true, null);
-            id = JoustToolValidator.identityOf(r.realPath());
+            // M2-CDX-17: the identity (a SHA-256 of a binary that can be hundreds of MB) is taken in the same
+            // background task as the probe; only the result comes back to the EDT.
+            probed = ProgressManager.getInstance().runProcessWithProgressSynchronously(
+                    () -> probeCli(r.realPath(), tempBase, roots), "Checking joust", true, null);
         } catch (IOException e) {
             throw new ConfigurationException("joust could not be run: " + e.getMessage(), "joust");
         }
+        String line = probed.line();
+        NodeIdentity id = probed.identity();
         String version = JoustCliVersionProbe.versionOf(line);
         if (version == null) {
             throw new ConfigurationException(r.realPath() + " does not look like JOUST's native joust: it answered \""
                     + PlainText.label(line, 60) + "\".", "joust");
         }
         return new ValidatedCli(id, PlainText.label(version, 40));
+    }
+
+    /** What {@code joust version} answered, and the identity of the file that answered. */
+    record ProbedCli(String line, NodeIdentity identity) {
+    }
+
+    /**
+     * The background half of D9's Save-time validation (M2-CDX-17), never on the EDT: the identity is taken before the
+     * probe and checked after it, as for Node (M1-DES-9), so what was run is what is recorded; a file that changed in
+     * between is refused.
+     */
+    static ProbedCli probeCli(Path realJoust, Path tempBase, List<Path> roots) throws IOException {
+        ApplicationManager.getApplication().assertIsNonDispatchThread();
+        NodeIdentity before = JoustToolValidator.identityOf(realJoust);
+        ProgressManager.checkCanceled();
+        String line = JoustCliVersionProbe.probe(realJoust, tempBase, roots);
+        ProgressManager.checkCanceled();
+        NodeIdentity after = JoustToolValidator.identityOf(realJoust);
+        if (!before.equals(after)) throw new IOException("joust changed while it was being checked");
+        return new ProbedCli(line, after);
     }
 
     /** The Save-time validation: the only place besides Detect… that runs {@code node --version}. */
