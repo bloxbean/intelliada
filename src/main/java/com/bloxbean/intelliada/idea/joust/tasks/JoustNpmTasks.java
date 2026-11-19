@@ -229,8 +229,10 @@ public final class JoustNpmTasks {
                 if (!p.isAlive()) return;
                 List<ProcessHandle> now = descendants(p);
                 // The latest listing while it lived decides (M2-CDX-3): a refused one makes the tree unknown again.
-                enumerated = now != null && p.isAlive();
-                if (now != null) seen.addAll(now);
+                boolean stillAlive = p.isAlive();
+                enumerated = now != null && stillAlive;
+                // Kept only if the parent still lives after the listing: a listing racing its death proves nothing (M2-SEC-12).
+                if (now != null && stillAlive) seen.addAll(now);
                 seen.removeIf(h -> !h.isAlive());
             }, 0, 250, java.util.concurrent.TimeUnit.MILLISECONDS);
             p.onExit().thenRun(() -> {
