@@ -997,4 +997,31 @@ public class JoustAbiTest {
             assertNull(JoustAbi.refusal("org/acme/Counter.jsc:1:1: error[JSC0002]: not accepted: x", "org\\acme\\Counter.jsc"));
         }
     }
+
+    /** M2-CDX-6: an outcome is the pinned record right after the exact prefix; a note mentioning acceptance is not one. */
+    @Test
+    public void onlyThePinnedRecordIsAnOutcome() throws Exception {
+        String note = "org/acme/Counter.jsc: note: no task accepted the changed ABI manifest Counter.abi.json";
+        assertFalse(JoustAbi.reportsAccepted(note, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
+        assertTrue(JoustAbi.reportsAccepted(JoustM2Fixtures.text("acceptJscAbi-accepted.log"), "org/acme/Counter.jsc", "Counter.abi.json",
+                "src/main/jsc/org/acme/Counter.abi.json"));
+        // 64 such notes, then the recorded refusal, through the production capture with a watch: the refusal wins.
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64, line ->
+                JoustAbi.refusal(line, "org/acme/Counter.jsc", "org.acme.Counter") != null
+                        || JoustAbi.reportsAccepted(line, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
+        capture.append("y".repeat(10_000) + "\n" + (note + "\n").repeat(64) + JoustM2Fixtures.text("acceptJscAbi-accepted.log").repeat(100)
+                + JoustM2Fixtures.text("acceptJscAbi-refused.log"));
+        assertNotNull(JoustAbi.refusal(capture.toString(), "org/acme/Counter.jsc", "org.acme.Counter"));
+    }
+
+    /** M2-CDX-26: a leading space belongs to the directory name: " contracts" and "contracts" are distinct. */
+    @Test
+    public void aLeadingSpaceIsPartOfTheName() {
+        String plain = "contracts/app/Counter.abi.json: accepted the changed ABI manifest (a -> b)";
+        String spaced = " contracts/app/Counter.abi.json: accepted the changed ABI manifest (a -> b)";
+        assertTrue(JoustAbi.reportsAccepted(plain, "app/Counter.jsc", "Counter.abi.json", "contracts/app/Counter.abi.json"));
+        assertFalse(JoustAbi.reportsAccepted(plain, "app/Counter.jsc", "Counter.abi.json", " contracts/app/Counter.abi.json"));
+        assertTrue(JoustAbi.reportsAccepted(spaced, "app/Counter.jsc", "Counter.abi.json", " contracts/app/Counter.abi.json"));
+        assertFalse(JoustAbi.reportsAccepted(spaced, "app/Counter.jsc", "Counter.abi.json", "contracts/app/Counter.abi.json"));
+    }
 }

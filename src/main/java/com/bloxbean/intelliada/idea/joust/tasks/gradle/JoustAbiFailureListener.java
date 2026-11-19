@@ -249,7 +249,14 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             // a source no longer there names the failing module without an action (M2-CDX-13).
             if (gradle != null && !owners.isEmpty()) {
                 List<JoustProjectLayout.SourceRoot> failed = new ArrayList<>();
-                List<String> unlinked = new ArrayList<>(unlinkedAll);
+                // Is the failing task's module itself linked, wherever its source is now? Then unlinked copies elsewhere are
+                // unrelated, and the reason is the missing source, not linking (M2-CDX-13).
+                boolean ownerLinked = false;
+                for (JoustProjectLayout.GradleModule m : layout.gradleModules()) {
+                    var l = gradle.linked(project, m.dir());
+                    if (l != null && owners.contains(l.gradlePath()) && sameBuild(l, buildRoot)) ownerLinked = true;
+                }
+                List<String> unlinked = ownerLinked ? List.of() : new ArrayList<>(unlinkedAll);
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());
                     if (linked != null && owners.contains(linked.gradlePath()) && sameBuild(linked, buildRoot)) failed.add(r);

@@ -76,6 +76,15 @@ public abstract class JoustProjectAction extends AnAction {
         new Task.Backgroundable(project, PlainText.title(getTemplateText(), 120), true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
+                try {
+                    runAction(indicator);
+                } finally {
+                    Runnable hook = finishedForTests;
+                    if (hook != null) hook.run();
+                }
+            }
+
+            private void runAction(ProgressIndicator indicator) {
                 if (!guard.live()) return;
                 // The context is resolved here, off the EDT (M2-CDX-17): it reads the layout and the linked build.
                 Ctx ctx = context(project, file, toolWindowDir);
@@ -91,6 +100,9 @@ public abstract class JoustProjectAction extends AnAction {
             }
         }.queue();
     }
+
+    /** For tests: runs when an invoked action's background work has finished, reporting included (M2-CDX-29). */
+    static volatile Runnable finishedForTests;
 
     abstract boolean applies(Ctx ctx);
 

@@ -100,6 +100,8 @@ public final class JoustNpmTasks {
                 if (!handler.waitFor(TIMEOUT_MS)) {
                     return new JoustAbiReview.Result(false, "joust did not finish within " + TIMEOUT_MS / 60000 + " minutes", false);
                 }
+                // The handler may have let go of a live child (detached): only the process's own exit counts (M2-CDX-3).
+                if (handler.getProcess().isAlive()) return new JoustAbiReview.Result(false, "", true);
                 ended = true;
                 if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
                 Integer code = handler.getExitCode();
@@ -195,13 +197,13 @@ public final class JoustNpmTasks {
      * Ends the process and its children, off the EDT: start-notified once (destruction waits for it), destroyed, awaited,
      * then forced; returns only when the process is gone or, after the bounded waits, as far as the OS lets it go.
      */
-    /** Returns true when the process was seen to exit. */
+    /** Returns true when the process itself was seen to exit (a detached handler is no proof, M2-CDX-3). */
     static boolean kill(Launch launch) {
         OSProcessHandler handler = launch.handler;
+        Process p = handler.getProcess();
         launch.ensureStarted();
         handler.destroyProcess();
-        if (handler.waitFor(10_000)) return true;
-        Process p = handler.getProcess();
+        if (handler.waitFor(10_000) && !p.isAlive()) return true;
         boolean interrupted = false;
         try {
             for (int attempt = 0; attempt < 6 && p.isAlive(); attempt++) {

@@ -177,13 +177,14 @@ public final class JoustAbi {
      */
     public static String refusal(String output, String jscRel, String contract) {
         if (output == null) return null;
-        String prefix = jscRel == null ? null : hostSlashed(jscRel) + ":";
-        String bound = contract == null ? null : "--accept-abi=" + contract + "@";
+        // Exactly the pinned forms, from the line's first character (M2-CDX-6, M2-CDX-26).
+        String prefix = jscRel == null ? null : hostSlashed(jscRel) + ":1:1: error[JSC0002]: not accepted: ";
+        String bound = contract == null ? null : "error[JSC0002]: --accept-abi=" + contract + "@";
         for (String line : (Iterable<String>) output.lines()::iterator) {
-            String l = line.strip();
+            String l = line.stripTrailing();
             String slashed = hostSlashed(l);
-            boolean hit = (prefix != null && slashed.startsWith(prefix) && l.contains(": error[JSC0002]: not accepted"))
-                    || (bound != null && l.contains("error[JSC0002]: " + bound) && l.endsWith("nothing accepted"));
+            boolean hit = (prefix != null && slashed.startsWith(prefix))
+                    || (bound != null && (l.startsWith(bound) || l.startsWith("jsc: " + bound)) && l.endsWith("nothing accepted"));
             if (hit) return l.length() > 1000 ? l.substring(0, 1000) : l;
         }
         return null;
@@ -200,14 +201,25 @@ public final class JoustAbi {
      */
     public static boolean reportsAccepted(String output, String jscRel, String manifestName, String manifestRelToRoot) {
         if (output == null) return false;
-        String src = jscRel == null ? null : hostSlashed(jscRel) + ": note: ";
-        String rel = manifestRelToRoot == null ? null : hostSlashed(manifestRelToRoot) + ": ";
+        // The outcome must follow the exact path prefix immediately, in the pinned producers' words (JscMain.java:167,179;
+        // abi.js:103,128): a note that merely mentions acceptance is not one (M2-CDX-6). Lines are compared from their
+        // first character: a leading space belongs to a name (M2-CDX-26).
+        List<String> prefixes = new ArrayList<>();
+        if (jscRel != null) {
+            String src = hostSlashed(jscRel) + ": note: ";
+            prefixes.add(src + "accepted the changed ABI manifest " + manifestName);
+            prefixes.add(src + "created the ABI manifest " + manifestName);
+        }
+        if (manifestRelToRoot != null) {
+            String rel = hostSlashed(manifestRelToRoot) + ": ";
+            prefixes.add(rel + "accepted the changed ABI manifest");
+            prefixes.add(rel + "created the ABI manifest");
+        }
         for (String line : (Iterable<String>) output.lines()::iterator) {
-            String l = hostSlashed(line.strip());
-            boolean says = l.contains("accepted the changed ABI manifest") || l.contains("created the ABI manifest");
-            if (!says) continue;
-            if (src != null && l.startsWith(src) && l.contains("ABI manifest " + manifestName)) return true;
-            if (rel != null && l.startsWith(rel)) return true;
+            String l = hostSlashed(line.stripTrailing());
+            for (String p : prefixes) {
+                if (l.startsWith(p) && (l.length() == p.length() || " (;".indexOf(l.charAt(p.length())) >= 0)) return true;
+            }
         }
         return false;
     }

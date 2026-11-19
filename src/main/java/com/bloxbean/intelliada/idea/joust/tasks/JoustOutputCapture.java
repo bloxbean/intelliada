@@ -24,6 +24,8 @@ public final class JoustOutputCapture {
     private final java.util.function.Predicate<String> watch;
     private final StringBuilder watched = new StringBuilder();
     private int watchedLines;
+    /** The first watched refusal, kept apart so no number of other records can displace it (M2-CDX-6). */
+    private String firstRefusal;
     static final int MAX_WATCHED_LINES = 64;
 
     public JoustOutputCapture(int cap) {
@@ -45,9 +47,12 @@ public final class JoustOutputCapture {
             if (c == '\n') {
                 if (!discarding) {
                     String line = partial.toString();
-                    if (watch != null && watchedLines < MAX_WATCHED_LINES && watch.test(line)) {
-                        watched.append(line).append('\n');
-                        watchedLines++;
+                    if (watch != null && watch.test(line)) {
+                        if (firstRefusal == null && line.contains("error[JSC0002]")) firstRefusal = line;
+                        else if (watchedLines < MAX_WATCHED_LINES) {
+                            watched.append(line).append('\n');
+                            watchedLines++;
+                        }
                     }
                     if (head.length() >= cap) keep(line, i >= take);
                 }
@@ -92,7 +97,8 @@ public final class JoustOutputCapture {
                 ? partial + "\n" : "";
         String last = !discarding && watch != null && !partial.isEmpty() && watchedLines < MAX_WATCHED_LINES && watch.test(partial.toString())
                 ? partial + "\n" : "";
-        return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() && watched.isEmpty() && last.isEmpty() ? head.toString()
-                : head + "\n" + extra + outcomes + tail + watched + last;
+        String refusal = firstRefusal == null ? "" : firstRefusal + "\n";
+        return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() && watched.isEmpty() && last.isEmpty() && refusal.isEmpty()
+                ? head.toString() : head + "\n" + extra + outcomes + tail + refusal + watched + last;
     }
 }

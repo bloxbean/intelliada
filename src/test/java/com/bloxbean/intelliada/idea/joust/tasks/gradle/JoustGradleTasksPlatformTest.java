@@ -475,4 +475,22 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         assertTrue(titles.get(0), titles.get(0).contains("Link the Gradle build first") && titles.get(0).contains("unlinked"));
         assertFalse(titles.get(0).contains("Build again"));
     }
+
+    /** M2-CDX-13: a linked failing module whose source is gone is named, with no link advice for an unrelated unlinked copy. */
+    public void testALinkedFailingModuleIsNotToldToLink() throws Exception {
+        JoustM2ActionsCopy.copy(Path.of(getClass().getClassLoader().getResource("joust-m2/SOURCE.txt").toURI()).getParent().resolve("gradle-jsc"),
+                base.resolve("unlinked"));
+        Files.delete(base.resolve("other/src/main/jsc/org/acme/Counter.jsc"));   // :other failed, then its source went away
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        listener.onStart(base.toString(), id);
+        feed(listener, id, "> Task :other:generateJsc\n" + log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains(":other") && titles.get(0).contains("not in the module now"));
+        assertFalse(titles.get(0).contains("Link the Gradle build"));
+    }
 }

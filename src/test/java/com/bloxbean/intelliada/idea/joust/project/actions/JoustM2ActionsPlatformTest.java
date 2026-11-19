@@ -496,21 +496,29 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
                         shown.add(n.getTitle() + " | " + n.getContent());
                     }
                 });
+        java.util.concurrent.atomic.AtomicBoolean revoked = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicBoolean finished = new java.util.concurrent.atomic.AtomicBoolean();
         JoustNpmTasks.setConsoleOpenerForTests(h -> {
             ApplicationManager.getApplication().invokeAndWait(() -> {
                 TrustedProjects.setProjectTrusted(getProject(), false);
                 TrustedProjects.setProjectTrusted(getProject(), true);
             });
+            revoked.set(true);
             throw new IllegalStateException("a console filter provider failed");
         });
+        JoustProjectAction.finishedForTests = () -> finished.set(true);
         try {
             VirtualFile jsc = vf(web.resolve("contracts/app/Counter.jsc"));
             AnAction build = new JoustNpmActions.Build();
             build.actionPerformed(event(build, jsc));
-            waitFor(() -> false, 3_000);
+            waitFor(finished::get, 30_000);
+            assertTrue("the opener ran, revoking and re-granting trust (M2-CDX-29)", revoked.get());
+            assertTrue("the Build finished, reporting included", finished.get());
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
             assertEquals(shown.toString(), List.of(), shown.stream().filter(t -> t.startsWith("JOUST Build")).toList());
         } finally {
             JoustNpmTasks.setConsoleOpenerForTests(null);
+            JoustProjectAction.finishedForTests = null;
         }
     }
 }
