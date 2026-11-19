@@ -33,6 +33,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             JoustNpmTasks.setConsoleOpenerForTests(null);
             JoustNpmTasks.killHookForTests = null;
             JoustNpmTasks.enumerationDeniedForTests = false;
+            JoustNpmTasks.samplerPauseForTests = null;
             JoustTaskTracker.getInstance(getProject()).forgetAllForTests();
             JoustToolsState.getInstance().loadState(saved);
             TrustedProjects.setProjectTrusted(getProject(), true);
@@ -160,8 +161,10 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             Path bin = Files.createDirectories(web.resolve("node_modules/@julclang/joust/bin"));
             Files.writeString(bin.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\"}");
             // Like joust test: the CLI starts a Node child (the test runner) and waits for it.
+            // The runner owns its shutdown: it exits when the fixture's stop file appears, or after 60 s (M2-CDX-40).
             Files.writeString(bin.resolve("joust.js"), "const { spawn } = require('child_process');\n"
-                    + "const c = spawn(process.execPath, ['-e', \"require('fs').writeFileSync('child', String(process.pid)); setTimeout(() => {}, 120000)\"],"
+                    + "const c = spawn(process.execPath, ['-e', \"const fs = require('fs'); fs.writeFileSync('child', String(process.pid));"
+                    + " setInterval(() => { if (fs.existsSync('stop')) process.exit(0); }, 100); setTimeout(() => process.exit(0), 60000)\"],"
                     + " { stdio: 'ignore' });\n"
                     + "require('fs').writeFileSync('pid', String(process.pid));\n"
                     + "c.on('exit', () => process.exit(0));\n");
@@ -170,6 +173,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
                     .filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
             JoustRunGuard guard = JoustRunGuard.capture(getProject());
             var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("test"), "test"));
+            try {
             Path pidFile = web.resolve("pid");
             Path childFile = web.resolve("child");
             long end = System.currentTimeMillis() + 20_000;
@@ -189,14 +193,13 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             }
             assertTrue(result.isDone());
             assertFalse("denied=" + denied + ": the CLI is gone", alive(parent));
-            if (!denied) {
-                assertFalse("the observed test runner is gone", alive(child));
-            } else {
-                // Listing refused throughout: the runner was never observed, so IntelliAda, acting only by observed identity,
-                // cannot end it (L21, the documented residual of §12 E13). End it here.
-                ProcessHandle.of(child).ifPresent(ProcessHandle::destroyForcibly);
-            }
+            // Listing refused throughout: the runner was never observed, so IntelliAda, acting only by observed identity,
+            // cannot end it (L21, the documented residual of §12 E13); the fixture's stop file ends it.
+            if (!denied) assertFalse("the observed test runner is gone", alive(child));
             assertEquals("released", 0, JoustTaskTracker.getInstance(getProject()).runningCount());
+            } finally {
+                Files.writeString(web.resolve("stop"), "x");
+            }
         }
     }
 
@@ -265,15 +268,19 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
     /** M2-CDX-3, L21: a CLI that keeps starting children: every child observed before the cancellation is gone, then released. */
     public void testChildrenStartedAfterTheSnapshotAreEndedToo() throws Exception {
         if (JoustTestTools.env("JOUST_NODE", getName()) == null || com.intellij.openapi.util.SystemInfo.isWindows) return;
+        // Bounded on its own (at most 200 children, 60 s), and every process exits when the stop file appears (M2-CDX-39/40).
         var root = npmRoot("web-spawner", "const { spawn } = require('child_process'); const fs = require('fs');\n"
                 + "fs.writeFileSync('pid', String(process.pid));\n"
-                + "let n = 0; const t = setInterval(() => { if (++n > 200) { clearInterval(t); return; }"
-                + " const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });"
+                + "const child = \"const fs = require('fs'); setInterval(() => { if (fs.existsSync('stop')) process.exit(0); }, 100);"
+                + " setTimeout(() => process.exit(0), 60000)\";\n"
+                + "let n = 0; const t = setInterval(() => { if (fs.existsSync('stop')) process.exit(0); if (++n > 200) return;"
+                + " const c = spawn(process.execPath, ['-e', child], { stdio: 'ignore' });"
                 + " fs.appendFileSync('children', c.pid + '\\n'); }, 50);\n"
-                + "setTimeout(() => process.exit(0), 60000);\n");   // bounded on its own (M2-CDX-39)
+                + "setTimeout(() => process.exit(0), 60000);\n");
         Path web = root.dir();
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
         var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("test"), "test"));
+        try {
         long end = System.currentTimeMillis() + 20_000;
         while ((!Files.exists(web.resolve("children")) || Files.readAllLines(web.resolve("children")).size() < 5) && System.currentTimeMillis() < end) {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
@@ -295,8 +302,61 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             assertFalse("child " + pid + " started before the cancellation outlived it", alive(Long.parseLong(pid.trim())));
         }
         assertFalse(alive(Long.parseLong(Files.readString(web.resolve("pid")).trim())));
-        // A child forked in the last moments, after the final listing, is the documented residual (§12 E13): end it here.
-        for (String pid : Files.readAllLines(web.resolve("children"))) ProcessHandle.of(Long.parseLong(pid.trim())).ifPresent(ProcessHandle::destroyForcibly);
+        } finally {
+            // A child forked after the final listing is the documented residual (§12 E13): the stop file ends it.
+            Files.writeString(web.resolve("stop"), "x");
+        }
+    }
+
+    /**
+     * M2-CDX-3: a sample that confirmed a child while the parent lived but has not published it yet holds the release:
+     * the run is released only once that child has exited.
+     */
+    public void testAnInFlightSampleHoldsTheRelease() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        Path dir = Files.createDirectories(Path.of(getProject().getBasePath()).resolve("in-flight")).toRealPath();
+        java.util.concurrent.CountDownLatch paused = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch resume = new java.util.concurrent.CountDownLatch(1);
+        JoustNpmTasks.samplerPauseForTests = now -> {
+            if (now.isEmpty() || paused.getCount() == 0) return;
+            paused.countDown();
+            try {
+                resume.await(30, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        // The parent starts a child that owns its shutdown (the stop file, or 60 s), then exits after 1 s.
+        OSProcessHandler h = new OSProcessHandler(new GeneralCommandLine(node, "-e",
+                "const c = require('child_process').spawn(process.execPath, ['-e', \"const fs = require('fs');"
+                        + " setInterval(() => { if (fs.existsSync('stop')) process.exit(0); }, 100); setTimeout(() => process.exit(0), 60000)\"],"
+                        + " { stdio: 'ignore' }); c.unref(); setTimeout(() => process.exit(0), 1000);").withWorkDirectory(dir.toFile()));
+        h.setShouldDestroyProcessRecursively(false);
+        JoustNpmTasks.Launch launch = new JoustNpmTasks.Launch(h);
+        try {
+            launch.sample();
+            assertTrue("a sample listed the child", paused.await(20, java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue("the parent exited meanwhile", h.getProcess().waitFor(20, java.util.concurrent.TimeUnit.SECONDS));
+            java.util.concurrent.atomic.AtomicBoolean released = new java.util.concurrent.atomic.AtomicBoolean();
+            // The release decision waits for the in-flight sample (it takes the same lock): ask from another thread.
+            var asking = ApplicationManager.getApplication().executeOnPooledThread(
+                    () -> JoustNpmTasks.releaseWhenTreeGone(launch, () -> released.set(true)));
+            Thread.sleep(300);
+            assertFalse("the decision waits for the sample", asking.isDone());
+            assertFalse("not released while the confirmed child is unpublished", released.get());
+            resume.countDown();
+            Thread.sleep(500);
+            assertFalse("not released while the child lives", released.get());
+            assertEquals(1, launch.liveSeen().size());
+            Files.writeString(dir.resolve("stop"), "x");
+            long end = System.currentTimeMillis() + 15_000;
+            while (!released.get() && System.currentTimeMillis() < end) Thread.sleep(50);
+            assertTrue("released once the child exited", released.get());
+        } finally {
+            resume.countDown();
+            Files.writeString(dir.resolve("stop"), "x");
+        }
     }
 
     /** M2-CDX-36: a run that ends normally does not kill a descendant finishing its own work; it waits for it. */

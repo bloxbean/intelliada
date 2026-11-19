@@ -225,21 +225,23 @@ public final class JoustNpmTasks {
         synchronized void sample() {
             if (sampler != null) return;
             Process p = handler.getProcess();
-            sampler = com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(() -> {
-                if (!p.isAlive()) return;
-                List<ProcessHandle> now = descendants(p);
-                // The latest listing while it lived decides (M2-CDX-3): a refused one makes the tree unknown again.
-                boolean stillAlive = p.isAlive();
-                enumerated = now != null && stillAlive;
-                // Kept only if the parent still lives after the listing: a listing racing its death proves nothing (M2-SEC-12).
-                if (now != null && stillAlive) seen.addAll(now);
-                seen.removeIf(h -> !h.isAlive());
-            }, 0, 250, java.util.concurrent.TimeUnit.MILLISECONDS);
-            p.onExit().thenRun(() -> {
+            var task = sampler = com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(() -> {
+                // Listed and published under this launch's lock, which the release decision ({@link #treeGone}) takes too:
+                // a child confirmed while the parent lived is in the set before release can look (M2-CDX-3).
                 synchronized (Launch.this) {
-                    if (sampler != null) sampler.cancel(false);
+                    if (!p.isAlive()) return;
+                    List<ProcessHandle> now = descendants(p);
+                    boolean stillAlive = p.isAlive();
+                    enumerated = now != null && stillAlive;
+                    var pause = samplerPauseForTests;
+                    if (pause != null && now != null) pause.accept(now);
+                    // Kept only if the parent still lived after the listing: a listing racing its death, possibly with its
+                    // PID reused, identifies nothing of ours (M2-SEC-12, M2-CDX-32).
+                    if (now != null && stillAlive) seen.addAll(now);
+                    seen.removeIf(h -> !h.isAlive());
                 }
-            });
+            }, 0, 250, java.util.concurrent.TimeUnit.MILLISECONDS);
+            p.onExit().thenRun(() -> task.cancel(false));   // an in-flight sample still completes under the lock
         }
 
         /** The observed descendants still alive (each handle checks its own process, not whoever has its PID now). */
@@ -287,10 +289,18 @@ public final class JoustNpmTasks {
         p.destroyForcibly();   // the Process object: identity-bound
     }
 
-    /** True when the process and every descendant observed for it have exited. */
+    /**
+     * True when the process and every descendant observed for it have exited. Decided under the launch's lock, so never
+     * between a sample's confirmation and its publication (M2-CDX-3).
+     */
     static boolean treeGone(Launch launch) {
-        return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty();
+        synchronized (launch) {
+            return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty();
+        }
     }
+
+    /** For tests: runs inside a sample, under the lock, after the listing and before it is published. */
+    static volatile java.util.function.Consumer<List<ProcessHandle>> samplerPauseForTests;
 
     /**
      * Runs {@code release} once {@link #treeGone} holds: a one-shot check that reschedules itself only while something
