@@ -37,8 +37,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * {@link JoustGradleTasks} on IntelliJ's Gradle integration. Each run builds a fresh execution environment and
- * <b>clears its before-launch tasks</b>, which IntelliJ would otherwise copy from the project's Gradle run-configuration
- * template (M2-CDX-4): only the requested tasks run. The run is registered before it starts, and a cancellation that
+ * <b>clears what IntelliJ copies from the project's Gradle run-configuration template</b> (before-launch tasks, run
+ * target, debug and run-as-test flags; M2-CDX-4, M2-SEC-6): only the requested tasks run, as freshly built settings. The run is registered before it starts, and a cancellation that
  * arrives before Gradle reports the task id cancels it as soon as the id arrives (M2-CDX-3).
  */
 public final class JoustGradleTasksImpl implements JoustGradleTasks {
@@ -91,7 +91,20 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
                 DefaultRunExecutor.EXECUTOR_ID);
         if (env == null) return null;
         var rcs = env.getRunnerAndConfigurationSettings();
-        if (rcs != null) rcs.getConfiguration().setBeforeRunTasks(List.of());
+        if (rcs == null) return null;
+        var config = rcs.getConfiguration();
+        // Nothing from the project's template survives (D7, M2-CDX-4, M2-SEC-6): no before-launch work, no run target,
+        // no debug or run-as-test flags. setFrom already replaced the task, script, VM and environment settings.
+        config.setBeforeRunTasks(List.of());
+        if (config instanceof com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunConfiguration es) {
+            es.setDebugServerProcess(false);
+            es.setReattachDebugProcess(false);
+        }
+        if (config instanceof org.jetbrains.plugins.gradle.service.execution.GradleRunConfiguration g) {
+            g.setDebugAllEnabled(false);
+            g.setRunAsTest(false);
+            g.setDefaultTargetName(null);
+        }
         return env;
     }
 

@@ -108,6 +108,12 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         };
         planted.setEnabled(true);
         template.getConfiguration().setBeforeRunTasks(List.of(planted));
+        var t = (org.jetbrains.plugins.gradle.service.execution.GradleRunConfiguration) template.getConfiguration();
+        t.setDebugAllEnabled(true);
+        t.setRunAsTest(true);
+        t.setDefaultTargetName("planted-target");
+        t.setDebugServerProcess(true);
+        t.setReattachDebugProcess(true);
         try {
             var settings = JoustGradleTasksImpl.settings(base, List.of(":generateJsc"), "Generate");
             var plain = ExternalSystemUtil.createExecutionEnvironment(getProject(), GradleConstants.SYSTEM_ID, settings, "Run");
@@ -117,10 +123,22 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
             var ours = JoustGradleTasksImpl.environment(getProject(), JoustGradleTasksImpl.settings(base, List.of(":generateJsc"), "Generate"));
             assertNotNull(ours);
             assertEquals(List.of(), ours.getRunnerAndConfigurationSettings().getConfiguration().getBeforeRunTasks());
-            assertEquals(List.of(":generateJsc"), ((org.jetbrains.plugins.gradle.service.execution.GradleRunConfiguration)
-                    ours.getRunnerAndConfigurationSettings().getConfiguration()).getSettings().getTaskNames());
+            var c = (org.jetbrains.plugins.gradle.service.execution.GradleRunConfiguration) ours.getRunnerAndConfigurationSettings().getConfiguration();
+            assertEquals(List.of(":generateJsc"), c.getSettings().getTaskNames());
+            var p = (org.jetbrains.plugins.gradle.service.execution.GradleRunConfiguration) plain.getRunnerAndConfigurationSettings().getConfiguration();
+            assertEquals("IntelliJ inherits the template's run target (M2-SEC-6)", "planted-target", p.getDefaultTargetName());
+            assertNull("no run target from the template", c.getDefaultTargetName());
+            assertFalse(c.isDebugAllEnabled());
+            assertFalse(c.isRunAsTest());
+            assertFalse(c.isDebugServerProcess());
+            assertFalse(c.isReattachDebugProcess());
         } finally {
             template.getConfiguration().setBeforeRunTasks(List.of());
+            t.setDebugAllEnabled(false);
+            t.setRunAsTest(false);
+            t.setDefaultTargetName(null);
+            t.setDebugServerProcess(false);
+            t.setReattachDebugProcess(false);
         }
     }
 
