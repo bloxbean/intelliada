@@ -21,6 +21,14 @@ public final class JoustAbiReview {
     /** Runs the project's own build (Gradle, or the npm CLI) with an argument list; blocking, off the EDT. */
     public interface Runner {
         Result run(List<String> args) throws InterruptedException;
+
+        /**
+         * As {@link #run(List)}; lines for which {@code watch} holds are kept as they arrive, whatever else the output
+         * holds, so the selected contract's records cannot be displaced (M2-CDX-6).
+         */
+        default Result run(List<String> args, java.util.function.Predicate<String> watch) throws InterruptedException {
+            return run(args);
+        }
     }
 
     /** A run's outcome. */
@@ -118,7 +126,7 @@ public final class JoustAbiReview {
             Result r = runner.run(diffArgs);
             if (r.cancelled() || !live.getAsBoolean()) return false;
             if (!r.ok()) {
-                ui.report("ABI review failed", r.output(), true);
+                report("ABI review failed", r.output(), true);
                 return false;
             }
             JoustAbi.Diff d = JoustAbi.parse(out);
@@ -150,68 +158,99 @@ public final class JoustAbiReview {
             if (moved != null) {
                 // The project changed under the review (a contracts directory moved, the source or its owner changed):
                 // nothing is run (M2-CDX-23).
-                ui.refused("ABI change not accepted", moved + "\nNothing was run. Review the change again.", reviewAgain);
+                refused("ABI change not accepted", moved + "\nNothing was run. Review the change again.");
                 return false;
             }
             if (before.incomplete() != null) {
                 // Stop before anything is written: the result could not be verified (M2-CDX-7).
-                ui.report("ABI change not accepted", "The project's ABI manifests could not all be checked: " + before.incomplete()
+                report("ABI change not accepted", "The project's ABI manifests could not all be checked: " + before.incomplete()
                         + ".\nNothing was run.", true);
                 return false;
             }
             String stale = JoustAbi.verify(d, manifest);
             if (stale != null) {
-                ui.refused("ABI change not accepted", stale + "\nReview the change again.", reviewAgain);
+                refused("ABI change not accepted", stale + "\nReview the change again.");
                 return false;
             }
             List<String> acceptArgs = target.gradle() ? JoustAbi.gradleAcceptArgs(target.gradlePath(), d) : JoustAbi.npmAcceptArgs(d, npmSrc());
-            Result a = runner.run(acceptArgs);
+            String jscRelEarly = slashed(target.contractsDir().relativize(target.jsc()));
+            Result a = runner.run(acceptArgs, watch(jscRelEarly, slashed(target.dir().relativize(manifest)), contract));
             if (a.cancelled()) return false;
             JoustAbi.Snapshot after = JoustAbi.manifests(scan.get());
             // Nothing is published outside the action's trust generation, even after the run (M2-CDX-2).
             if (!live.getAsBoolean()) return false;
             // An explicit refusal of this contract by the bound task wins over what the files look like afterwards: another
             // acceptance may have written the same new hash meanwhile (M2-CDX-6).
-            String jscRel = target.contractsDir().relativize(target.jsc()).toString().replace('\\', '/');
+            String jscRel = jscRelEarly;
             // A run is an acceptance only when it says so, whether it succeeded or failed (M2-CDX-6): an explicit refusal
             // wins over the files, and a run that does not report writing this manifest did not accept it (npm skips a
             // target another acceptance already wrote, and succeeds).
             String refusedByTask = JoustAbi.refusal(a.output(), jscRel, contract);
             if (refusedByTask == null && !JoustAbi.reportsAccepted(a.output(), jscRel, manifest.getFileName().toString(),
-                    target.dir().relativize(manifest).toString())) {
+                    slashed(target.dir().relativize(manifest)))) {
                 refusedByTask = "the accept task " + (a.ok() ? "succeeded" : "failed") + " without reporting that it accepted "
                         + manifest.getFileName();
             }
             if (refusedByTask != null) {
-                if (live.getAsBoolean()) ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
+                refused("ABI change not accepted", refusedByTask + "\nReview the change again.");
                 return false;
             }
             String wrong = JoustAbi.verifyAccepted(before, after, manifest, d);
             if (wrong != null) {
                 // The task refuses when the baseline or the source changed since the review (JSC0002 "not accepted").
-                ui.refused("ABI change not accepted", (a.ok() ? "" : tail(a.output()) + "\n\n") + wrong + "\nReview the change again.", reviewAgain);
+                refused("ABI change not accepted", (a.ok() ? "" : tail(a.output()) + "\n\n") + wrong + "\nReview the change again.");
                 return false;
             }
             if (!live.getAsBoolean()) return false;
-            ui.report("ABI change accepted", "Accepted " + d.contract() + " in " + target.module() + " (" + d.committedSha() + " -> "
+            report("ABI change accepted", "Accepted " + d.contract() + " in " + target.module() + " (" + d.committedSha() + " -> "
                     + d.nowSha() + ").\nReview and commit " + manifest.getFileName() + " beside the .jsc file."
                     + (a.ok() ? "" : "\nThe build then failed after accepting: see its output."), !a.ok());
             return true;
         } catch (JoustAbi.AbiException e) {
-            ui.report("ABI review refused", e.getMessage(), true);
+            report("ABI review refused", e.getMessage(), true);
             return false;
         } catch (IOException e) {
-            ui.report("ABI review failed", e.getMessage(), true);
+            report("ABI review failed", e.getMessage(), true);
             return false;
         } finally {
             if (tmp != null) deleteTree(tmp);
         }
     }
 
+    /** Outcomes are published only while the action's guard is live, on every path (M2-CDX-2). */
+    private void report(String title, String text, boolean error) {
+        if (live.getAsBoolean()) ui.report(title, text, error);
+    }
+
+    private void refused(String title, String text) {
+        if (live.getAsBoolean()) ui.refused(title, text, reviewAgain);
+    }
+
+    /**
+     * A relative path as JOUST prints and reads it: its own components joined with {@code /}, each kept exactly (a
+     * backslash inside a POSIX name stays part of that name), M2-CDX-26.
+     */
+    static String slashed(Path rel) {
+        List<String> parts = new java.util.ArrayList<>();
+        for (Path p : rel) parts.add(p.toString());
+        String s = String.join("/", parts);
+        return s.isEmpty() ? "." : s;
+    }
+
     /** The npm contracts directory relative to the npm root, for {@code --src}. */
     private String npmSrc() {
-        String rel = target.dir().relativize(target.contractsDir()).toString().replace('\\', '/');
-        return rel.isEmpty() ? "." : rel;
+        return slashed(target.dir().relativize(target.contractsDir()));
+    }
+
+    /** The selected contract's records in task output: its source, its manifest, or its bound acceptance. */
+    private java.util.function.Predicate<String> watch(String jscRel, String manifestRel, String contract) {
+        String a = jscRel + ":";
+        String b = manifestRel + ":";
+        String c = "--accept-abi=" + contract + "@";
+        return line -> {
+            String l = line.strip();
+            return l.startsWith(a) || l.startsWith(b) || l.contains(c);
+        };
     }
 
     /**

@@ -74,6 +74,23 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         } catch (java.io.IOException | RuntimeException e) {
             return null;
         }
+        // An imported module whose directory is exactly this path first: a module may live beside its build's root
+        // (projectDir = file("../contracts")), so ancestry alone would miss it (M2-CDX-13).
+        Path exact = ReadAction.compute(() -> {
+            for (Module m : ModuleManager.getInstance(project).getModules()) {
+                if (!ExternalSystemApiUtil.isExternalSystemAwareModule(GradleConstants.SYSTEM_ID, m)) continue;
+                String mp = ExternalSystemApiUtil.getExternalProjectPath(m);
+                String root = ExternalSystemApiUtil.getExternalRootProjectPath(m);
+                if (mp == null || root == null) continue;
+                try {
+                    if (Path.of(mp).toRealPath().toString().equals(p.toString())) return Path.of(root).toRealPath();
+                } catch (java.io.IOException | RuntimeException stale) {
+                    // not this module
+                }
+            }
+            return null;
+        });
+        if (exact != null) return exact;
         Path best = null;
         for (var ps : org.jetbrains.plugins.gradle.settings.GradleSettings.getInstance(project).getLinkedProjectsSettings()) {
             try {
@@ -165,7 +182,7 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
      */
     static final class Binding {
         final JoustTaskTracker.Run run;
-        final JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP);
+        final JoustOutputCapture out;
         final CompletableFuture<Boolean> done = new CompletableFuture<>();
         private final AtomicReference<ProcessHandler> handler = new AtomicReference<>();
         private final CompletableFuture<Void> settled = new CompletableFuture<>();
@@ -173,6 +190,11 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         private final ExecutionEnvironment env;
 
         Binding(Project project, ExecutionEnvironment env, JoustTaskTracker.Run run) {
+            this(project, env, run, null);
+        }
+
+        Binding(Project project, ExecutionEnvironment env, JoustTaskTracker.Run run, java.util.function.Predicate<String> watch) {
+            this.out = new JoustOutputCapture(OUTPUT_CAP, watch);
             this.run = run;
             this.env = env;
             run.attach(() -> done.cancel(false));
@@ -249,6 +271,12 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
 
     @Override
     public JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) throws InterruptedException {
+        return run(guard, rootDir, args, title, null);
+    }
+
+    @Override
+    public JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title,
+                                     java.util.function.Predicate<String> watch) throws InterruptedException {
         Project project = guard.project();
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
         JoustTaskTracker.Run run = tracker.start(guard);
@@ -258,7 +286,7 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         try {
             ExecutionEnvironment env = environment(project, settings(rootDir, args, title));
             if (env == null) return new JoustAbiReview.Result(false, "IntelliJ cannot run Gradle tasks here.", false);
-            binding = new Binding(project, env, run);
+            binding = new Binding(project, env, run, watch);
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
             AtomicReference<Exception> failed = new AtomicReference<>();
             java.util.concurrent.atomic.AtomicBoolean executed = new java.util.concurrent.atomic.AtomicBoolean();

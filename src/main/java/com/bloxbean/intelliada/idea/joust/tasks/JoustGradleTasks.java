@@ -32,6 +32,12 @@ public interface JoustGradleTasks {
      */
     JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) throws InterruptedException;
 
+    /** As {@link #run}, keeping lines for which {@code watch} holds apart from the bounded output (M2-CDX-6). */
+    default JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title,
+                                      java.util.function.Predicate<String> watch) throws InterruptedException {
+        return run(guard, rootDir, args, title);
+    }
+
     /**
      * The module directory selected in the Gradle tool window (a project or module node), or null. Lets the JOUST
      * actions appear there too (D7).

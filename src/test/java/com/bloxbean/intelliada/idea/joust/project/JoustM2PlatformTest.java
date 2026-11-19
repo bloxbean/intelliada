@@ -95,11 +95,14 @@ public class JoustM2PlatformTest extends BasePlatformTestCase {
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(getProject());
         AtomicBoolean cancelled = new AtomicBoolean();
         int g = tracker.generation();
-        tracker.register(() -> cancelled.set(true));
+        JoustTaskTracker.Handle handle = () -> cancelled.set(true);
+        tracker.register(handle);
         TrustedProjects.setProjectTrusted(getProject(), false);
         PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
         assertTrue("I20: cancelled on loss of trust", cancelled.get());
         assertFalse("late results are discarded", tracker.current(g));
+        assertEquals("still tracked until its owner says its work ended (M2-CDX-3)", 1, tracker.runningCount());
+        tracker.done(handle);
         assertEquals(0, tracker.runningCount());
     }
 

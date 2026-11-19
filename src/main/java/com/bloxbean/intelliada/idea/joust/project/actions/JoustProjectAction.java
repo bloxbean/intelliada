@@ -157,7 +157,17 @@ public abstract class JoustProjectAction extends AnAction {
     static JoustAbiReview.Runner gradleRunner(Ctx ctx, JoustRunGuard guard, String title) {
         JoustGradleTasks gradle = JoustGradleTasks.getInstance();
         JoustGradleTasks.Linked linked = ctx.linked();
-        return args -> gradle.run(guard, linked.rootDir(), args, title);
+        return new JoustAbiReview.Runner() {
+            @Override
+            public JoustAbiReview.Result run(List<String> args) throws InterruptedException {
+                return gradle.run(guard, linked.rootDir(), args, title);
+            }
+
+            @Override
+            public JoustAbiReview.Result run(List<String> args, java.util.function.Predicate<String> watch) throws InterruptedException {
+                return gradle.run(guard, linked.rootDir(), args, title, watch);
+            }
+        };
     }
 
     static String gradleUnavailable(Ctx ctx) {
@@ -165,13 +175,21 @@ public abstract class JoustProjectAction extends AnAction {
     }
 
     static JoustAbiReview.Runner npmRunner(Ctx ctx, JoustRunGuard guard, String title) {
-        return args -> {
-            try {
-                return JoustNpmTasks.run(guard, ctx.npm(), args, title);
-            } catch (InterruptedException e) {
-                throw e;
-            } catch (Exception e) {
-                return new JoustAbiReview.Result(false, String.valueOf(e.getMessage()), false);
+        return new JoustAbiReview.Runner() {
+            @Override
+            public JoustAbiReview.Result run(List<String> args) throws InterruptedException {
+                return run(args, null);
+            }
+
+            @Override
+            public JoustAbiReview.Result run(List<String> args, java.util.function.Predicate<String> watch) throws InterruptedException {
+                try {
+                    return JoustNpmTasks.run(guard, ctx.npm(), args, title, watch);
+                } catch (InterruptedException e) {
+                    throw e;
+                } catch (Exception e) {
+                    return new JoustAbiReview.Result(false, String.valueOf(e.getMessage()), false);
+                }
             }
         };
     }

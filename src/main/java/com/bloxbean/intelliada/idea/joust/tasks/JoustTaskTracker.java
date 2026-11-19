@@ -97,7 +97,11 @@ public final class JoustTaskTracker implements Disposable {
         return running.size();
     }
 
-    /** Cancels everything running and discards late results. */
+    /**
+     * Cancels everything running and discards late results. A cancelled task stays registered until its owner calls
+     * {@link #done} after its work has ended, so the tracker never reports nothing running while a process lives
+     * (M2-CDX-3).
+     */
     public void cancelAll() {
         generation.incrementAndGet();
         for (Handle h : Set.copyOf(running)) {
@@ -106,7 +110,6 @@ public final class JoustTaskTracker implements Disposable {
             } catch (RuntimeException ignored) {
                 // best effort
             }
-            running.remove(h);
         }
     }
 

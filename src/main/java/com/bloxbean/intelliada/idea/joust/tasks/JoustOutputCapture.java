@@ -20,8 +20,19 @@ public final class JoustOutputCapture {
     private boolean discarding;
     private int extraLines;
 
+    /** Lines the caller watches for (the selected contract's records), kept apart from everything else (M2-CDX-6). */
+    private final java.util.function.Predicate<String> watch;
+    private final StringBuilder watched = new StringBuilder();
+    private int watchedLines;
+    static final int MAX_WATCHED_LINES = 64;
+
     public JoustOutputCapture(int cap) {
+        this(cap, null);
+    }
+
+    public JoustOutputCapture(int cap, java.util.function.Predicate<String> watch) {
         this.cap = cap;
+        this.watch = watch;
     }
 
     public synchronized void append(String text) {
@@ -32,7 +43,14 @@ public final class JoustOutputCapture {
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c == '\n') {
-                if (!discarding && head.length() >= cap) keep(partial.toString(), i >= take);
+                if (!discarding) {
+                    String line = partial.toString();
+                    if (watch != null && watchedLines < MAX_WATCHED_LINES && watch.test(line)) {
+                        watched.append(line).append('\n');
+                        watchedLines++;
+                    }
+                    if (head.length() >= cap) keep(line, i >= take);
+                }
                 partial.setLength(0);
                 discarding = false;
             } else if (!discarding) {
@@ -72,6 +90,9 @@ public final class JoustOutputCapture {
     public synchronized String toString() {
         String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || outcome(partial.toString()))
                 ? partial + "\n" : "";
-        return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() ? head.toString() : head + "\n" + extra + outcomes + tail;
+        String last = !discarding && watch != null && !partial.isEmpty() && watchedLines < MAX_WATCHED_LINES && watch.test(partial.toString())
+                ? partial + "\n" : "";
+        return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() && watched.isEmpty() && last.isEmpty() ? head.toString()
+                : head + "\n" + extra + outcomes + tail + watched + last;
     }
 }

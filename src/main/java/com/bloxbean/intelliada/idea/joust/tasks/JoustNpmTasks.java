@@ -58,10 +58,17 @@ public final class JoustNpmTasks {
     /** Runs the CLI for a live guard, blocking. Cancelled (and nothing started) when the guard is not live. */
     public static JoustAbiReview.Result run(JoustRunGuard guard, JoustProjectLayout.NpmRoot root, List<String> args, String title)
             throws Exception {
+        return run(guard, root, args, title, null);
+    }
+
+    /** As {@link #run(JoustRunGuard, JoustProjectLayout.NpmRoot, List, String)}, keeping {@code watch}ed lines apart. */
+    public static JoustAbiReview.Result run(JoustRunGuard guard, JoustProjectLayout.NpmRoot root, List<String> args, String title,
+                                            java.util.function.Predicate<String> watch) throws Exception {
         Project project = guard.project();
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
         JoustTaskTracker.Run run = tracker.start(guard);
         if (run == null) return new JoustAbiReview.Result(false, "", true);
+        boolean gone = true;
         try {
             List<String> cmd = command(project, root, args);
             // The CLI reads the files on disk: save the editors first, then check again, then start (M2-CDX-21).
@@ -76,7 +83,7 @@ public final class JoustNpmTasks {
                 // A cancellation (possibly on the EDT) only queues the kill on a pooled thread; the kill itself start-notifies
                 // through the one owner and waits for the end there (M2-CDX-3).
                 run.attach(() -> com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService().execute(() -> kill(launch)));
-                JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP);
+                JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP, watch);
                 handler.addProcessListener(new ProcessListener() {
                     @Override
                     public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
@@ -100,10 +107,12 @@ public final class JoustNpmTasks {
             } finally {
                 // Whatever happened after the process started (a console that failed to open, a timeout, an exception),
                 // it is ended before the tracker lets go of it (M2-CDX-3).
-                if (!ended) kill(launch);
+                if (!ended) gone = kill(launch);
             }
         } finally {
-            tracker.done(run);
+            // Released only once its process is gone: a process that outlived every attempt stays tracked, so a later
+            // cancellation still reaches it (M2-CDX-3).
+            if (gone) tracker.done(run);
         }
     }
 
@@ -182,21 +191,30 @@ public final class JoustNpmTasks {
      * Ends the process and its children, off the EDT: start-notified once (destruction waits for it), destroyed, awaited,
      * then forced; returns only when the process is gone or, after the bounded waits, as far as the OS lets it go.
      */
-    static void kill(Launch launch) {
+    /** Returns true when the process was seen to exit. */
+    static boolean kill(Launch launch) {
         OSProcessHandler handler = launch.handler;
         launch.ensureStarted();
         handler.destroyProcess();
-        if (handler.waitFor(10_000)) return;
+        if (handler.waitFor(10_000)) return true;
         Process p = handler.getProcess();
-        p.descendants().forEach(ProcessHandle::destroyForcibly);
-        p.destroyForcibly();
+        boolean interrupted = false;
         try {
-            p.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS);   // destroyForcibly returns before the exit
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
-            // as far as the OS lets it go
+            for (int attempt = 0; attempt < 6 && p.isAlive(); attempt++) {
+                p.descendants().forEach(ProcessHandle::destroyForcibly);
+                p.destroyForcibly();
+                try {
+                    p.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS);   // destroyForcibly returns before the exit
+                } catch (InterruptedException e) {
+                    interrupted = true;   // keep waiting: releasing a live process is not an option
+                } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
+                    // try again
+                }
+            }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
         }
+        return !p.isAlive();
     }
 
     /** A Run console in the IDE; tests without one read the captured output only. */

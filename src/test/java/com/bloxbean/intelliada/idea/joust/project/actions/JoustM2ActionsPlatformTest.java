@@ -470,6 +470,7 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
             waitFor(() -> inSetup.getCount() == 0 && Files.exists(pidFile), 15_000);
             long pid = Long.parseLong(Files.readString(pidFile).trim());
             TrustedProjects.setProjectTrusted(getProject(), false);   // cancels while the console is being set up
+            assertEquals("tracked while the kill is queued (M2-CDX-3)", 1, JoustTaskTracker.getInstance(getProject()).runningCount());
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
             waitFor(() -> !ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false), 15_000);
             resume.countDown();

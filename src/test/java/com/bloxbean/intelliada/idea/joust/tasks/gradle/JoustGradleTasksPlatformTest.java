@@ -424,4 +424,34 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         assertEquals(titles.toString(), 1, titles.size());
         assertTrue(titles.get(0), titles.get(0).contains("started at /nowhere/linked"));
     }
+
+    /** M2-CDX-13: a headerless failure whose build holds a linked and an unlinked copy is ambiguous: no action. */
+    public void testALinkedAndAnUnlinkedCopyAreAmbiguous() throws Exception {
+        JoustM2ActionsCopy.copy(Path.of(getClass().getClassLoader().getResource("joust-m2/SOURCE.txt").toURI()).getParent().resolve("gradle-jsc"),
+                base.resolve("unlinked"));
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
+        Files.delete(base.resolve("src/main/jsc/org/acme/Counter.jsc"));   // only :other (linked) and unlinked/ hold it
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        listener.onStart(base.toString(), id);
+        feed(listener, id, log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains("is in 2 modules") && titles.get(0).contains("unlinked"));
+    }
+
+    /** Copies a fixture tree. */
+    static final class JoustM2ActionsCopy {
+        static void copy(Path src, Path dst) throws Exception {
+            try (var s = Files.walk(src)) {
+                for (Path p : (Iterable<Path>) s::iterator) {
+                    Path t = dst.resolve(src.relativize(p).toString());
+                    if (Files.isDirectory(p)) Files.createDirectories(t);
+                    else Files.copy(p, t, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
 }

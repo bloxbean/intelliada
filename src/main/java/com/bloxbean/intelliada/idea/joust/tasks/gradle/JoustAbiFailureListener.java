@@ -212,6 +212,19 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                     if (linked != null && sameBuild(linked, buildRoot)) inBuild.add(r);
                     else if (linked == null && r.ownerDir().startsWith(buildRoot)) unlinkedHere.add(layout.base().relativize(r.ownerDir()).toString());
                 }
+                if (owners.isEmpty() && inBuild.size() + unlinkedHere.size() > 1) {
+                    // No task tells which module failed, and the build holds the source more than once (linked or not):
+                    // ambiguous, named, no action (E17, M2-CDX-13).
+                    if (!live(project, generation)) return n;
+                    if (seen.add("?" + buildRoot + printed.rel())) {
+                        List<String> names = new ArrayList<>();
+                        for (JoustProjectLayout.SourceRoot r : inBuild) names.add(layout.base().relativize(r.ownerDir()).toString());
+                        names.addAll(unlinkedHere);
+                        JoustProjectAction.notifyAmbiguousAbiFailure(project, f, names.stream().map(x -> x.isEmpty() ? "." : x).toList());
+                        n++;
+                    }
+                    continue;
+                }
                 if (inBuild.isEmpty() && !candidates.isEmpty()) {
                     if (!live(project, generation)) return n;   // published only within the run's generation (M2-CDX-2)
                     if (seen.add("!" + buildRoot + printed.rel())) {

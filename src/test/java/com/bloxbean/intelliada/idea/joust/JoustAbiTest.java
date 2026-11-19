@@ -885,4 +885,98 @@ public class JoustAbiTest {
             // refused
         }
     }
+
+    /**
+     * M2-CDX-6: through the flow with the production capture (4 MiB cap) and the selected contract's watch, thousands of
+     * decoy lines can displace neither the recorded acceptance nor the recorded refusal.
+     */
+    @Test
+    public void decoysCannotDisplaceTheSelectedRecords() throws Exception {
+        for (String outcome : new String[]{"accepted", "refused"}) {
+            Files.writeString(manifest, text1());
+            FakeJoust joust = new FakeJoust() {
+                @Override
+                public JoustAbiReview.Result run(List<String> args, java.util.function.Predicate<String> watch) {
+                    JoustAbiReview.Result r = super.run(args);
+                    if (!args.get(0).endsWith(":acceptJscAbi")) return r;
+                    try {
+                        if (outcome.equals("refused")) Files.writeString(manifest, text2());   // a concurrent acceptance
+                        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(
+                                com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP, watch);
+                        capture.append("y".repeat(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP) + "\n");
+                        capture.append("copying ABI manifest metadata\n".repeat(4_096));
+                        capture.append("other/X.jsc:1:1: error[JSC0002]: not accepted: unrelated\n".repeat(4_352));
+                        capture.append(JoustM2Fixtures.text(outcome.equals("accepted") ? "acceptJscAbi-accepted.log" : "acceptJscAbi-refused.log"));
+                        return new JoustAbiReview.Result(outcome.equals("accepted"), capture.toString(), false);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            };
+            FakeUi ui = new FakeUi();
+            boolean ok = review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run();
+            if (outcome.equals("accepted")) {
+                assertTrue(outcome + ": " + ui.reports, ok);
+            } else {
+                assertFalse(ok);
+                assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(x -> x.startsWith("REFUSED") && x.contains("not accepted: the committed manifest")));
+            }
+        }
+    }
+
+    /** M2-CDX-2: trust lost during the scan before the accept: no accept call and no notification of any kind. */
+    @Test
+    public void nothingIsPublishedWhenLivenessEndsBeforeAccept() throws Exception {
+        Path other = JoustM2Fixtures.gradleProject(Files.createDirectories(base.resolve("other")));
+        java.util.concurrent.atomic.AtomicBoolean live = new java.util.concurrent.atomic.AtomicBoolean(true);
+        FakeJoust joust = new FakeJoust();
+        FakeUi ui = new FakeUi();
+        Assume.assumeTrue(other.resolve("build.gradle").toFile().setReadable(false, false));   // the first scan is incomplete
+        try {
+            boolean ok = new JoustAbiReview(target(module, "app", "org.acme.Counter"), () -> {
+                live.set(false);
+                return JoustProjectLayout.scan(base, JoustPaths.Flavor.current());
+            }, joust, ui, live::get, ide.getRoot().toPath().toRealPath(), () -> {
+            }).run();
+            assertFalse(ok);
+        } finally {
+            other.resolve("build.gradle").toFile().setReadable(true, false);
+        }
+        assertEquals("zero accept calls", 1, joust.runs.size());
+        assertEquals("zero notifications", List.of(), ui.reports);
+    }
+
+    /** M2-CDX-26: a POSIX contracts directory whose name holds a backslash is passed as itself. */
+    @Test
+    public void aBackslashInAPosixNameIsKept() throws Exception {
+        Assume.assumeFalse("POSIX names only", JoustTestTools.windows());
+        Path web = Files.createDirectories(base.resolve("web"));
+        Files.writeString(web.resolve("joust.config.json"), "{\"contracts\":\"contracts\\\\v2\"}");
+        Path dir = Files.createDirectories(web.resolve("contracts\\v2").resolve("app"));
+        Files.copy(module.resolve("src/main/jsc/org/acme/Counter.jsc"), dir.resolve("Counter.jsc"));
+        Path m = Files.writeString(dir.resolve("Counter.abi.json"), text1());
+        JSONObject o = new JSONObject(diffJson).put("contract", "app.Counter").put("file", "app/Counter.jsc").put("path", "contracts\\v2/app/Counter.abi.json");
+        List<List<String>> runs = new ArrayList<>();
+        JoustAbiReview.Runner runner = args -> {
+            runs.add(args);
+            try {
+                if (args.get(0).equals("abi")) {
+                    Files.writeString(Path.of(args.get(args.indexOf("--out") + 1)), o.toString());
+                    return new JoustAbiReview.Result(true, "", false);
+                }
+                Files.writeString(m, text2());
+                return new JoustAbiReview.Result(true, "contracts\\v2/app/Counter.abi.json: accepted the changed ABI manifest (a -> b)", false);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+        Path contracts = web.resolve("contracts\\v2").toRealPath();
+        var t = new JoustAbiReview.Target("web", false, null, web.toRealPath(), contracts, dir.resolve("Counter.jsc").toRealPath(), "app.Counter");
+        FakeUi ui = new FakeUi();
+        assertTrue(ui.reports.toString(), new JoustAbiReview(t, () -> JoustProjectLayout.scan(base, JoustPaths.Flavor.current()), runner, ui,
+                () -> true, ide.getRoot().toPath().toRealPath(), () -> {
+        }).run());
+        assertEquals("contracts\\v2", runs.get(0).get(4));
+        assertEquals("contracts\\v2", runs.get(1).get(2));
+    }
 }
