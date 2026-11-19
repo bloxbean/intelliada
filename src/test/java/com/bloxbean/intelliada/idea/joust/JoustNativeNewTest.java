@@ -29,8 +29,10 @@ import static org.junit.Assert.*;
 
 /**
  * ADR-004 M2 exit criteria for the wizard (D9, I7), with the real native {@code joust}: set {@code JOUST_CLI} to its
- * absolute path to run (skipped when unset). Optional: {@code JOUST_TEST_JAVA_HOME} (default: a JDK 25 under SDKMAN if
- * present, else this JVM's home) and {@code JOUST_TEST_NODE} (default {@code /usr/local/bin/node}).
+ * absolute path, and {@code JOUST_NODE} to a Node 22+ binary for the Node and web templates. Without them the tests are
+ * skipped with a {@code JOUST-SKIPPED} line; with {@code JOUST_REQUIRE_TOOLS=1} a missing tool, or an unreachable npm
+ * registry, fails instead (M2-CDX-19, {@link JoustTestTools}). Optional: {@code JOUST_TEST_JAVA_HOME} (default: a JDK 25
+ * under SDKMAN if present, else this JVM's home).
  *
  * <ul>
  *   <li>Gradle with {@code .jsc}, Gradle with Java, Node with {@code .jsc} and web with {@code .jsc} (no {@code -p}) are
@@ -58,8 +60,8 @@ public class JoustNativeNewTest {
 
     @Before
     public void setUp() throws Exception {
-        String c = System.getenv("JOUST_CLI");
-        Assume.assumeTrue("JOUST_CLI is not set: the native joust tests are skipped", c != null && !c.isBlank());
+        String c = JoustTestTools.env("JOUST_CLI", "JoustNativeNewTest");
+        Assume.assumeTrue("JOUST_CLI is not set: the native joust tests are skipped", c != null);
         Assume.assumeTrue("Unix only", File.separatorChar == '/');
         cli = Path.of(c);
         assertTrue("JOUST_CLI is not an executable file: " + c, Files.isExecutable(cli));
@@ -74,8 +76,7 @@ public class JoustNativeNewTest {
             Path sdkman = Path.of(System.getProperty("user.home"), ".sdkman/candidates/java/25.0.2-librca");
             javaHome = Files.isExecutable(sdkman.resolve("bin/java")) ? sdkman.toString() : System.getProperty("java.home");
         }
-        nodePath = System.getenv("JOUST_TEST_NODE");
-        if (nodePath == null || nodePath.isBlank()) nodePath = "/usr/local/bin/node";
+        nodePath = System.getenv("JOUST_NODE");   // required (or skipped) by the npm-template test only
         // The user's environment, with an absolute project directory first on PATH (the M2 criterion).
         ideEnv = new HashMap<>(System.getenv());
         ideEnv.put("PATH", project.resolve("bin") + ":" + System.getenv().getOrDefault("PATH", "/usr/bin:/bin"));
@@ -85,7 +86,7 @@ public class JoustNativeNewTest {
 
     private JoustNewPlanner.ToolSettings tools() throws Exception {
         Path cliReal = cli.toRealPath();
-        boolean haveNode = Files.isExecutable(Path.of(nodePath));
+        boolean haveNode = nodePath != null && !nodePath.isBlank() && Files.isExecutable(Path.of(nodePath));
         return new JoustNewPlanner.ToolSettings(cli.toString(), JoustToolValidator.identityOf(cliReal),
                 haveNode ? nodePath : null, haveNode ? JoustToolValidator.identityOf(Path.of(nodePath).toRealPath()) : null);
     }
@@ -111,7 +112,7 @@ public class JoustNativeNewTest {
 
     @Test
     public void versionProbeAnswers() throws Exception {
-        String line = JoustCliVersionProbe.probe(cli.toRealPath());
+        String line = JoustCliVersionProbe.probe(cli.toRealPath(), base.resolve("ide-tmp"), List.of(project));
         System.out.println("joust version: " + line);
         assertNotNull(line, JoustCliVersionProbe.versionOf(line));
     }
@@ -140,9 +141,16 @@ public class JoustNativeNewTest {
 
     @Test
     public void nodeJscAndWebJsc() throws Exception {
-        Assume.assumeTrue("Node is not available at " + nodePath + " (set JOUST_TEST_NODE)", Files.isExecutable(Path.of(nodePath)));
-        Assume.assumeTrue("The npm registry is not reachable: the Node and web templates need the network; skipped",
-                registryReachable());
+        nodePath = JoustTestTools.env("JOUST_NODE", "JoustNativeNewTest.nodeJscAndWebJsc");
+        Assume.assumeTrue("JOUST_NODE is not set", nodePath != null);
+        assertTrue("JOUST_NODE is not an executable file: " + nodePath, Files.isExecutable(Path.of(nodePath)));
+        if (!registryReachable()) {
+            if (JoustTestTools.required()) {
+                fail("The npm registry is not reachable, and the Node and web templates need it (JOUST_REQUIRE_TOOLS=1)");
+            }
+            System.out.println("JOUST-SKIPPED JoustNativeNewTest.nodeJscAndWebJsc: the npm registry is not reachable");
+            Assume.assumeTrue("The npm registry is not reachable: the Node and web templates need the network; skipped", false);
+        }
         Path node = base.resolve("projects/counter-node");
         Files.createDirectories(node.getParent());
         JoustNewRunner.Outcome o = create(JoustTemplate.NODE, JoustLanguage.JSC, null, node);

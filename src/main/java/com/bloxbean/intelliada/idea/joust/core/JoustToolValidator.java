@@ -82,14 +82,16 @@ public final class JoustToolValidator {
         } catch (IOException e) {
             return Result.fail(selected, what + "'s real path could not be resolved: " + e.getMessage());
         }
+        // A regular, executable file first: the native-format check below opens the file, and opening a FIFO or a
+        // device can block (M2 review).
+        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) return Result.fail(selected, what + " must be a file: " + real);
+        if (!Files.isExecutable(real)) return Result.fail(selected, what + " is not executable: " + real);
         // Every tool IntelliAda runs by path must be a native executable for this system (M1-CDX-5): a script or a
         // foreign or truncated file is refused, so the JDK never falls back to /bin/sh.
         if (JoustPaths.hasRefusedExtension(real.toString()) || !isNativeExecutable(real)) {
             return Result.fail(selected, what + " resolves to a script or to a file that is not a native executable for this system,"
                     + " which is never run: " + real);
         }
-        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) return Result.fail(selected, what + " must be a file: " + real);
-        if (!Files.isExecutable(real)) return Result.fail(selected, what + " is not executable: " + real);
         String where = locationProblem(selected, real, forbiddenRoots, flavor);
         if (where != null) return Result.fail(selected, what + " " + where);
         return new Result(selected, real, null);

@@ -79,8 +79,12 @@ public class JoustNewEnvironmentTest {
     }
 
     private JoustNewEnvironment.Result build(JoustTemplate t, String nodePath, String joustPath, String javaHome) {
+        return build(t, nodePath, joustPath, javaHome, null);
+    }
+
+    private JoustNewEnvironment.Result build(JoustTemplate t, String nodePath, String joustPath, String javaHome, String tempDir) {
         return JoustNewEnvironment.build(new JoustNewEnvironment.Inputs(joustPath, nodePath, javaHome, t, ide,
-                List.of(project.toString())), JoustNewEnvironment.localFiles(), JoustPaths.Flavor.current());
+                List.of(project.toString()), tempDir), JoustNewEnvironment.localFiles(), JoustPaths.Flavor.current());
     }
 
     private static List<String> systemDirs() throws IOException {
@@ -123,12 +127,14 @@ public class JoustNewEnvironmentTest {
     }
 
     @Test
-    public void onlyAllowListedVariablesArePassed() {
-        JoustNewEnvironment.Result r = build(JoustTemplate.NODE);
+    public void onlyAllowListedVariablesArePassed() throws Exception {
+        Path privateTemp = Files.createDirectories(base.resolve("ide-tmp/joust-new-1"));
+        JoustNewEnvironment.Result r = build(JoustTemplate.NODE, node.toString(), joust.toString(), jdk.toString(),
+                privateTemp.toString());
         assertTrue(r.error(), r.ok());
         Map<String, String> env = r.env();
         assertEquals(base.resolve("home").toString(), env.get("HOME"));
-        assertEquals(base.resolve("tmp").toString(), env.get("TMPDIR"));
+        assertEquals("TMPDIR is the planner's private directory, never inherited (M2-CDX-11)", privateTemp.toString(), env.get("TMPDIR"));
         assertEquals("en_US.UTF-8", env.get("LANG"));
         assertEquals("http://proxy.example:3128", env.get("https_proxy"));
         for (String k : new String[]{"NODE_OPTIONS", "JAVA_TOOL_OPTIONS", "npm_config_registry", "NODE_PATH", "CLASSPATH"}) {
@@ -145,6 +151,57 @@ public class JoustNewEnvironmentTest {
         assertTrue(r.error(), r.ok());
         assertFalse(r.env().containsKey("TMPDIR"));
         assertFalse(r.env().containsKey("HOME"));
+    }
+
+    /** M2-CDX-11 (§12 E12): a directory variable is judged by its real destination, not by its spelling. */
+    @Test
+    public void pathVariablesRedirectedIntoAProjectAreDropped() throws Exception {
+        Path homeLink = Files.createSymbolicLink(base.resolve("home-link"), project);
+        Path tmpLink = Files.createSymbolicLink(base.resolve("tmp-link"), project);
+        ide.put("HOME", homeLink.toString());
+        ide.put("TMPDIR", tmpLink.resolve("not-yet/created").toString());   // the nearest existing ancestor is the link
+        JoustNewEnvironment.Result r = build(JoustTemplate.GRADLE);
+        assertTrue(r.error(), r.ok());
+        assertFalse("HOME symlinked into a project", r.env().containsKey("HOME"));
+        assertFalse("an inherited TMPDIR is never passed", r.env().containsKey("TMPDIR"));
+        // A not-yet-existing directory under a link into the project is still inside it.
+        ide.put("HOME", homeLink.resolve("a/b").toString());
+        r = build(JoustTemplate.GRADLE);
+        assertTrue(r.error(), r.ok());
+        assertFalse(r.env().containsKey("HOME"));
+        // A private temporary directory that resolves into a project refuses the whole environment.
+        r = build(JoustTemplate.GRADLE, node.toString(), joust.toString(), jdk.toString(), tmpLink.toString());
+        assertFalse(r.ok());
+        assertTrue(r.error(), r.error().contains("private temporary directory"));
+        // Outside every project, a not-yet-existing HOME is kept.
+        ide.put("HOME", base.resolve("home/not-yet").toString());
+        r = build(JoustTemplate.GRADLE);
+        assertTrue(r.error(), r.ok());
+        assertEquals(base.resolve("home/not-yet").toString(), r.env().get("HOME"));
+    }
+
+    /** M2-CDX-10: a tool directory whose name holds the PATH separator would split into unchecked entries. */
+    @Test
+    public void aPathSeparatorInAToolDirectoryIsRefused() throws Exception {
+        Path odd = JoustTestFiles.executable(base.resolve("tools/odd:" + project.resolve("bin") + "/joust"), "#!/bin/sh\n");
+        JoustNewEnvironment.Result r = build(JoustTemplate.GRADLE, null, odd.toString(), jdk.toString());
+        assertFalse("a joust directory holding ':' was accepted: " + r.env(), r.ok());
+        assertTrue(r.error(), r.error().contains("path separator"));
+        // The same through a symlink whose own name is clean: the real directory is what goes on PATH.
+        Path link = Files.createSymbolicLink(base.resolve("clean-joust"), odd);
+        r = build(JoustTemplate.GRADLE, null, link.toString(), jdk.toString());
+        assertFalse(r.ok());
+        assertTrue(r.error(), r.error().contains("path separator"));
+    }
+
+    /** M2-CDX-10: what the CLI splits ({@code Sys.safePath} splits on the separator) is exactly the validated list. */
+    @Test
+    public void splittingTheChildPathYieldsExactlyTheValidatedDirectories() {
+        for (JoustTemplate t : JoustTemplate.values()) {
+            JoustNewEnvironment.Result r = build(t);
+            assertTrue(r.error(), r.ok());
+            assertEquals(r.path(), List.of(r.env().get("PATH").split(File.pathSeparator, -1)));
+        }
     }
 
     @Test
@@ -363,6 +420,7 @@ public class JoustNewEnvironmentTest {
                 .dir(NODE_DIR).file(NODE_DIR + "\\node.exe").file(NODE_DIR + "\\npm").file(NODE_DIR + "\\npm.cmd")
                 .file(NODE_DIR + "\\npx.cmd").dir(NODE_DIR + "\\node_modules\\npm\\bin")
                 .dir("C:\\tools\\joust").file("C:\\tools\\joust\\joust.exe")
+                .dir("C:\\Users\\u")
                 .dir("C:\\jdks\\jdk-25").dir("C:\\jdks\\jdk-25\\bin").file("C:\\jdks\\jdk-25\\bin\\java.exe")
                 .dir("C:\\Windows").dir("C:\\Windows\\System32").dir("C:\\Windows\\System32\\Wbem")
                 .dir("C:\\Windows\\System32\\WindowsPowerShell\\v1.0")
@@ -396,6 +454,18 @@ public class JoustNewEnvironmentTest {
         assertEquals("C:\\Users\\u", r.env().get("USERPROFILE"));
         assertFalse("TEMP inside the project", r.env().containsKey("TEMP"));
         assertFalse(r.env().containsKey("NODE_OPTIONS"));
+    }
+
+    /** M2-CDX-10 on Windows: {@code ;} inside a tool directory's name is refused; the split PATH is the validated list. */
+    @Test
+    public void windowsASemicolonInAToolDirectoryIsRefused() {
+        WinFs fs = windows().dir("C:\\tools\\a;b").file("C:\\tools\\a;b\\joust.exe");
+        JoustNewEnvironment.Result r = buildWin(fs, JoustTemplate.GRADLE, "C:\\tools\\a;b\\joust.exe", null);
+        assertFalse("a joust directory holding ';' was accepted: " + r.env(), r.ok());
+        assertTrue(r.error(), r.error().contains("path separator"));
+        r = buildWin(windows(), JoustTemplate.NODE, "C:\\tools\\joust\\joust.exe", NODE_DIR + "\\node.exe");
+        assertTrue(r.error(), r.ok());
+        assertEquals(r.path(), List.of(r.env().get("PATH").split(";", -1)));
     }
 
     @Test

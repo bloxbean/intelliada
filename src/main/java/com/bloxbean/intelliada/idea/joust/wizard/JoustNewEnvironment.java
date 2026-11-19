@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.joust.wizard;
 
 import com.bloxbean.intelliada.idea.joust.core.JoustPaths;
+import com.bloxbean.intelliada.idea.joust.core.JoustRealPaths;
 import com.bloxbean.intelliada.idea.joust.core.JoustToolValidator;
 
 import java.io.IOException;
@@ -9,12 +10,14 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * ADR-004 D9 and I7: the environment of the wizard's {@code joust new} is <b>built, not inherited</b>.
@@ -33,7 +36,13 @@ import java.util.Map;
  *   (any case and Windows extension) whose real target is disallowed refuses the whole environment.</li>
  *   <li>Only a fixed allow-list of the IDE's own variables is copied (home, temporary directory, locale, proxies, and
  *   Windows' system variables); {@code NODE_OPTIONS}, {@code JAVA_TOOL_OPTIONS}, {@code npm_config_*} and the like are
- *   never passed. A path-valued variable that names a place inside a project is dropped.</li>
+ *   never passed. A path-valued variable is resolved through its nearest existing ancestor's real path and dropped
+ *   when it names a place inside a project, by spelling or by file identity (§12 E12, M2-CDX-11).</li>
+ *   <li>The temporary-directory variables ({@code TMPDIR}, and {@code TEMP} and {@code TMP} on Windows) are never
+ *   inherited: JOUST's {@code Scaffold} creates and extracts the npm package under {@code TMPDIR}, so they name the
+ *   private directory the planner created and checked ({@link Inputs#tempDir}), or are left out.</li>
+ *   <li>No {@code PATH} entry may contain the path separator ({@code :} or {@code ;}): the CLI splits {@code PATH} again
+ *   ({@code Sys.safePath}), and a separator inside a directory name would split into unchecked entries (M2-CDX-10).</li>
  * </ul>
  *
  * <p>Pure: the file system is read through {@link FileView}, so Windows forms are tested on any platform, and nothing is
@@ -56,6 +65,8 @@ public final class JoustNewEnvironment {
     /** Of {@link #PASSED_VARIABLES}, those that name a directory: dropped unless absolute and outside every project. */
     static final List<String> PATH_VARIABLES = List.of("HOME", "TMPDIR", "SystemRoot", "windir", "TEMP", "TMP",
             "USERPROFILE", "APPDATA", "LOCALAPPDATA");
+    /** Of {@link #PASSED_VARIABLES}, those never inherited: they are set to {@link Inputs#tempDir} or left out. */
+    static final List<String> TEMP_VARIABLES = List.of("TMPDIR", "TEMP", "TMP");
 
     private JoustNewEnvironment() {
     }
@@ -76,6 +87,15 @@ public final class JoustNewEnvironment {
 
         /** The names of a directory's entries. */
         List<String> list(String dir) throws IOException;
+
+        /**
+         * True when the real path {@code real} is {@code root} or lies under it <b>by file identity</b> (the root's own
+         * real path is resolved first). Only a real file system can answer; the default answers false, leaving the
+         * decision to the spelling checks.
+         */
+        default boolean insideByIdentity(String real, String root) {
+            return false;
+        }
     }
 
     /** The local file system. */
@@ -122,16 +142,30 @@ public final class JoustNewEnvironment {
                 }
                 return out;
             }
+
+            @Override
+            public boolean insideByIdentity(String real, String root) {
+                try {
+                    return JoustRealPaths.isInside(Path.of(real), Path.of(root).toRealPath());
+                } catch (IOException | RuntimeException e) {
+                    return false; // a root that does not exist has no identity; its spelling is checked
+                }
+            }
         };
     }
 
     /**
      * The inputs: the configured native {@code joust} and Node (as the user configured them), the chosen JDK home, the
      * template, the IDE's own environment (only the allow-listed variables are read from it; its {@code PATH} never),
-     * and the forbidden roots (every open project's base and content roots, and the new project's directory).
+     * the forbidden roots (every open project's base and content roots, and the new project's directory), and the
+     * private temporary directory the planner created for this run ({@code null}: no temporary-directory variable).
      */
     public record Inputs(String joust, String node, String javaHome, JoustTemplate template, Map<String, String> ideEnv,
-                         Collection<String> forbiddenRoots) {
+                         Collection<String> forbiddenRoots, String tempDir) {
+        public Inputs(String joust, String node, String javaHome, JoustTemplate template, Map<String, String> ideEnv,
+                      Collection<String> forbiddenRoots) {
+            this(joust, node, javaHome, template, ideEnv, forbiddenRoots, null);
+        }
     }
 
     /** The built environment and the executables the CLI will pick, or an error. */
@@ -191,10 +225,19 @@ public final class JoustNewEnvironment {
         candidates.add(parent(joust.real(), flavor));
         int required = candidates.size();
         candidates.addAll(systemDirs(ide, flavor));
+        String separator = pathSeparator(flavor);
         List<String> dirs = new ArrayList<>();
         for (int i = 0; i < candidates.size(); i++) {
             String dir = candidates.get(i);
             String real = checkDir(dir, roots, fs, flavor);
+            if (real != null && (dir.contains(separator) || real.contains(separator))) {
+                // M2-CDX-10: the CLI splits PATH again; such an entry would become unchecked directories.
+                if (i < required) {
+                    return Result.fail("The directory " + dir + " cannot be on the PATH of joust new: its name contains the "
+                            + "path separator \"" + separator + "\". Install the tool in a directory without it.");
+                }
+                continue;
+            }
             if (real == null) {
                 if (i < required) return Result.fail("The directory " + dir + " cannot be on the PATH of joust new.");
                 continue; // a missing or disallowed system directory is left out
@@ -231,12 +274,29 @@ public final class JoustNewEnvironment {
 
         Map<String, String> env = new LinkedHashMap<>();
         for (String name : PASSED_VARIABLES) {
+            if (TEMP_VARIABLES.contains(name)) continue;
             String v = get(ide, name, flavor);
             if (v == null || v.isEmpty()) continue;
-            if (PATH_VARIABLES.contains(name) && !pathVariableAllowed(v, roots, flavor)) continue;
+            if (PATH_VARIABLES.contains(name) && !pathVariableAllowed(v, roots, fs, flavor)) continue;
             env.put(name, v);
         }
-        env.put("PATH", String.join(flavor == JoustPaths.Flavor.WINDOWS ? ";" : ":", dirs));
+        if (in.tempDir() != null) {
+            String temp = in.tempDir();
+            if (!JoustPaths.isAbsolute(temp, flavor) || !fs.exists(temp) || !pathVariableAllowed(temp, roots, fs, flavor)) {
+                return Result.fail("The private temporary directory for joust new cannot be used: " + temp);
+            }
+            env.put("TMPDIR", temp);
+            if (flavor == JoustPaths.Flavor.WINDOWS) {
+                env.put("TEMP", temp);
+                env.put("TMP", temp);
+            }
+        }
+        String joined = String.join(separator, dirs);
+        // What the CLI will split is exactly what was validated, in order (M2-CDX-10).
+        if (!Arrays.asList(joined.split(Pattern.quote(separator), -1)).equals(dirs)) {
+            return Result.fail("The PATH of joust new could not be built from the validated directories: " + joined);
+        }
+        env.put("PATH", joined);
         env.put("JAVA_HOME", javaHomeReal);
         return new Result(Collections.unmodifiableMap(env), List.copyOf(dirs), joust.real(), nodeReal, npmReal, java.real(), null);
     }
@@ -362,10 +422,36 @@ public final class JoustNewEnvironment {
         }
     }
 
-    private static boolean pathVariableAllowed(String value, Collection<String> roots, JoustPaths.Flavor flavor) {
+    /** The PATH separator the CLI splits on: {@code ;} on Windows, {@code :} elsewhere. */
+    static String pathSeparator(JoustPaths.Flavor flavor) {
+        return flavor == JoustPaths.Flavor.WINDOWS ? ";" : ":";
+    }
+
+    /**
+     * A directory-valued variable is passed only when it is absolute and, resolved through its nearest existing
+     * ancestor's real path (§12 E12), neither the value nor that destination lies inside a forbidden root, by spelling
+     * or by file identity (M2-CDX-11). A symlink into a project is therefore dropped, not only a project spelling.
+     */
+    static boolean pathVariableAllowed(String value, Collection<String> roots, FileView fs, JoustPaths.Flavor flavor) {
         if (!JoustPaths.isAbsolute(value, flavor)) return false;
+        String existing = value;
+        while (!fs.exists(existing)) {
+            String up = parent(existing, flavor);
+            if (up.equals(existing)) return false;
+            existing = up;
+        }
+        String real;
+        try {
+            real = fs.realPath(existing);
+        } catch (IOException e) {
+            return false;
+        }
+        String rest = value.length() > existing.length() ? value.substring(existing.length()) : "";
+        while (rest.startsWith("/") || rest.startsWith("\\")) rest = rest.substring(1);
+        String destination = rest.isEmpty() ? real : join(real, rest, flavor);
+        if (locationProblem(value, destination, roots, flavor) != null) return false;
         for (String r : roots) {
-            if (JoustPaths.isInside(value, r, flavor)) return false;
+            if (fs.insideByIdentity(real, r)) return false;
         }
         return true;
     }

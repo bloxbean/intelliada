@@ -50,6 +50,27 @@ public class JoustToolValidatorTest {
         assertEquals("validation runs no process", probes, NodeVersionProbe.invocations());
     }
 
+    /**
+     * A FIFO (or device) is refused as "not a file" before anything opens it: opening a FIFO for reading blocks until a
+     * writer appears, so the native-format check must come after the regular-file check (M2 review).
+     */
+    @Test
+    public void aFifoIsRefusedPromptlyWithoutBeingOpened() throws Exception {
+        org.junit.Assume.assumeTrue("mkfifo is a Unix tool", !JoustTestTools.windows() && Files.isExecutable(Path.of("/usr/bin/mkfifo")));
+        Path fifo = Files.createDirectories(tools.resolve("fifo")).resolve("node");
+        Process mk = new ProcessBuilder("/usr/bin/mkfifo", fifo.toString()).inheritIO().start();
+        assertEquals(0, mk.waitFor());
+        fifo.toFile().setExecutable(true);
+        for (String what : new String[]{"joust", "Node"}) {
+            java.util.concurrent.CompletableFuture<JoustToolValidator.Result> r = java.util.concurrent.CompletableFuture.supplyAsync(
+                    () -> what.equals("Node") ? JoustToolValidator.checkNode(fifo.toString(), roots, flavor)
+                            : JoustToolValidator.checkExecutable(fifo.toString(), what, roots, flavor));
+            JoustToolValidator.Result result = r.get(5, java.util.concurrent.TimeUnit.SECONDS);   // a hang fails here
+            assertFalse(what + ": a FIFO was accepted", result.ok());
+            assertTrue(result.error(), result.error().contains("must be a file"));
+        }
+    }
+
     @Test
     public void refusesRelativeBareAndNpx() {
         for (String bad : new String[]{"node", "./node", "../tools/node", "npx", "npx joust-lsp", "", "  "}) {
