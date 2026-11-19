@@ -1064,9 +1064,13 @@ public class JoustAbiTest {
     public void recordsAreNotAssembledAcrossStreams() throws Exception {
         java.util.function.Predicate<String> watch = line -> JoustAbi.refusal(line, "org/acme/Counter.jsc", "org.acme.Counter") != null
                 || JoustAbi.reportsAccepted(line, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json");
+        String accepted = JoustM2Fixtures.text("acceptJscAbi-accepted.log").lines().filter(l -> l.contains("note: accepted")).findFirst().orElseThrow();
+        assertTrue(accepted.startsWith("org/acme/"));
         var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(1 << 20, watch);
         capture.append("org/", "stdout");
-        capture.append(JoustM2Fixtures.text("acceptJscAbi-accepted.log").replace("org/acme/", "acme/"), "stderr");
+        capture.append(accepted.substring("org/".length()) + "\n", "stderr");
+        // The merged display does read as an acceptance (M2-CDX-34): only the per-stream records keep it from counting.
+        assertTrue(JoustAbi.reportsAccepted(capture.toString(), "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
         String records = String.join("\n", capture.records());
         assertFalse(JoustAbi.reportsAccepted(records, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
     }
@@ -1087,7 +1091,23 @@ public class JoustAbiTest {
         assertEquals("stdout", com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture.baseStream(com.intellij.execution.process.ProcessOutputType.STDOUT));
         assertEquals("stderr", com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture.baseStream(com.intellij.execution.process.ProcessOutputType.STDERR));
         var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
-        for (int i = 0; i < 20_000; i++) capture.append("x".repeat(100), "colour-" + i);
-        assertTrue(capture.toString().length() < 64 + 50_000);
+        for (int i = 0; i < 20_000; i++) {
+            var styled = new com.intellij.execution.process.ProcessOutputType("\u001b[38;2;" + (i % 256) + ";" + (i / 256) + ";0m",
+                    com.intellij.execution.process.ProcessOutputType.STDOUT);
+            capture.append("x".repeat(100), com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture.baseStream(styled));
+        }
+        assertEquals("every style is stdout: one buffer (M2-CDX-35)", 1, capture.streamCount());
+        var raw = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
+        for (int i = 0; i < 20_000; i++) raw.append("x", "key-" + i);
+        assertTrue("even raw keys are capped", raw.streamCount() <= 5);
+    }
+
+    /** M2-CDX-24: an npm Build's failure on stderr, interleaved with an unfinished stdout line below the cap, is found. */
+    @Test
+    public void anInterleavedBuildFailureIsFound() throws Exception {
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP);
+        capture.append("Build progress: 50%", "stdout");
+        capture.append(JoustM2Fixtures.text("npm-build-JSC0002.log"), "stderr");
+        assertEquals(1, JoustAbi.failures(capture.failures()).size());
     }
 }

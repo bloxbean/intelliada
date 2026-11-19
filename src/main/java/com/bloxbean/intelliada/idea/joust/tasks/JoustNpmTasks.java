@@ -112,7 +112,10 @@ public final class JoustNpmTasks {
                 ended = true;
                 if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
                 Integer code = handler.getExitCode();
-                return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false, watch == null ? null : out.records());
+                // A review gets the selected contract's records; any other run its ABI failures, both from complete per-stream
+            // lines rather than the merged display (M2-CDX-6, M2-CDX-24).
+            return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false,
+                    watch == null ? List.of(out.failures()) : out.records());
             } finally {
                 // Whatever happened after the process started (a console that failed to open, a timeout, an exception),
                 // it is ended before the tracker lets go of it (M2-CDX-3).
@@ -205,7 +208,7 @@ public final class JoustNpmTasks {
         private boolean started;
         /** Observed descendants (handles carry their start time); dropped once they have exited. */
         final java.util.Set<ProcessHandle> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        /** Whether listing descendants ever succeeded while the process lived: the only way to know its tree. */
+        /** Whether the latest listing of descendants, taken while the process lived, succeeded. */
         volatile boolean enumerated;
         /** Whether IntelliJ's own tree kill reported success. */
         volatile boolean treeKilled;
@@ -224,10 +227,9 @@ public final class JoustNpmTasks {
             sampler = com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(() -> {
                 if (!p.isAlive()) return;
                 List<ProcessHandle> now = descendants(p);
-                if (now != null) {
-                    enumerated = true;
-                    seen.addAll(now);
-                }
+                // The latest listing while it lived decides (M2-CDX-3): a refused one makes the tree unknown again.
+                enumerated = now != null && p.isAlive();
+                if (now != null) seen.addAll(now);
                 seen.removeIf(h -> !h.isAlive());
             }, 0, 250, java.util.concurrent.TimeUnit.MILLISECONDS);
             p.onExit().thenRun(() -> {
@@ -270,20 +272,29 @@ public final class JoustNpmTasks {
      * while it ran (their own handles), IntelliJ's tree kill (which walks the tree with {@code ps}), then the process.
      */
     static void destroyTree(Launch launch, Process p) {
-        List<ProcessHandle> now = descendants(p);
-        if (now != null) {
-            launch.enumerated = true;
-            launch.seen.addAll(now);
+        // Listing and IntelliJ's tree kill go by PID: only while the process itself lives (M2-CDX-32, M2-SEC-10). After
+        // its exit, only the handles kept from the launch are acted on; they carry their start time.
+        if (p.isAlive()) {
+            List<ProcessHandle> now = descendants(p);
+            boolean stillAlive = p.isAlive();
+            launch.enumerated = now != null && stillAlive;
+            if (now != null && stillAlive) launch.seen.addAll(now);
         }
         for (ProcessHandle d : launch.liveSeen()) d.destroyForcibly();
-        try {
-            boolean killed = !treeKillFailsForTests && com.intellij.execution.process.OSProcessUtil.killProcessTree(p);
-            if (killed) launch.treeKilled = true;
-        } catch (RuntimeException | Error unavailable) {
-            // the other means still apply
+        if (p.isAlive()) {
+            treeKillCalls.incrementAndGet();
+            try {
+                boolean killed = !treeKillFailsForTests && com.intellij.execution.process.OSProcessUtil.killProcessTree(p);
+                if (killed) launch.treeKilled = true;
+            } catch (RuntimeException | Error unavailable) {
+                // the other means still apply
+            }
         }
         p.destroyForcibly();
     }
+
+    /** For tests: how many times IntelliJ's tree kill was called. */
+    static final java.util.concurrent.atomic.AtomicInteger treeKillCalls = new java.util.concurrent.atomic.AtomicInteger();
 
     /**
      * True only when the tree is <b>known</b> to be gone (M2-CDX-3): the process has exited, every observed descendant
@@ -303,7 +314,7 @@ public final class JoustNpmTasks {
         releaseWhenTreeGone(launch, release, 0);
     }
 
-    /** Retries of the tree kill for a tree never known, with back-off (M2-DES-14); then only a slow re-check. */
+    /** Quick re-checks with back-off (M2-DES-14), then only a slow one; a tree never known stays tracked. */
     static final int MAX_TREE_KILL_RETRIES = 5;
 
     private static void releaseWhenTreeGone(Launch launch, Runnable release, int attempt) {
@@ -311,11 +322,8 @@ public final class JoustNpmTasks {
             release.run();
             return;
         }
-        boolean unknown = launch.killed && !launch.handler.getProcess().isAlive() && !launch.enumerated && !launch.treeKilled;
-        if (unknown && attempt < MAX_TREE_KILL_RETRIES) {
-            // The parent is gone and its tree was never known: retry the tree kill a few times (each may start a ps).
-            destroyTree(launch, launch.handler.getProcess());
-        }
+        // Only the handles kept from the launch are acted on now: never the dead parent's PID (M2-CDX-32, M2-SEC-10).
+        for (ProcessHandle d : launch.liveSeen()) d.destroyForcibly();
         long delay = attempt < MAX_TREE_KILL_RETRIES ? 200L << attempt : 30_000L;
         com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
                 .schedule(() -> releaseWhenTreeGone(launch, release, attempt + 1), delay, java.util.concurrent.TimeUnit.MILLISECONDS);

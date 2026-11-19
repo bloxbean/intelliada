@@ -274,7 +274,7 @@ public abstract class JoustProjectAction extends AnAction {
     /** The action's outcome, published only while its guard is live (M2-CDX-2). */
     static void reportResult(Ctx ctx, JoustRunGuard guard, String title, JoustAbiReview.Result r) {
         if (r.cancelled() || !guard.live()) return;
-        if (ctx.npm() != null) notifyAbiFailures(ctx, r.output(), guard);
+        if (ctx.npm() != null) notifyAbiFailures(ctx, r.records() != null ? String.join("\n", r.records()) : r.output(), guard);
         if (!guard.live()) return;
         JoustNotifications.show(ctx.project(), title, r.ok() ? "Done." : "Failed. See the build output.",
                 r.ok() ? NotificationType.INFORMATION : NotificationType.WARNING);

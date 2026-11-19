@@ -252,4 +252,24 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         assertEquals("the tree was never known: the run stays tracked", 1, JoustTaskTracker.getInstance(getProject()).runningCount());
         ProcessHandle.of(child).ifPresent(ProcessHandle::destroyForcibly);   // test cleanup only
     }
+
+    /** M2-CDX-32, M2-SEC-10: once the parent has exited, nothing is listed or tree-killed by its PID, during release checks too. */
+    public void testNothingGoesByADeadParentsPid() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        OSProcessHandler h = new OSProcessHandler(new GeneralCommandLine(node, "-e", "0"));
+        JoustNpmTasks.Launch launch = new JoustNpmTasks.Launch(h);
+        launch.ensureStarted();
+        assertTrue(h.waitFor(10_000));
+        assertTrue(h.getProcess().waitFor(10, java.util.concurrent.TimeUnit.SECONDS));
+        launch.killed = true;   // as if IntelliAda had to end it, with its tree never known
+        int before = JoustNpmTasks.treeKillCalls.get();
+        JoustNpmTasks.destroyTree(launch, h.getProcess());
+        assertFalse("an empty listing of a dead parent proves nothing (M2-CDX-3)", JoustNpmTasks.treeGone(launch));
+        java.util.concurrent.atomic.AtomicBoolean released = new java.util.concurrent.atomic.AtomicBoolean();
+        JoustNpmTasks.releaseWhenTreeGone(launch, () -> released.set(true));
+        Thread.sleep(2_000);   // several release checks
+        assertEquals("no tree kill by a dead parent's PID", before, JoustNpmTasks.treeKillCalls.get());
+        assertFalse("its tree was never known: still tracked", released.get());
+    }
 }

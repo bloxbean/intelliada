@@ -34,6 +34,9 @@ public final class JoustOutputCapture {
     private final StringBuilder watched = new StringBuilder();
     private int watchedLines;
     private String firstRefusal;
+    /** JSC0002/JSC0003 failures from complete per-stream lines, from the start of the run (M2-CDX-24). */
+    private final java.util.List<String> failures = new java.util.ArrayList<>();
+    static final int MAX_FAILURES = 256;
     private final Map<Object, Line> streams = new HashMap<>();
 
     /** One stream's line being assembled. */
@@ -58,7 +61,7 @@ public final class JoustOutputCapture {
     }
 
     /** For tests: how many line buffers are kept. */
-    synchronized int streamCount() {
+    public synchronized int streamCount() {
         return streams.size();
     }
 
@@ -116,6 +119,7 @@ public final class JoustOutputCapture {
     /** Files one complete line where it belongs; {@code commit} false classifies into a copy (for a pending last line). */
     private void classify(String line, boolean beyondHead, boolean commit) {
         if (!commit) return;
+        if (failure(line) && failures.size() < MAX_FAILURES) failures.add(line);
         if (watch != null && watch.test(line)) {
             if (firstRefusal == null && line.contains("error[JSC0002]")) firstRefusal = line;
             else if (watchedLines < MAX_WATCHED_LINES) {
@@ -138,6 +142,20 @@ public final class JoustOutputCapture {
             outcomes.append(line).append('\n');
             outcomeLines++;
         }
+    }
+
+    static boolean failure(String line) {
+        return line.contains("error[JSC0002]") || line.contains("error[JSC0003]");
+    }
+
+    /** The ABI failures (JSC0002, JSC0003) of complete per-stream lines and each stream's pending line, as one text. */
+    public synchronized String failures() {
+        StringBuilder out = new StringBuilder();
+        for (String f : failures) out.append(f).append('\n');
+        for (Line line : streams.values()) {
+            if (!line.isEmpty() && failure(line.text()) && failures.size() < MAX_FAILURES) out.append(line.text()).append('\n');
+        }
+        return out.toString();
     }
 
     /** JOUST's acceptance phrases (the producers' "accepted the changed" / "created the" ABI manifest records). */
