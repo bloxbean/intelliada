@@ -6,5 +6,6 @@
         <!-- JOUST M2 (ADR-004 D7, D8): Gradle tasks through IntelliJ's Gradle integration -->
         <applicationService serviceInterface="com.bloxbean.intelliada.idea.joust.tasks.JoustGradleTasks"
                             serviceImplementation="com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustGradleTasksImpl"/>
+        <externalSystemTaskNotificationListener implementation="com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustAbiFailureListener"/>
     </extensions>
 </idea-plugin>

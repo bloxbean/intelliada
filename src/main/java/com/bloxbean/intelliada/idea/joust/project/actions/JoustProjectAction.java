@@ -148,7 +148,12 @@ public abstract class JoustProjectAction extends AnAction {
 
     /** D8 step 1: an ABI failure in build output becomes a notification naming the contract and its module. */
     static void notifyAbiFailures(Ctx ctx, String output) {
-        for (JoustAbi.Failure f : JoustAbi.failures(output)) {
+        for (JoustAbi.Failure f : JoustAbi.failures(output)) notifyAbiFailure(ctx, f);
+    }
+
+    /** The notification for one failure, with Review ABI change…. */
+    public static void notifyAbiFailure(Ctx ctx, JoustAbi.Failure f) {
+        {
             var n = JoustNotifications.create("ABI change in " + f.contract(), f.code() + ": the datum or a redeemer encoding of "
                     + f.contract() + " in " + ctx.moduleName() + " changed. Deployed instances depend on it.", NotificationType.WARNING);
             n.addAction(NotificationAction.createSimpleExpiring("Review ABI change…", () -> new JoustReviewAbiAction().start(ctx, f.contract())));
@@ -158,7 +163,8 @@ public abstract class JoustProjectAction extends AnAction {
 
     static void reportResult(Ctx ctx, String title, JoustAbiReview.Result r) {
         if (r.cancelled()) return;
-        notifyAbiFailures(ctx, r.output());
+        // Gradle runs are seen by JoustAbiFailureListener, like any other Gradle run; npm runs are reported here.
+        if (ctx.npm() != null) notifyAbiFailures(ctx, r.output());
         JoustNotifications.show(ctx.project(), title, r.ok() ? "Done." : "Failed. See the build output.",
                 r.ok() ? NotificationType.INFORMATION : NotificationType.WARNING);
     }

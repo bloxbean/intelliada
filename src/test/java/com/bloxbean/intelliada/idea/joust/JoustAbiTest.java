@@ -212,4 +212,41 @@ public class JoustAbiTest {
         assertFalse(new JoustAbiReview(target, layout, joust, ui).run("Vault"));
         assertEquals(1, joust.runs.size());
     }
+
+    /** D8 for npm: joust abi diff --out, then joust build --accept-abi=C@h1..h2, with the same checks. */
+    @Test
+    public void theNpmFlowUsesTheBoundBuildFlag() throws Exception {
+        Path npm = Files.createDirectories(base.resolve("web"));
+        Files.writeString(npm.resolve("joust.config.json"), "{\"contracts\":\"contracts\"}");
+        Path dir = Files.createDirectories(npm.resolve("contracts/org/acme"));
+        Path m = dir.resolve("Counter.abi.json");
+        Files.writeString(m, diff.getJSONObject("committed").getString("text"));
+        JSONObject o = new JSONObject(diffJson);
+        o.put("path", "contracts/org/acme/Counter.abi.json");
+        String npmDiff = o.toString();
+        var layout = JoustProjectLayout.scan(base, JoustPaths.Flavor.current());
+        List<List<String>> runs = new ArrayList<>();
+        JoustAbiReview.Runner runner = args -> {
+            runs.add(args);
+            try {
+                if (args.get(0).equals("abi")) {
+                    Files.writeString(Path.of(args.get(args.indexOf("--out") + 1)), npmDiff);
+                } else if (args.get(1).equals("--accept-abi=org.acme.Counter@" + diff.getJSONObject("committed").getString("sha256") + ".."
+                        + diff.getJSONObject("now").getString("sha256"))) {
+                    Files.writeString(m, diff.getJSONObject("now").getString("text"));
+                }
+                return new JoustAbiReview.Result(true, "", false);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+        FakeUi ui = new FakeUi();
+        var target = new JoustAbiReview.Target("web", false, null, npm, npm.resolve("contracts"));
+        assertTrue(ui.reports.toString(), new JoustAbiReview(target, layout, runner, ui).run("org.acme.Counter"));
+        assertEquals(List.of("abi", "diff", "org.acme.Counter", "--out"), runs.get(0).subList(0, 4));
+        assertEquals("build", runs.get(1).get(0));
+        assertEquals(2, runs.get(1).size());
+        assertEquals(diff.getJSONObject("now").getString("text"), Files.readString(m));
+        assertEquals("the Gradle module's manifest is untouched", diff.getJSONObject("committed").getString("text"), Files.readString(manifest));
+    }
 }

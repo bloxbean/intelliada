@@ -124,4 +124,68 @@ public class JoustM2PlatformTest extends BasePlatformTestCase {
         assertEquals(java.util.List.of(), cl.getOptions().getTokens());
         assertEquals(":app:acceptJscAbi", cl.getTasks().iterator().next().getName());
     }
+
+    /** I20 with a real process: losing trust while the project's npm CLI runs kills it and discards its result. */
+    public void testLosingTrustKillsARunningNpmBuild() throws Exception {
+        String node = com.bloxbean.intelliada.idea.joust.JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        var state = com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.getInstance();
+        var saved = state.getState();
+        try {
+            var d = new com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.Data();
+            d.nodePath = node;
+            state.loadState(d);
+            state.setValidatedNode(com.bloxbean.intelliada.idea.joust.core.JoustToolValidator.identityOf(Path.of(node).toRealPath()), "test");
+            Path web = Files.createDirectories(base.resolve("web"));
+            Files.writeString(web.resolve("joust.config.json"), "{}");
+            Path pkg = Files.createDirectories(web.resolve("node_modules/@julclang/joust/bin"));
+            Files.writeString(pkg.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\",\"version\":\"0.1.0-pre2\"}");
+            Files.writeString(pkg.resolve("joust.js"), "require('fs').writeFileSync('pid', String(process.pid)); setTimeout(() => {}, 120000);\n");
+            var layout = JoustProjectLayout.scan(base, com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current());
+            var root = layout.npmRoots().stream().filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+            assertTrue(root.cliInstalled());
+            var result = ApplicationManager.getApplication().executeOnPooledThread(
+                    () -> com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.run(getProject(), root, java.util.List.of("build")));
+            Path pidFile = web.resolve("pid");
+            for (int i = 0; i < 200 && !Files.exists(pidFile); i++) Thread.sleep(50);
+            assertTrue("the CLI started", Files.exists(pidFile));
+            long pid = Long.parseLong(Files.readString(pidFile).trim());
+            assertTrue(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+            TrustedProjects.setProjectTrusted(getProject(), false);
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            var r = result.get(20, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue("the late result is discarded", r.cancelled());
+            for (int i = 0; i < 100 && ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false); i++) Thread.sleep(50);
+            assertFalse("the process was killed", ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+        } finally {
+            state.loadState(saved);
+        }
+    }
+
+    /** D8 step 1 for any Gradle run: the recorded JSC0002 output, split across chunks, gives one notification. */
+    public void testAGradleRunsAbiFailureIsNotified() throws Exception {
+        java.util.List<String> titles = new java.util.concurrent.CopyOnWriteArrayList<>();
+        getProject().getMessageBus().connect(getTestRootDisposable()).subscribe(com.intellij.notification.Notifications.TOPIC,
+                new com.intellij.notification.Notifications() {
+                    @Override
+                    public void notify(@org.jetbrains.annotations.NotNull com.intellij.notification.Notification n) {
+                        titles.add(n.getTitle());
+                    }
+                });
+        String log = new String(getClass().getClassLoader().getResourceAsStream("joust-m2/generateJsc-JSC0002.log").readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        var listener = new com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustAbiFailureListener();
+        var id = com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId.create(
+                org.jetbrains.plugins.gradle.util.GradleConstants.SYSTEM_ID,
+                com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        for (int i = 0; i < log.length(); i += 17) {
+            listener.onTaskOutput(id, log.substring(i, Math.min(log.length(), i + 17)), com.intellij.execution.process.ProcessOutputType.STDERR);
+        }
+        listener.onEnd(id);
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        assertEquals(titles.toString(), 1, titles.stream().filter(t -> t.startsWith("ABI change in Counter")).count());
+        // A crafted line pointing outside the project gives nothing.
+        assertEquals(0, com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustAbiFailureListener.notifyFailures(getProject(),
+                java.util.List.of("../../etc/passwd.jsc:1:1: error[JSC0002]: the ABI manifest passwd.abi.json differs")));
+    }
 }
