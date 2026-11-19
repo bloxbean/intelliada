@@ -30,22 +30,34 @@ public final class NodeVersionProbe {
 
     /** Runs {@code <realNode> --version}; returns its trimmed first line, or throws. */
     public static String probe(Path realNode) throws IOException {
-        return probe(List.of(realNode.toString(), "--version"), realNode.getParent(), TIMEOUT_MS);
+        return probe(realNode, () -> false);
+    }
+
+    /** As {@link #probe(Path)}, stopping the child as soon as {@code cancelled} answers true (M1-CDX-16). */
+    public static String probe(Path realNode, java.util.function.BooleanSupplier cancelled) throws IOException {
+        return probe(List.of(realNode.toString(), "--version"), realNode.getParent(), TIMEOUT_MS, cancelled);
     }
 
     static String probe(List<String> command, Path dir, long timeoutMs) throws IOException {
+        return probe(command, dir, timeoutMs, () -> false);
+    }
+
+    static String probe(List<String> command, Path dir, long timeoutMs, java.util.function.BooleanSupplier cancelled) throws IOException {
         INVOCATIONS.incrementAndGet();
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(true);
         if (dir != null) pb.directory(dir.toFile());
         Process p = pb.start();
         CompletableFuture<byte[]> out = CompletableFuture.supplyAsync(() -> drain(p.getInputStream()));
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         try {
-            if (!p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-                throw new IOException("node --version did not finish in " + timeoutMs / 1000 + " s");
+            while (!p.waitFor(100, TimeUnit.MILLISECONDS)) {
+                if (cancelled.getAsBoolean()) throw new IOException("cancelled");
+                if (System.nanoTime() >= deadline) throw new IOException("node --version did not finish in " + timeoutMs / 1000 + " s");
             }
             if (p.exitValue() != 0) throw new IOException("node --version exited with " + p.exitValue());
-            byte[] bytes = out.get(Math.max(1, timeoutMs / 10), TimeUnit.MILLISECONDS);
+            long left = Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+            byte[] bytes = out.get(left, TimeUnit.MILLISECONDS);
             String text = new String(bytes, StandardCharsets.UTF_8).trim();
             int nl = text.indexOf('\n');
             return nl < 0 ? text : text.substring(0, nl).trim();

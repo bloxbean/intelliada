@@ -16,6 +16,13 @@ log({ event: 'started', argv: process.argv.slice(2), cwd: process.cwd(), pid: pr
 let buf = Buffer.alloc(0);
 let nextId = 1000;
 const pending = new Map();
+const sendRaw = (text) => {
+  const b = Buffer.from(text, 'utf8');
+  process.stdout.write('Content-Length: ' + b.length + '\r\n\r\n');
+  process.stdout.write(b);
+};
+let folds = 0;
+let opens = 0;
 const send = (o) => {
   const b = Buffer.from(JSON.stringify(Object.assign({ jsonrpc: '2.0' }, o)), 'utf8');
   process.stdout.write('Content-Length: ' + b.length + '\r\n\r\n');
@@ -66,11 +73,22 @@ function onMessage(m) {
       request('workspace/workspaceFolders', null, 'workspaceFolders');
       notify('window/showMessage', { type: 1, message: 'boom ' + img('message') + ' <a href="file:///etc/passwd">open</a>' });
       request('window/workDoneProgress/create', { token: 'p1' }, 'progress-create');
-      notify('$/progress', { token: 'p1', value: { kind: 'begin', title: '\u001b[31m<html><b>T</b>' + 'x'.repeat(5000), message: img('progress') } });
+      notify('$/progress', { token: 'p1', value: { kind: 'begin', title: '\u001b[31m<html><b>T</b>' + 'x'.repeat(5000), message: '<html>' + img('progress') } });
+      notify('window/logMessage', { type: 3, message: '\u001b[31m<html><b>log</b>' + img('log') });
       notify('$/progress', { token: 'p1', value: { kind: 'end' } });
       log({ event: 'initialized-done' });
       break;
     case 'textDocument/didOpen':
+      opens++;
+      // A fresh folder request on every open, so module changes during a session are seen (I25).
+      request('workspace/workspaceFolders', null, 'workspaceFolders-' + opens);
+      notify('joust/status', { uri: m.params.textDocument.uri, compiler: '0.0.0-hostile', source: 'bundled', mode: 'advisory',
+        state: 'ok', server: '<b>x</b>' });
+      // Unsolicited diagnostics for a document the client never opened (M1-CDX-24).
+      notify('textDocument/publishDiagnostics', { uri: targets.unopened, diagnostics: [{ range: range(0, 0, 0, 1), severity: 1,
+        message: 'UNSOLICITED ' + img('unsolicited') }] });
+      notify('textDocument/publishDiagnostics', { uri: 'file:////evil-server/share/x.jsc', diagnostics: [{ range: range(0, 0, 0, 1),
+        severity: 1, message: 'REMOTE' }] });
       notify('textDocument/publishDiagnostics', { uri: m.params.textDocument.uri, diagnostics: [{
         range: range(0, 0, 0, 3), severity: 1, code: 'JSC0502', source: '<b>src</b>' + img('source'),
         message: 'List<T> is bad ' + img('diag'),
@@ -90,6 +108,14 @@ function onMessage(m) {
         range: range(0, 0, 1, 0), selectionRange: range(0, 0, 0, 3) }] });
       break;
     case 'textDocument/foldingRange':
+      // First an error (written with an escaped member name, M1-SEC-1), then a folding with a markup placeholder.
+      if (folds++ % 2 === 1) {
+        send({ id: m.id, result: [{ startLine: 0, endLine: 2, collapsedText: '<html><img src="http://127.0.0.1:' + port + '/fold">' + 'z'.repeat(500) }] });
+        break;
+      }
+      sendRaw('{"jsonrpc":"2.0","id":' + JSON.stringify(m.id) + ',"\\u0065rror":{"code":-32603,"message":"fold ' + img('error').replace(/"/g, '\\"')
+        + ' <a href=\\"file:///etc/passwd\\">x</a>"}}');
+      break;
     case 'textDocument/selectionRange':
     case 'textDocument/documentHighlight':
       send({ id: m.id, error: { code: -32603, message: 'fold ' + img('error') + ' <a href="file:///etc/passwd">x</a>' + 'y'.repeat(5000), data: img('data') } });

@@ -46,6 +46,20 @@ public class JoustNodeProbeTest {
         }
     }
 
+    /** M1-CDX-16: cancellation stops the child promptly, inside the deadline. */
+    @Test
+    public void cancellationStopsTheProbe() throws Exception {
+        Path node = JoustTestFiles.executable(tmp.getRoot().toPath().resolve("slow/node"), "#!/bin/sh\nsleep 600\n");
+        long t0 = System.nanoTime();
+        try {
+            NodeVersionProbe.probe(node, () -> System.nanoTime() - t0 > 300_000_000L);
+            fail("a cancelled probe returned");
+        } catch (IOException expected) {
+            assertEquals("cancelled", expected.getMessage());
+            assertTrue((System.nanoTime() - t0) / 1_000_000 < 3_000);
+        }
+    }
+
     @Test
     public void outputIsCapped() throws Exception {
         Path node = JoustTestFiles.executable(tmp.getRoot().toPath().resolve("loud/node"),

@@ -70,6 +70,15 @@ public final class PlainText {
     }
 
     /**
+     * Literal text for a surface that is not HTML but might auto-detect it (a Swing label shows HTML when the text starts
+     * with {@code <html>}): cleaned, capped, and with {@code <} and {@code >} shown as {@code ‹} and {@code ›}, so no
+     * markup survives whatever renders it (M1-CDX-13).
+     */
+    public static String literal(String s, int cap) {
+        return clean(s, cap).replace('<', '\u2039').replace('>', '\u203A');
+    }
+
+    /**
      * A short label for a Swing component that may render HTML (a status bar widget, a list cell): only letters, digits
      * and {@code . _ - + ( ) : / ;} and spaces survive, capped.
      */

@@ -68,7 +68,30 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
         setIncludeSystemEnvironmentVariables(true);
         Consumer<List<String>> rec = launchRecorder;
         if (rec != null) rec.accept(launch.command());
-        super.start();
+        try {
+            super.start();
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
+    }
+
+    /**
+     * LSP4IJ builds its own notification from these exceptions' messages, which would carry the command and working
+     * directory unescaped (M1-CDX-7). IntelliAda shows the details escaped and hands LSP4IJ only {@link #SAFE_FAILURE}.
+     */
+    @Override
+    public void ensureIsAlive() throws CannotStartProcessException {
+        try {
+            super.ensureIsAlive();
+        } catch (RuntimeException e) {
+            throw failed(e);
+        }
+    }
+
+    private CannotStartProcessException failed(Exception e) {
+        JoustNotifications.show(project, "JOUST language server stopped",
+                "joust-lsp did not start or exited early: " + e.getMessage(), NotificationType.WARNING);
+        return new CannotStartProcessException(SAFE_FAILURE);
     }
 
     /** The server's output, with JSON-RPC error messages escaped before LSP4J reads them (M1-SEC-1). */

@@ -92,8 +92,8 @@ public class JoustLspIntegrationTest {
 
     @BeforeClass
     public static void tools() {
-        nodePath = System.getenv("JOUST_NODE");
-        lspPath = System.getenv("JOUST_LSP");
+        nodePath = JoustTestTools.env("JOUST_NODE", "JoustLspIntegrationTest");
+        lspPath = JoustTestTools.env("JOUST_LSP", "JoustLspIntegrationTest");
         Assume.assumeTrue("set JOUST_NODE and JOUST_LSP to run against a real joust-lsp", nodePath != null && lspPath != null);
     }
 

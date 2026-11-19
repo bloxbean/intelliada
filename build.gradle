@@ -142,6 +142,9 @@ test {
         }
         ["-Djoust.lint.classpath=${configurations.joustLint.asPath}", "-Djoust.lint.java=${java}"]
     } as CommandLineArgumentProvider)
+    // ADR-004 milestone verification: with JOUST_REQUIRE_TOOLS=1 a JOUST test whose tools are missing fails instead of
+    // skipping (M1-CDX-25).
+    systemProperty 'joust.requireTools', System.getenv('JOUST_REQUIRE_TOOLS') ?: 'false'
 }
 
 // The IDE ships its own Kotlin standard library; the Kotlin Gradle plugin's older one on the test classpath stops the

@@ -52,6 +52,10 @@ public final class JoustToolValidator {
     public static Result checkNode(String configured, Collection<Path> forbiddenRoots, JoustPaths.Flavor flavor) {
         Result r = checkExecutable(configured, "Node", forbiddenRoots, flavor);
         if (!r.ok()) return r;
+        if (isScript(r.realPath())) {
+            return Result.fail(r.selected(), "Node resolves to a script, not the node binary: " + r.realPath()
+                    + " (a version-manager or npm shim chooses what it runs; select the installed binary).");
+        }
         // M1-CDX-5: the real target must be a node binary; npx, npm and their kin are refused whatever they resolve to.
         String selectedName = r.selected().getFileName().toString().toLowerCase(java.util.Locale.ROOT).replaceAll("\\.(exe|cmd|bat|ps1|js)$", "");
         if (!NODE_NAMES.contains(r.realPath().getFileName().toString().toLowerCase(java.util.Locale.ROOT)) || NOT_NODE.contains(selectedName)) {
@@ -145,6 +149,16 @@ public final class JoustToolValidator {
         String where = locationProblem(selected, real, forbiddenRoots, flavor);
         if (where != null) return Result.fail(selected, "joust-lsp " + where);
         return new Result(selected, real, null);
+    }
+
+    /** True when the file starts with {@code #!}: a script, never a Node binary (M1-CDX-5). */
+    static boolean isScript(Path real) {
+        try (InputStream in = Files.newInputStream(real)) {
+            byte[] head = in.readNBytes(2);
+            return head.length == 2 && head[0] == '#' && head[1] == '!';
+        } catch (IOException e) {
+            return true;
+        }
     }
 
     /** The {@code @julclang/joust} version, read as text from the package.json beside the package; never by running it. */

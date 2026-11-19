@@ -40,7 +40,7 @@ public class JoustNewPlannerTest {
         Assume.assumeTrue("Unix file system", File.separatorChar == '/');
         base = tmp.getRoot().toPath().toRealPath();
         joust = JoustTestFiles.executable(base.resolve("tools/joust/bin/joust"), "#!/bin/sh\necho joust 0.1.0-pre2 native\n");
-        node = JoustTestFiles.executable(base.resolve("tools/node/bin/node"), "#!/bin/sh\n");
+        node = JoustTestTools.nodeBinary(base.resolve("tools/node/bin/node"));
         Path npmCli = JoustTestFiles.executable(base.resolve("tools/node/lib/node_modules/npm/bin/npm-cli.js"), "#!/bin/sh\n");
         Files.createSymbolicLink(base.resolve("tools/node/bin/npm"), npmCli);
         jdk = base.resolve("jdk");
