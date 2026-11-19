@@ -182,7 +182,8 @@ public abstract class JoustProjectAction extends AnAction {
      */
     static List<Ctx> notifyAbiFailures(Ctx ctx, String output) {
         List<Ctx> notified = new java.util.ArrayList<>();
-        JoustProjectLayout.SourceRoot root = ctx.layout().sourceRoots().stream().filter(r -> r.npm() == ctx.npm()).findFirst().orElse(null);
+        JoustProjectLayout.SourceRoot root = ctx.layout().sourceRoots().stream()
+                .filter(r -> r.npm() != null && r.npm().dir().equals(ctx.npm().dir())).findFirst().orElse(null);
         if (root == null) return notified;
         java.util.Set<Path> seen = new java.util.HashSet<>();
         for (JoustAbi.Failure f : JoustAbi.failures(output)) {
@@ -216,6 +217,15 @@ public abstract class JoustProjectAction extends AnAction {
                 NotificationType.WARNING);
         if (why == null) n.addAction(NotificationAction.createSimpleExpiring("Review ABI change…", () -> review.start(ctx)));
         n.notify(ctx.project());
+    }
+
+    /** The failing module is known but its source is not where it says: name it, and offer no action (M2-CDX-13). */
+    public static void notifyUnresolvedAbiFailure(Project project, JoustAbi.Failure f, List<String> gradlePaths, List<String> unlinked) {
+        String why = unlinked.isEmpty() ? ", but that source is not in the module now. Build again, then use Review ABI Change… on the .jsc."
+                : ", and the module with that source is not linked (" + PlainText.title(String.join(", ", unlinked), 400)
+                + "): Link the Gradle build first, then use Review ABI Change… on the .jsc.";
+        JoustNotifications.show(project, "ABI change in " + PlainText.title(f.contract(), 120), f.code() + ": " + PlainText.title(f.jscRel(), 200)
+                + " failed in Gradle project " + PlainText.title(String.join(", ", gradlePaths), 400) + why, NotificationType.WARNING);
     }
 
     /** The notification when the owning module of a failure cannot be told (D8 step 2: no action, with the reason). */

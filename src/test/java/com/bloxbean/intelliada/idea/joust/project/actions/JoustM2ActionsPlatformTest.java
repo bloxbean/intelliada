@@ -340,4 +340,28 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
         assertEquals(1, bound.size());
         assertEquals(web.resolve("contracts/app/Counter.jsc"), bound.get(0).fileReal());
     }
+
+    /** M2-CDX-14: the assembled npm console has no project-wide JOUST filter: a source only in another root is no link. */
+    public void testTheNpmConsoleLinksOnlyWithinItsRoot() throws Exception {
+        Path other = Files.createDirectories(base.resolve("other-web"));
+        Files.writeString(other.resolve("joust.config.json"), "{}");
+        Files.writeString(Files.createDirectories(other.resolve("contracts/lib")).resolve("Only.jsc"), "x");
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        var layout = com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).layout();
+        var root = layout.npmRoots().stream().filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+        var filters = JoustNpmTasks.consoleFilters(getProject(), root);
+        String onlyInOther = "lib/Only.jsc:1:1: error[JSC0502]: x";
+        String inThisRoot = "app/Counter.jsc:1:1: error[JSC0502]: x";
+        for (var f : filters) {
+            var r = f.applyFilter(onlyInOther, onlyInOther.length());
+            if (r != null) {
+                for (var item : r.getResultItems()) {
+                    assertFalse("no JOUST link into another root: " + f, item.getHyperlinkInfo() instanceof JoustConsoleFilterProvider.JoustLinkInfo);
+                }
+            }
+        }
+        assertTrue("its own sources link", filters.stream().anyMatch(f -> f.applyFilter(inThisRoot, inThisRoot.length()) != null));
+        assertNotNull("the project-wide filter would have linked it", new JoustConsoleFilterProvider.JoustDiagnosticFilter(getProject())
+                .applyFilter(onlyInOther, onlyInOther.length()));
+    }
 }

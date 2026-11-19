@@ -42,8 +42,11 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
     static final long TEXT_CAP = 1024 * 1024;
     // Never a project root: build output, dependencies and IDE metadata.
     static final Set<String> SKIP = Set.of(".git", ".gradle", ".idea", "build", "node_modules", "out", "target", "dist", ".joust");
-    /** Gradle source sets under {@code src/}: never a project root; anything else under {@code src/} (an app) is scanned. */
-    static final Set<String> SOURCE_SETS = Set.of("main", "test", "testFixtures", "integrationTest");
+    /**
+     * Language source trees of a source set ({@code src/<set>/java}, …): never a project root. Everything else under
+     * {@code src/}, such as an app in {@code src/client} or {@code src/main/webapp}, is scanned (M2-CDX-12).
+     */
+    static final Set<String> LANGUAGE_TREES = Set.of("java", "kotlin", "scala", "groovy", "resources", "jsc", "proto", "antlr", "clojure");
     private static final Pattern VERSION = Pattern.compile(
             "org\\.julclang\\.joust['\"]\\s*\\)?\\s*version\\s*\\(?\\s*['\"]([A-Za-z0-9._+-]{1,40})['\"]");
 
@@ -225,9 +228,9 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
             for (NpmRoot r : npmRoots) {
                 if (r.dir().equals(d)) return new Owner(null, r);
             }
-            // An npm root the bounded scan did not reach still decides, as in project.js (M2-CDX-12).
-            NpmRoot live = npmRoot(d, base, JoustPaths.Flavor.current());
-            if (live != null) return new Owner(null, live);
+            // An npm root the scan did not record (a language source tree, or past a limit) would decide in project.js but
+            // is not in the inventory: no owner, so no action can work on a root verification cannot see (M2-CDX-7).
+            if (npmRoot(d, base, JoustPaths.Flavor.current()) != null) return null;
             for (GradleModule m : gradleModules) {
                 if (m.dir().equals(d)) return new Owner(m, null);
             }
@@ -315,8 +318,9 @@ public record JoustProjectLayout(Path base, List<GradleModule> gradleModules, Li
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
             for (Path c : ds) {
                 String name = c.getFileName().toString();
-                boolean sourceSet = "src".equals(String.valueOf(dir.getFileName())) && SOURCE_SETS.contains(name);
-                if (Files.isDirectory(c, LinkOption.NOFOLLOW_LINKS) && !SKIP.contains(name) && !sourceSet) children.add(c);
+                Path grand = dir.getParent();
+                boolean languageTree = grand != null && "src".equals(String.valueOf(grand.getFileName())) && LANGUAGE_TREES.contains(name);
+                if (Files.isDirectory(c, LinkOption.NOFOLLOW_LINKS) && !SKIP.contains(name) && !languageTree) children.add(c);
             }
         } catch (IOException ignored) {
             truncated[0] = true;

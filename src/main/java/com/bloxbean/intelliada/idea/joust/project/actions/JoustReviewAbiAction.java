@@ -69,7 +69,8 @@ public final class JoustReviewAbiAction extends JoustProjectAction {
         Path base = ctx.layout().base();
         JoustProjectLayout.SourceRoot root = ctx.gradle() != null
                 ? new JoustProjectLayout.SourceRoot(ctx.gradle().dir(), ctx.gradle().jscRoot(), ctx.gradle().generatedRoot(), ctx.gradle(), null)
-                : ctx.layout().sourceRoots().stream().filter(r -> r.npm() == ctx.npm()).findFirst().orElseThrow();
+                : ctx.layout().sourceRoots().stream().filter(r -> r.npm() != null && r.npm().dir().equals(ctx.npm().dir())).findFirst()
+                        .orElseThrow(() -> new Exception("The npm root of " + ctx.moduleName() + " is not in the project's scan."));
         Path contracts = root.verifiedContracts(base);
         if (contracts == null) throw new Exception("The contracts directory of " + ctx.moduleName() + " is not where its module says.");
         String contract = JoustAbiReview.Target.contractOf(contracts, ctx.fileReal());

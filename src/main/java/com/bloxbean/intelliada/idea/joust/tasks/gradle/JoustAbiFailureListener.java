@@ -62,9 +62,17 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
     private final Map<ExternalSystemTaskId, Pending> pending = new ConcurrentHashMap<>();
 
     @Override
-    public void onTaskOutput(@NotNull ExternalSystemTaskId id, @NotNull String text, @NotNull ProcessOutputType type) {
-        if (!GradleConstants.SYSTEM_ID.equals(id.getProjectSystemId())) return;
-        Pending p = pending.computeIfAbsent(id, k -> {
+    public void onStart(@NotNull String projectPath, @NotNull ExternalSystemTaskId id) {
+        if (GradleConstants.SYSTEM_ID.equals(id.getProjectSystemId())) pending(id);   // the generation, at task start (M2-CDX-3)
+    }
+
+    @Override
+    public void onStart(@NotNull ExternalSystemTaskId id, String workingDir) {
+        if (GradleConstants.SYSTEM_ID.equals(id.getProjectSystemId())) pending(id);
+    }
+
+    private Pending pending(ExternalSystemTaskId id) {
+        return pending.computeIfAbsent(id, k -> {
             Pending n = new Pending();
             // The trust generation the run started in: a result is published only within it (M2-CDX-3).
             Project project = k.findProject();
@@ -74,6 +82,12 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             }
             return n;
         });
+    }
+
+    @Override
+    public void onTaskOutput(@NotNull ExternalSystemTaskId id, @NotNull String text, @NotNull ProcessOutputType type) {
+        if (!GradleConstants.SYSTEM_ID.equals(id.getProjectSystemId())) return;
+        Pending p = pending(id);
         synchronized (p) {
             for (int i = 0; i < text.length(); i++) {
                 char c = text.charAt(i);
@@ -161,13 +175,24 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             Set<String> owners = new HashSet<>();
             if (diag.task() != null) owners.add(ownerOf(diag.task()));
             else failedTasks.forEach(t -> owners.add(ownerOf(t)));
-            if (candidates.size() > 1 && gradle != null && !owners.isEmpty()) {
+            // When the failing task is known, only its module may get the notification, even for a single candidate;
+            // a source no longer there names the failing module without an action (M2-CDX-13).
+            if (gradle != null && !owners.isEmpty()) {
                 List<JoustProjectLayout.SourceRoot> failed = new ArrayList<>();
+                List<String> unlinked = new ArrayList<>();
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());
-                    if (linked != null && owners.contains(linked.gradlePath())) failed.add(r);
+                    if (linked == null) unlinked.add(layout.base().relativize(r.ownerDir()).toString());
+                    else if (owners.contains(linked.gradlePath())) failed.add(r);
                 }
-                candidates = failed.isEmpty() ? candidates : failed;
+                if (failed.isEmpty()) {
+                    if (seen.add("!" + owners + printed.rel())) {
+                        JoustProjectAction.notifyUnresolvedAbiFailure(project, f, List.copyOf(new java.util.TreeSet<>(owners)), unlinked);
+                        n++;
+                    }
+                    continue;
+                }
+                candidates = failed;
             }
             if (candidates.isEmpty()) continue;
             if (candidates.size() > 1) {

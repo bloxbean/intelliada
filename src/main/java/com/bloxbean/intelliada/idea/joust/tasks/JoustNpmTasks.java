@@ -71,22 +71,16 @@ public final class JoustNpmTasks {
                     .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
             OSProcessHandler handler = new OSProcessHandler(cl);
             run.attach(handler::destroyProcess);   // runs at once if cancelled while starting
-            StringBuilder out = new StringBuilder();
+            JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP);
             handler.addProcessListener(new ProcessListener() {
                 @Override
                 public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                    String t = event.getText();
-                    synchronized (out) {
-                        if (t != null && out.length() < OUTPUT_CAP) out.append(t, 0, Math.min(t.length(), OUTPUT_CAP - out.length()));
-                    }
+                    out.append(event.getText());
                 }
             });
             if (showsConsole()) {
-                // The console's links resolve within this npm root only (M2-CDX-14).
-                var filter = new com.bloxbean.intelliada.idea.joust.project.JoustConsoleFilterProvider.JoustDiagnosticFilter(project,
-                        List.of(root.dir()));
                 ApplicationManager.getApplication().invokeAndWait(() -> new com.intellij.execution.RunContentExecutor(project, handler)
-                        .withTitle(PlainText.title(title, 120)).withActivateToolWindow(true).withFilter(filter).run());
+                        .withConsole(console(project, root)).withTitle(PlainText.title(title, 120)).withActivateToolWindow(true).run());
             } else {
                 handler.startNotify();
             }
@@ -96,12 +90,31 @@ public final class JoustNpmTasks {
             }
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
             Integer code = handler.getExitCode();
-            synchronized (out) {
-                return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false);
-            }
+            return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false);
         } finally {
             tracker.done(run);
         }
+    }
+
+    /**
+     * The filters of an npm Run console (M2-CDX-14): IntelliJ's standard filters from every other provider, and the
+     * JOUST filter scoped to this npm root; never the project-wide JOUST filter.
+     */
+    public static List<com.intellij.execution.filters.Filter> consoleFilters(Project project, JoustProjectLayout.NpmRoot root) {
+        List<com.intellij.execution.filters.Filter> filters = new ArrayList<>();
+        for (var provider : com.intellij.execution.filters.ConsoleFilterProvider.FILTER_PROVIDERS.getExtensionList()) {
+            if (provider instanceof com.bloxbean.intelliada.idea.joust.project.JoustConsoleFilterProvider) continue;
+            filters.addAll(List.of(provider.getDefaultFilters(project)));
+        }
+        filters.add(new com.bloxbean.intelliada.idea.joust.project.JoustConsoleFilterProvider.JoustDiagnosticFilter(project, List.of(root.dir())));
+        return filters;
+    }
+
+    static com.intellij.execution.ui.ConsoleView console(Project project, JoustProjectLayout.NpmRoot root) {
+        var builder = new com.intellij.execution.filters.TextConsoleBuilderImpl(project);
+        builder.setUsePredefinedMessageFilter(false);   // the providers are added above, without the project-wide JOUST one
+        builder.filters(consoleFilters(project, root));
+        return builder.getConsole();
     }
 
     /** A Run console in the IDE; tests without one read the captured output only. */

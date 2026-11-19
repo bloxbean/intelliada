@@ -547,4 +547,94 @@ public class JoustAbiTest {
             }
         }
     }
+
+    /** M2-CDX-6: both pinned refusal forms are matched by the selected source path, and only that source. */
+    @Test
+    public void refusalsAreMatchedBySourcePath() {
+        String sourceChanged = "org/acme/Counter.jsc:1:1: error[JSC0002]: not accepted: the manifest the build computes now is "
+                + "aaaa, not the reviewed bbbb";
+        assertNotNull(JoustAbi.refusal(sourceChanged, "org/acme/Counter.jsc"));
+        assertNotNull(JoustAbi.refusal("x\n" + sourceChanged + "\nBUILD FAILED", "org/acme/Counter.jsc"));
+        assertNull(JoustAbi.refusal(sourceChanged.replace("Counter.jsc", "OtherCounter.jsc"), "org/acme/Counter.jsc"));
+        assertNull(JoustAbi.refusal("org/acme/OtherCounter.jsc:1:1: error[JSC0002]: not accepted: the ABI manifest OtherCounter.abi.json",
+                "org/acme/Counter.jsc"));
+        assertNull("a later build failure is no refusal", JoustAbi.refusal("error: compileJava failed", "org/acme/Counter.jsc"));
+        // Kept past the output cap as it arrives.
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
+        capture.append("y".repeat(10_000) + "\n");
+        for (int i = 0; i < 10; i++) capture.append(sourceChanged.substring(i * 10, Math.min(sourceChanged.length(), i * 10 + 10)));
+        capture.append(sourceChanged.substring(Math.min(sourceChanged.length(), 100)) + "\nBUILD FAILED\n");
+        assertNotNull(JoustAbi.refusal(capture.toString(), "org/acme/Counter.jsc"));
+        assertTrue(capture.toString().length() < 64 + 2_100);
+    }
+
+    /** M2-CDX-6: a concurrent acceptance writes h2 while the bound task refuses because the source changed. */
+    @Test
+    public void aSourceChangedRefusalWinsOverTheFinalFile() throws Exception {
+        FakeJoust joust = new FakeJoust() {
+            @Override
+            public JoustAbiReview.Result run(List<String> args) {
+                if (args.get(0).endsWith(":acceptJscAbi")) {
+                    runs.add(args);
+                    try {
+                        Files.writeString(manifest, text2());
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                    return new JoustAbiReview.Result(false, "org/acme/Counter.jsc:1:1: error[JSC0002]: not accepted: the manifest the build"
+                            + " computes now is " + "c".repeat(64) + ", not the reviewed " + h2(), false);
+                }
+                return super.run(args);
+            }
+        };
+        FakeUi ui = new FakeUi();
+        assertFalse(review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
+        assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.startsWith("REFUSED") && r.contains("computes now")));
+    }
+
+    /** M2-CDX-5: snapshot keys are exact path strings, so two manifests differing only in case are both checked. */
+    @Test
+    public void manifestsDifferingOnlyInCaseAreDistinct() throws Exception {
+        JoustAbi.Diff d = JoustAbi.parse(diffJson);
+        String a = base.resolve("app/X.abi.json").toString();
+        String b = base.resolve("App/X.abi.json").toString();
+        var before = new JoustAbi.Snapshot(new java.util.TreeMap<>(java.util.Map.of(a, h1(), b, "1".repeat(64))), null);
+        var after = new JoustAbi.Snapshot(new java.util.TreeMap<>(java.util.Map.of(a, h2(), b, "2".repeat(64))), null);
+        assertEquals(2, before.hashes().size());
+        String wrong = JoustAbi.verifyAccepted(before, after, Path.of(a), d);
+        assertNotNull("the other-case manifest changed", wrong);
+        assertTrue(wrong, wrong.contains("App"));
+        var unchanged = new JoustAbi.Snapshot(new java.util.TreeMap<>(java.util.Map.of(a, h2(), b, "1".repeat(64))), null);
+        assertNull(JoustAbi.verifyAccepted(before, unchanged, Path.of(a), d));
+    }
+
+    /** M2-CDX-7, M2-CDX-12: an npm app under src/main/webapp is owned, inventoried, and its manifest's change detected. */
+    @Test
+    public void aNestedAppUnderSrcMainIsInTheInventory() throws Exception {
+        Path webapp = Files.createDirectories(module.resolve("src/main/webapp"));
+        Files.writeString(webapp.resolve("joust.config.json"), "{}");
+        Path nested = Files.createDirectories(webapp.resolve("contracts/app"));
+        Files.writeString(nested.resolve("Counter.jsc"), "jsc 1\n");
+        Path nestedManifest = Files.writeString(nested.resolve("Counter.abi.json"), "{}");
+        var layout = JoustProjectLayout.scan(base, JoustPaths.Flavor.current());
+        assertEquals(webapp, layout.owner(nested.resolve("Counter.jsc").toRealPath()).npm().dir());
+        assertTrue(JoustAbi.manifests(layout).hashes().containsKey(nestedManifest.toRealPath().toString()));
+        FakeJoust joust = new FakeJoust() {
+            @Override
+            public JoustAbiReview.Result run(List<String> args) {
+                JoustAbiReview.Result r = super.run(args);
+                if (args.get(0).endsWith(":acceptJscAbi")) {
+                    try {
+                        Files.writeString(nestedManifest, "{\"changed\":1}");
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return r;
+            }
+        };
+        FakeUi ui = new FakeUi();
+        assertFalse(review(target(module, "app", "org.acme.Counter"), joust, ui, () -> true).run());
+        assertTrue(ui.reports.toString(), ui.reports.stream().anyMatch(r -> r.contains("another manifest") && r.contains("webapp")));
+    }
 }

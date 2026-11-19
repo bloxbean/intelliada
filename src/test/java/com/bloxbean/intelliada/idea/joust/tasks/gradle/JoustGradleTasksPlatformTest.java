@@ -246,4 +246,89 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         waitForTitles(1);
         assertTrue(titles.toString(), titles.stream().anyMatch(t -> t.contains("Link the Gradle build first")));
     }
+
+    private JoustGradleTasksImpl.Binding binding(com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.Run run) {
+        var env = JoustGradleTasksImpl.environment(getProject(), JoustGradleTasksImpl.settings(base, List.of(":generateJsc"), "Generate"));
+        assertNotNull(env);
+        return new JoustGradleTasksImpl.Binding(getProject(), env, run);
+    }
+
+    private com.intellij.execution.ExecutionListener bus() {
+        return getProject().getMessageBus().syncPublisher(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC);
+    }
+
+    /** M2-DES-10, M2-CDX-22: the run's handler is bound from processStarting or, failing that, processStarted. */
+    public void testTheHandlerIsBoundFromEitherStartEvent() throws Exception {
+        var tracker = com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(getProject());
+        for (String event : new String[]{"starting", "started", "started-after-exit"}) {
+            var run = tracker.start(JoustRunGuard.capture(getProject()));
+            var b = binding(run);
+            var h = new com.intellij.execution.process.NopProcessHandler();
+            h.startNotify();
+            if (event.equals("started-after-exit")) {
+                h.notifyTextAvailable("org/acme/Counter.jsc:1:1: error[JSC0002]: x\n", com.intellij.execution.process.ProcessOutputTypes.STDOUT);
+                h.destroyProcess();
+                h.waitFor(5_000);
+            }
+            if (event.equals("starting")) bus().processStarting("Run", b.env(), h);
+            else bus().processStarted("Run", b.env(), h);
+            assertTrue(event, b.bound());
+            if (!event.equals("started-after-exit")) {
+                h.notifyTextAvailable("org/acme/Counter.jsc:1:1: error[JSC0002]: x\n", com.intellij.execution.process.ProcessOutputTypes.STDOUT);
+                h.destroyProcess();
+                assertTrue(event + ": output captured", b.out.toString().contains("JSC0002"));
+            }
+            assertTrue(event + ": the exit is seen", b.done.get(5, java.util.concurrent.TimeUnit.SECONDS) != null);
+            b.release(true, 1_000);
+            tracker.done(run);
+        }
+    }
+
+    /** M2-CDX-3: revoked after submission, before the handler: the handler that arrives later is destroyed at once. */
+    public void testAHandlerArrivingAfterCancellationIsDestroyed() throws Exception {
+        var tracker = com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(getProject());
+        var run = tracker.start(JoustRunGuard.capture(getProject()));
+        var b = binding(run);
+        TrustedProjects.setProjectTrusted(getProject(), false);   // cancels the run through the tracker
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        assertTrue(run.cancelled());
+        assertTrue(b.done.isDone());
+        b.release(true, 60_000);   // IntelliAda stops waiting; the binding keeps listening
+        tracker.done(run);
+        var h = new com.intellij.execution.process.NopProcessHandler();
+        h.startNotify();
+        bus().processStarting("Run", b.env(), h);
+        assertTrue("the late handler is destroyed", h.waitFor(5_000));
+        assertTrue(h.isProcessTerminated());
+    }
+
+    /** M2-CDX-3: a run revoked and re-trusted before its first output is not published. */
+    public void testAGenerationIsTakenAtTaskStart() throws Exception {
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        listener.onStart(base.toString(), id);
+        TrustedProjects.setProjectTrusted(getProject(), false);
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        TrustedProjects.setProjectTrusted(getProject(), true);
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        feed(listener, id, "> Task :other:generateJsc\n" + log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        Thread.sleep(500);
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+        assertEquals(titles.toString(), 0, titles.size());
+    }
+
+    /** M2-CDX-13: the failing task is known and its source is gone: the copy in another module gets no action. */
+    public void testAKnownFailingModuleIsNeverSwappedForAnother() throws Exception {
+        Files.delete(base.resolve("src/main/jsc/org/acme/Counter.jsc"));   // :generateJsc failed for it, then it went away
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        feed(listener, id, "> Task :generateJsc\n" + log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains("failed in Gradle project :") && titles.get(0).contains("not in the module now"));
+        assertFalse(titles.get(0).contains(":other"));
+    }
 }

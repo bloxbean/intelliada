@@ -3,6 +3,7 @@ package com.bloxbean.intelliada.idea.joust.tasks.gradle;
 import com.bloxbean.intelliada.idea.joust.abi.JoustAbiReview;
 import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustGradleTasks;
+import com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustRunGuard;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker;
 import com.intellij.execution.ExecutionListener;
@@ -136,73 +137,138 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         }
     }
 
+    /**
+     * IntelliAda's view of one submitted Gradle run, from public execution events (M2-DES-7). It binds the run's process
+     * handler from {@code processStarting} or, when IntelliJ skips that because the handler was already start-notified,
+     * from {@code processStarted} (M2-CDX-22); it stays subscribed until the handler arrives or the run did not start,
+     * even after IntelliAda stopped waiting, so a cancellation always reaches a submitted task (M2-CDX-3).
+     */
+    static final class Binding {
+        final JoustTaskTracker.Run run;
+        final JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP);
+        final CompletableFuture<Boolean> done = new CompletableFuture<>();
+        private final AtomicReference<ProcessHandler> handler = new AtomicReference<>();
+        private final CompletableFuture<Void> settled = new CompletableFuture<>();
+        private final MessageBusConnection bus;
+        private final ExecutionEnvironment env;
+
+        Binding(Project project, ExecutionEnvironment env, JoustTaskTracker.Run run) {
+            this.run = run;
+            this.env = env;
+            run.attach(() -> done.cancel(false));
+            bus = project.getMessageBus().connect();
+            bus.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
+                @Override
+                public void processStarting(@NotNull String executorId, @NotNull ExecutionEnvironment e, @NotNull ProcessHandler h) {
+                    if (e == env) bind(h);
+                }
+
+                @Override
+                public void processStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e, @NotNull ProcessHandler h) {
+                    if (e == env) bind(h);
+                }
+
+                @Override
+                public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e) {
+                    if (e == env) {
+                        done.complete(false);
+                        settle();
+                    }
+                }
+            });
+        }
+
+        /** Binds the handler once: output, exit code, and cancellation; an already-terminated handler completes now. */
+        void bind(ProcessHandler h) {
+            if (!handler.compareAndSet(null, h)) return;
+            h.addProcessListener(new ProcessListener() {
+                @Override
+                public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
+                    out.append(event.getText());
+                }
+
+                @Override
+                public void processTerminated(@NotNull ProcessEvent event) {
+                    done.complete(event.getExitCode() == 0);
+                }
+            });
+            if (h.isProcessTerminated()) done.complete(Integer.valueOf(0).equals(h.getExitCode()));
+            run.attach(() -> {
+                if (h instanceof ExternalSystemProcessHandler es) es.getTask().cancel();
+                h.destroyProcess();
+            });
+            settle();
+        }
+
+        private void settle() {
+            if (settled.complete(null)) bus.disconnect();
+        }
+
+        /**
+         * Called when IntelliAda stops waiting. A run that never got its handler keeps listening (up to {@code grace}) so
+         * that a late handler is cancelled at once; one that was never submitted lets go now.
+         */
+        void release(boolean submitted, long graceMillis) {
+            if (!submitted) {
+                settle();
+                return;
+            }
+            if (!settled.isDone()) {
+                com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
+                        .schedule(this::settle, graceMillis, TimeUnit.MILLISECONDS);
+            }
+        }
+
+        boolean bound() {
+            return handler.get() != null;
+        }
+
+        ExecutionEnvironment env() {
+            return env;
+        }
+    }
+
+    static final long LATE_HANDLER_GRACE_MS = 10 * 60 * 1000;
+
     @Override
     public JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) throws InterruptedException {
         Project project = guard.project();
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
         JoustTaskTracker.Run run = tracker.start(guard);
         if (run == null) return new JoustAbiReview.Result(false, "", true);
-        StringBuilder out = new StringBuilder();
-        CompletableFuture<Boolean> done = new CompletableFuture<>();
-        AtomicReference<ExecutionEnvironment> envRef = new AtomicReference<>();
-        run.attach(() -> done.cancel(false));
-        MessageBusConnection bus = project.getMessageBus().connect();
+        Binding binding = null;
+        boolean submitted = false;
         try {
             ExecutionEnvironment env = environment(project, settings(rootDir, args, title));
             if (env == null) return new JoustAbiReview.Result(false, "IntelliJ cannot run Gradle tasks here.", false);
-            envRef.set(env);
-            // Public APIs only (M2-DES-7): the run's process handler, from the execution events, gives its output, its
-            // exit code and, through its external-system task, cancellation.
-            bus.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
-                @Override
-                public void processStarting(@NotNull String executorId, @NotNull ExecutionEnvironment e, @NotNull ProcessHandler handler) {
-                    if (e != envRef.get()) return;
-                    handler.addProcessListener(new ProcessListener() {
-                        @Override
-                        public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                            String t = event.getText();
-                            synchronized (out) {
-                                if (t != null && out.length() < OUTPUT_CAP) out.append(t, 0, Math.min(t.length(), OUTPUT_CAP - out.length()));
-                            }
-                        }
-
-                        @Override
-                        public void processTerminated(@NotNull ProcessEvent event) {
-                            done.complete(event.getExitCode() == 0);
-                        }
-                    });
-                    run.attach(() -> {
-                        if (handler instanceof ExternalSystemProcessHandler es) es.getTask().cancel();
-                        handler.destroyProcess();
-                    });
-                }
-
-                @Override
-                public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e) {
-                    if (e == envRef.get()) done.complete(false);
-                }
-            });
+            binding = new Binding(project, env, run);
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
             AtomicReference<Exception> failed = new AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean executed = new java.util.concurrent.atomic.AtomicBoolean();
+            Binding b = binding;
             ApplicationManager.getApplication().invokeAndWait(() -> {
                 try {
-                    if (!run.cancelled() && guard.live()) env.getRunner().execute(env);
-                    else done.cancel(false);
+                    if (!run.cancelled() && guard.live()) {
+                        executed.set(true);
+                        env.getRunner().execute(env);
+                    } else {
+                        b.done.cancel(false);
+                    }
                 } catch (Exception e) {
                     failed.set(e);
                 }
             });
+            submitted = executed.get() && failed.get() == null;
             if (failed.get() != null) return new JoustAbiReview.Result(false, String.valueOf(failed.get().getMessage()), false);
-            Boolean ok = await(run, done, TIMEOUT_MINUTES, TimeUnit.MINUTES);
+            Boolean ok = await(run, binding.done, TIMEOUT_MINUTES, TimeUnit.MINUTES);
             if (ok == null) return new JoustAbiReview.Result(false, "the Gradle task did not finish within " + TIMEOUT_MINUTES + " minutes", false);
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
-            synchronized (out) {
-                return new JoustAbiReview.Result(ok, out.toString(), false);
-            }
+            return new JoustAbiReview.Result(ok, binding.out.toString(), false);
         } finally {
-            // Never unregister work that may still run (M2-CDX-3): whatever did not finish is cancelled first.
-            if (!done.isDone()) run.cancel();
-            bus.disconnect();
+            // Never let go of work that may still run (M2-CDX-3): cancel what did not finish, and keep listening for a
+            // handler that has not arrived yet, so the cancellation reaches it.
+            if (binding == null || !binding.done.isDone() || binding.done.isCancelled()) run.cancel();
+            if (binding != null) binding.release(submitted, LATE_HANDLER_GRACE_MS);
             tracker.done(run);
         }
     }

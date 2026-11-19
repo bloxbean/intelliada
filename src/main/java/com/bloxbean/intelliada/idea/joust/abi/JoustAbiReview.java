@@ -108,10 +108,10 @@ public final class JoustAbiReview {
             } catch (IOException | RuntimeException e) {
                 throw new JoustAbi.AbiException("the diff's source " + d.file() + " is not in the contracts directory");
             }
-            if (!file.equals(target.jsc())) throw new JoustAbi.AbiException("the diff is for " + d.file() + ", not the selected source");
+            if (!file.toString().equals(target.jsc().toString())) throw new JoustAbi.AbiException("the diff is for " + d.file() + ", not the selected source");
             Path manifest = JoustAbi.manifestPath(d, target.dir(), target.contractsDir());
             String simple = contract.substring(contract.lastIndexOf('.') + 1);
-            if (!manifest.equals(target.jsc().resolveSibling(simple + ".abi.json"))) {
+            if (!manifest.toString().equals(target.jsc().resolveSibling(simple + ".abi.json").toString())) {
                 throw new JoustAbi.AbiException("the manifest " + d.path() + " is not beside " + target.jsc().getFileName());
             }
             String refusal = JoustAbi.verify(d, manifest);
@@ -139,7 +139,8 @@ public final class JoustAbiReview {
             JoustAbi.Snapshot after = JoustAbi.manifests(scan.get());
             // An explicit refusal of this contract by the bound task wins over what the files look like afterwards: another
             // acceptance may have written the same new hash meanwhile (M2-CDX-6).
-            String refusedByTask = !a.ok() ? JoustAbi.refusal(a.output(), contract) : null;
+            String jscRel = target.contractsDir().relativize(target.jsc()).toString().replace('\\', '/');
+            String refusedByTask = !a.ok() ? JoustAbi.refusal(a.output(), jscRel) : null;
             if (refusedByTask != null) {
                 ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
                 return false;

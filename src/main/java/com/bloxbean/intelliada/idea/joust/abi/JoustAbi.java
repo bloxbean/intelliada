@@ -123,16 +123,17 @@ public final class JoustAbi {
     }
 
     /**
-     * The bound acceptance's explicit refusal of {@code contract} in task output, or null: a JSC0002 line saying
-     * {@code not accepted} for that contract's manifest (Gradle's AcceptJscAbi, npm's {@code --accept-abi=}).
+     * The bound acceptance's explicit refusal of one source in task output, or null (M2-CDX-6). Both pinned producers
+     * (Gradle's JscMain, npm's {@code src/abi.js} at v0.1.0-pre2) print every refusal as
+     * {@code <source>:1:1: error[JSC0002]: not accepted: …}, the source relative to the contracts directory, whether
+     * the baseline or the source changed; so the line is matched by that source path, exactly.
      */
-    public static String refusal(String output, String contract) {
-        if (output == null) return null;
-        String simple = contract.substring(contract.lastIndexOf('.') + 1);
-        for (String line : output.split("\n", 2000)) {
-            if (line.contains("error[JSC0002]") && line.contains("not accepted") && line.contains(simple + ".abi.json")) {
-                return line.length() > 1000 ? line.substring(0, 1000) : line.strip();
-            }
+    public static String refusal(String output, String jscRel) {
+        if (output == null || jscRel == null) return null;
+        String prefix = jscRel.replace('\\', '/') + ":";
+        for (String line : output.split("\n", -1)) {
+            String l = line.strip();
+            if (l.startsWith(prefix) && l.contains(": error[JSC0002]: not accepted")) return l.length() > 1000 ? l.substring(0, 1000) : l;
         }
         return null;
     }
@@ -230,7 +231,7 @@ public final class JoustAbi {
      * The manifests of a project: SHA-256 of every {@code *.abi.json} under every contracts directory, and why the
      * inventory is incomplete (null when complete). Incomplete is a verification failure, never a silent pass (M2-CDX-7).
      */
-    public record Snapshot(Map<Path, String> hashes, String incomplete) {
+    public record Snapshot(Map<String, String> hashes, String incomplete) {
     }
 
     static final int MAX_MANIFESTS = 10_000;
@@ -238,7 +239,8 @@ public final class JoustAbi {
 
     /** Every manifest under every contracts directory of {@code layout} (I8's "only that manifest"). */
     public static Snapshot manifests(JoustProjectLayout layout) {
-        Map<Path, String> out = new TreeMap<>();
+        // Keyed by the exact real-path string, never Path equality (which folds case on Windows), M2-CDX-5.
+        Map<String, String> out = new TreeMap<>();
         if (!layout.complete()) return new Snapshot(out, "the project scan stopped at its limit");
         String[] incomplete = new String[1];
         for (JoustProjectLayout.SourceRoot r : layout.sourceRoots()) {
@@ -267,7 +269,7 @@ public final class JoustAbi {
                                     return java.nio.file.FileVisitResult.TERMINATE;
                                 }
                                 try {
-                                    out.put(p.toAbsolutePath().normalize(), JoustToolValidator.sha256(p));
+                                    out.put(p.toAbsolutePath().normalize().toString(), JoustToolValidator.sha256(p));
                                 } catch (IOException e) {
                                     incomplete[0] = "a manifest could not be read: " + p;
                                     return java.nio.file.FileVisitResult.TERMINATE;
@@ -297,17 +299,18 @@ public final class JoustAbi {
     public static String verifyAccepted(Snapshot before, Snapshot after, Path manifest, Diff d) {
         if (before.incomplete() != null) return "the manifests could not all be checked before accepting: " + before.incomplete();
         if (after.incomplete() != null) return "the manifests could not all be checked after accepting: " + after.incomplete();
-        Path m = manifest.toAbsolutePath().normalize();
+        String m = manifest.toAbsolutePath().normalize().toString();
+        String name = manifest.getFileName().toString();
         String was = before.hashes().get(m);
         String expected = d.committedSha().equals("none") ? null : d.committedSha();
         if (!java.util.Objects.equals(was, expected)) {
-            return "before accepting, " + m.getFileName() + " was " + (was == null ? "absent" : was) + ", not the reviewed " + d.committedSha();
+            return "before accepting, " + name + " was " + (was == null ? "absent" : was) + ", not the reviewed " + d.committedSha();
         }
-        if (!d.nowSha().equals(after.hashes().get(m))) return "the manifest " + m.getFileName() + " does not have the accepted SHA-256";
+        if (!d.nowSha().equals(after.hashes().get(m))) return "the manifest " + name + " does not have the accepted SHA-256";
         for (var e : before.hashes().entrySet()) {
             if (!e.getKey().equals(m) && !e.getValue().equals(after.hashes().get(e.getKey()))) return "another manifest changed or disappeared: " + e.getKey();
         }
-        for (Path p : after.hashes().keySet()) {
+        for (String p : after.hashes().keySet()) {
             if (!p.equals(m) && !before.hashes().containsKey(p)) return "another manifest appeared: " + p;
         }
         return null;
