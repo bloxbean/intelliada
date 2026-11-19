@@ -68,7 +68,7 @@ public final class JoustNpmTasks {
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
         JoustTaskTracker.Run run = tracker.start(guard);
         if (run == null) return new JoustAbiReview.Result(false, "", true);
-        boolean gone = true;
+        Process proc = null;
         try {
             List<String> cmd = command(project, root, args);
             // The CLI reads the files on disk: save the editors first, then check again, then start (M2-CDX-21).
@@ -77,6 +77,7 @@ public final class JoustNpmTasks {
             GeneralCommandLine cl = new GeneralCommandLine(cmd).withWorkDirectory(root.dir().toFile())
                     .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
             OSProcessHandler handler = new OSProcessHandler(cl);   // the process runs from here
+            proc = handler.getProcess();
             Launch launch = new Launch(handler);
             boolean ended = false;
             try {
@@ -100,8 +101,11 @@ public final class JoustNpmTasks {
                 if (!handler.waitFor(TIMEOUT_MS)) {
                     return new JoustAbiReview.Result(false, "joust did not finish within " + TIMEOUT_MS / 60000 + " minutes", false);
                 }
-                // The handler may have let go of a live child (detached): only the process's own exit counts (M2-CDX-3).
-                if (handler.getProcess().isAlive()) return new JoustAbiReview.Result(false, "", true);
+                // The handler may have let go of a live child (detached): only the process's own exit counts (M2-CDX-3). That
+                // is a failure the user did not ask for, not a cancellation.
+                if (handler.getProcess().isAlive()) {
+                    return new JoustAbiReview.Result(false, "joust was detached from its output while still running and has been ended.", false);
+                }
                 ended = true;
                 if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
                 Integer code = handler.getExitCode();
@@ -110,15 +114,18 @@ public final class JoustNpmTasks {
                 // Whatever happened after the process started (a console that failed to open, a timeout, an exception),
                 // it is ended before the tracker lets go of it (M2-CDX-3).
                 if (!ended) {
-                    gone = kill(launch);
-                    // A process that outlived every attempt is released when it does exit (M2-CDX-3).
-                    if (!gone) launch.handler.getProcess().onExit().thenRun(() -> tracker.done(run));
+                    try {
+                        kill(launch);
+                    } catch (RuntimeException | Error cleanupFailed) {
+                        // whatever cleanup threw, release still follows the process's own exit below
+                    }
                 }
             }
         } finally {
-            // Released only once its process is gone: a process that outlived every attempt stays tracked, so a later
-            // cancellation still reaches it (M2-CDX-3).
-            if (gone) tracker.done(run);
+            // Release follows the process itself (M2-CDX-3): now if it has exited (or never started), else when it does,
+            // whatever the cleanup above did or threw; until then a later cancellation still reaches it.
+            if (proc == null || !proc.isAlive()) tracker.done(run);
+            else proc.onExit().thenRun(() -> tracker.done(run));
         }
     }
 
@@ -170,6 +177,9 @@ public final class JoustNpmTasks {
         return descriptor;
     }
 
+    /** For tests: runs at the start of every kill (it may throw, as a refused cleanup would). */
+    static volatile Runnable killHookForTests;
+
     /** For tests: replaces opening the Run console (it may throw); null for the normal console. */
     static volatile java.util.function.Consumer<com.intellij.execution.process.ProcessHandler> consoleOpener;
 
@@ -199,6 +209,8 @@ public final class JoustNpmTasks {
      */
     /** Returns true when the process itself was seen to exit (a detached handler is no proof, M2-CDX-3). */
     static boolean kill(Launch launch) {
+        Runnable hook = killHookForTests;
+        if (hook != null) hook.run();
         OSProcessHandler handler = launch.handler;
         Process p = handler.getProcess();
         launch.ensureStarted();
@@ -207,7 +219,11 @@ public final class JoustNpmTasks {
         boolean interrupted = false;
         try {
             for (int attempt = 0; attempt < 6 && p.isAlive(); attempt++) {
-                p.descendants().forEach(ProcessHandle::destroyForcibly);
+                try {
+                    p.descendants().forEach(ProcessHandle::destroyForcibly);
+                } catch (RuntimeException notPermitted) {
+                    // enumerating descendants may be refused (sandboxes): the parent is still ended directly
+                }
                 p.destroyForcibly();
                 try {
                     p.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS);   // destroyForcibly returns before the exit

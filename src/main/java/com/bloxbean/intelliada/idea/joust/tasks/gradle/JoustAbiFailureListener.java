@@ -204,6 +204,15 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                 }
                 continue;
             }
+            // Is the known failing task's module itself linked, wherever its source is now? Decided before any early return:
+            // then unlinked copies are unrelated, and the reason is its missing source, not linking (M2-CDX-13).
+            boolean ownerLinked = false;
+            if (gradle != null && !owners.isEmpty()) {
+                for (JoustProjectLayout.GradleModule m : layout.gradleModules()) {
+                    var l = gradle.linked(project, m.dir());
+                    if (l != null && owners.contains(l.gradlePath()) && sameBuild(l, buildRoot)) ownerLinked = true;
+                }
+            }
             // Unlinked modules holding the source, kept through scoping for the reason they get (M2-CDX-13).
             List<String> unlinkedAll = new ArrayList<>();
             if (gradle != null) {
@@ -238,7 +247,8 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                     if (!live(project, generation)) return n;   // published only within the run's generation (M2-CDX-2)
                     if (seen.add("!" + buildRoot + printed.rel())) {
                         JoustProjectAction.notifyUnresolvedAbiFailure(project, f, List.of(owners.isEmpty()
-                                ? "at " + layout.base().relativize(buildRoot) : String.join(", ", new java.util.TreeSet<>(owners))), unlinkedHere);
+                                ? "at " + layout.base().relativize(buildRoot) : String.join(", ", new java.util.TreeSet<>(owners))),
+                                ownerLinked ? List.of() : unlinkedHere);
                         n++;
                     }
                     continue;
@@ -251,11 +261,6 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                 List<JoustProjectLayout.SourceRoot> failed = new ArrayList<>();
                 // Is the failing task's module itself linked, wherever its source is now? Then unlinked copies elsewhere are
                 // unrelated, and the reason is the missing source, not linking (M2-CDX-13).
-                boolean ownerLinked = false;
-                for (JoustProjectLayout.GradleModule m : layout.gradleModules()) {
-                    var l = gradle.linked(project, m.dir());
-                    if (l != null && owners.contains(l.gradlePath()) && sameBuild(l, buildRoot)) ownerLinked = true;
-                }
                 List<String> unlinked = ownerLinked ? List.of() : new ArrayList<>(unlinkedAll);
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());

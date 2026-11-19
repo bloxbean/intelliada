@@ -1024,4 +1024,21 @@ public class JoustAbiTest {
         assertTrue(JoustAbi.reportsAccepted(spaced, "app/Counter.jsc", "Counter.abi.json", " contracts/app/Counter.abi.json"));
         assertFalse(JoustAbi.reportsAccepted(spaced, "app/Counter.jsc", "Counter.abi.json", "contracts/app/Counter.abi.json"));
     }
+
+    /** M2-CDX-6: the pinned "nothing accepted" refusal listing 120 contracts, past the cap, is still recognised. */
+    @Test
+    public void aLongProducerRefusalIsStillSeen() {
+        StringBuilder list = new StringBuilder();
+        for (int i = 0; i < 120; i++) list.append(i == 0 ? "" : ", ").append("org.acme.generated.Contract").append(i);
+        String refusal = "error[JSC0002]: --accept-abi=org.acme.Counter@…: no .jsc 2 contract org.acme.Counter in this build (contracts: "
+                + list + "); nothing accepted";
+        assertTrue(refusal.length() > 3_000);
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP,
+                line -> JoustAbi.refusal(line, "org/acme/Counter.jsc", "org.acme.Counter") != null);
+        capture.append("y".repeat(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP) + "\n");
+        for (int i = 0; i < refusal.length(); i += 100) capture.append(refusal.substring(i, Math.min(refusal.length(), i + 100)));
+        capture.append("\n");
+        assertNotNull(JoustAbi.refusal(capture.toString(), "org/acme/Counter.jsc", "org.acme.Counter"));
+        assertTrue("memory stays bounded", capture.toString().length() < com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP + 10_000);
+    }
 }

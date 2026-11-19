@@ -37,6 +37,9 @@ public final class JoustOutputCapture {
         this.watch = watch;
     }
 
+    /** The end of an over-long line, kept bounded while the line goes on (its start is in {@link #partial}). */
+    private final StringBuilder longTail = new StringBuilder();
+
     public synchronized void append(String text) {
         if (text == null) return;
         int take = Math.min(text.length(), Math.max(0, cap - head.length()));
@@ -45,26 +48,30 @@ public final class JoustOutputCapture {
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c == '\n') {
-                if (!discarding) {
-                    String line = partial.toString();
-                    if (watch != null && watch.test(line)) {
-                        if (firstRefusal == null && line.contains("error[JSC0002]")) firstRefusal = line;
-                        else if (watchedLines < MAX_WATCHED_LINES) {
-                            watched.append(line).append('\n');
-                            watchedLines++;
-                        }
+                // An over-long line is judged by its first and last MAX_LINE characters (memory stays bounded): a pinned
+                // "…; nothing accepted" refusal listing every contract is longer than a line can be kept whole (M2-CDX-6).
+                String line = discarding ? partial + " … " + longTail : partial.toString();
+                if (watch != null && watch.test(line)) {
+                    if (firstRefusal == null && line.contains("error[JSC0002]")) firstRefusal = line;
+                    else if (watchedLines < MAX_WATCHED_LINES) {
+                        watched.append(line).append('\n');
+                        watchedLines++;
                     }
-                    if (head.length() >= cap) keep(line, i >= take);
                 }
+                if (!discarding && head.length() >= cap) keep(line, i >= take);
                 partial.setLength(0);
+                longTail.setLength(0);
                 discarding = false;
             } else if (!discarding) {
                 if (partial.length() >= MAX_LINE) {
-                    partial.setLength(0);
-                    discarding = true;
+                    discarding = true;   // keep the start in partial; follow the end in longTail
+                    longTail.append(c);
                 } else {
                     partial.append(c);
                 }
+            } else {
+                longTail.append(c);
+                if (longTail.length() > 2 * MAX_LINE) longTail.delete(0, longTail.length() - MAX_LINE);
             }
         }
     }
@@ -95,8 +102,8 @@ public final class JoustOutputCapture {
     public synchronized String toString() {
         String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || outcome(partial.toString()))
                 ? partial + "\n" : "";
-        String last = !discarding && watch != null && !partial.isEmpty() && watchedLines < MAX_WATCHED_LINES && watch.test(partial.toString())
-                ? partial + "\n" : "";
+        String pending = discarding ? partial + " … " + longTail : partial.toString();
+        String last = watch != null && !pending.isEmpty() && watchedLines < MAX_WATCHED_LINES && watch.test(pending) ? pending + "\n" : "";
         String refusal = firstRefusal == null ? "" : firstRefusal + "\n";
         return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() && watched.isEmpty() && last.isEmpty() && refusal.isEmpty()
                 ? head.toString() : head + "\n" + extra + outcomes + tail + refusal + watched + last;

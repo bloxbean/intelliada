@@ -476,6 +476,12 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         assertFalse(titles.get(0).contains("Build again"));
     }
 
+    /** M2-CDX-13: as below, when the unlinked copy is the only one left: still named, still no link advice. */
+    public void testALinkedFailingModuleIsNotToldToLinkEvenWhenOnlyAnUnlinkedCopyRemains() throws Exception {
+        Files.delete(base.resolve("src/main/jsc/org/acme/Counter.jsc"));
+        testALinkedFailingModuleIsNotToldToLink();
+    }
+
     /** M2-CDX-13: a linked failing module whose source is gone is named, with no link advice for an unrelated unlinked copy. */
     public void testALinkedFailingModuleIsNotToldToLink() throws Exception {
         JoustM2ActionsCopy.copy(Path.of(getClass().getClassLoader().getResource("joust-m2/SOURCE.txt").toURI()).getParent().resolve("gradle-jsc"),
