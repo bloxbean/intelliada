@@ -16,6 +16,8 @@
     <depends>com.intellij.modules.java</depends>
     <depends>com.redhat.devtools.lsp4ij</depends>
     <depends>com.intellij.modules.lang</depends>
+    <!-- JOUST .jsc highlighting (ADR-004 D2): optional, so .jsc stays plain text with diagnostics when TextMate is absent -->
+    <depends optional="true" config-file="intelliada-textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <extensions defaultExtensionNs="com.intellij">
 
@@ -183,6 +185,19 @@
                            implementationClass="com.bloxbean.intelliada.idea.aiken.folding.AikenPairedBraceMatcher"/>
 <!--        <lang.formatter language="Aiken"-->
 <!--                        implementationClass="com.bloxbean.intelliada.idea.aiken.formatter.SimpleFormattingModuleBuilder"/>-->
+        <!-- JOUST support, ADR-004 M1: .jsc highlighting, a read-only joust-lsp through LSP4IJ, project trust -->
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.joust.settings.JoustToolsState"/>
+        <applicationConfigurable parentId="tools" id="com.bloxbean.intelliada.joust.tools" displayName="JOUST"
+                                 instance="com.bloxbean.intelliada.idea.joust.settings.JoustToolsConfigurable"/>
+        <notificationGroup id="JOUST" displayType="BALLOON"/>
+        <gotoDeclarationHandler id="IntelliAdaJoustGotoDeclaration" order="first"
+                                implementation="com.bloxbean.intelliada.idea.joust.editor.JoustGotoDeclarationHandler"/>
+        <platform.backend.documentation.targetProvider id="IntelliAdaJoustHover" order="first"
+                implementation="com.bloxbean.intelliada.idea.joust.editor.JoustDocumentationTargetProvider"/>
+        <statusBarWidgetFactory id="IntelliAdaJoustStatus" order="after positionWidget"
+                                implementation="com.bloxbean.intelliada.idea.joust.lsp.JoustStatusBarWidgetFactory"/>
+        <colorSettingsPage implementation="com.bloxbean.intelliada.idea.joust.highlight.JoustColorSettingsPage"/>
+        <postStartupActivity implementation="com.bloxbean.intelliada.idea.joust.trust.JoustProjectOpenCheck"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
@@ -196,6 +211,19 @@
         </server>
         <languageMapping language="Aiken"
                          serverId="aikenLanguageServerId" />
+
+        <!-- ADR-004 D3: joust-lsp, mapped by file name so TextMate keeps colouring .jsc (F10) -->
+        <server id="joustLanguageServer"
+                name="JOUST Language Server"
+                factoryClass="com.bloxbean.intelliada.idea.joust.lsp.JoustLanguageServerFactory">
+            <description><![CDATA[
+            <p>The .jsc language server (joust-lsp) you installed, read-only and in advisory mode.</p>
+        ]]>
+            </description>
+        </server>
+        <fileNamePatternMapping patterns="*.jsc" serverId="joustLanguageServer" languageId="jsc"/>
+        <semanticTokensColorsProvider serverId="joustLanguageServer"
+                                      class="com.bloxbean.intelliada.idea.joust.highlight.JoustSemanticTokensColorsProvider"/>
     </extensions>
 
     <actions>
@@ -265,8 +293,26 @@
                 text="Configuration" description="Configure julc">
             <add-to-group group-id="com.bloxbean.intelliada.idea.julc.action.JulcActionGroup" anchor="last"/>
         </action>
+        <group id="com.bloxbean.intelliada.idea.joust.JoustEditorGroup" text="JOUST" popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="Joust.FindReferences" class="com.bloxbean.intelliada.idea.joust.editor.JoustFindReferencesAction"
+                    text="Find References" description="Find references to the symbol at the caret (JOUST language server)"/>
+            <action id="Joust.ShowStatus" class="com.bloxbean.intelliada.idea.joust.actions.JoustShowStatusAction"
+                    text="Show Compiler and Mode" description="Show the JOUST compiler version and analysis mode"/>
+            <action id="Joust.ShowGeneratedJava" class="com.bloxbean.intelliada.idea.joust.actions.JoustShowGeneratedJavaAction"
+                    text="Show Generated Java" description="Show the Java this .jsc file lowers to (read-only)"/>
+            <action id="Joust.CheckBuild" class="com.bloxbean.intelliada.idea.joust.actions.JoustCheckBuildAction"
+                    text="Check Build (in Memory)" description="Build in memory with the language server's compiler; writes nothing"/>
+            <action id="Joust.RestartAnalysis" class="com.bloxbean.intelliada.idea.joust.actions.JoustRestartAnalysisAction"
+                    text="Restart Analysis" description="Restart the JOUST language server's analysis"/>
+        </group>
     </actions>
     <applicationListeners>
-
+        <listener class="com.bloxbean.intelliada.idea.joust.trust.JoustTrustListener"
+                  topic="com.intellij.ide.trustedProjects.TrustedProjectsListener"/>
     </applicationListeners>
+    <projectListeners>
+        <listener class="com.bloxbean.intelliada.idea.joust.editor.JoustEditorListener"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
 </idea-plugin>

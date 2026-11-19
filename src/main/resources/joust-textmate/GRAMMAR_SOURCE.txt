@@ -1,0 +1,10 @@
+# The .jsc TextMate bundle IntelliAda ships (ADR-004 D2, I6).
+# The files below, except package.json, are copied verbatim from bloxbean/joust js/vscode-joust/ at this tag.
+# package.json is IntelliAda's own: a top-level name and only the jsc language and grammar contributions.
+# JoustGrammarSyncTest fails when a file's SHA-256 differs from this record.
+tag=v0.1.0-pre2
+commit=b242026945e44cdbd6de89f6d3ef59d3683fa50e
+syntaxes/jsc.tmLanguage.json=d35713e90a1e118e88ed030c9f9d0b8bc120a9b1e87fbbc86edb07d9f880c782
+language-configuration.json=84ab04bb1d7d219a82f43d155627c76ff85e722a35a8b0c7d833c15b29453335
+LICENSE=2e1fa3e65f981b24f0f0c72c4eb04bc8a6e5cedebbd9cd52acd2c13ea839c3c2
+package.json=72594d1965a92ee843325326ee5c79d17f1e86bf8187b0b8c3164997f0138029
