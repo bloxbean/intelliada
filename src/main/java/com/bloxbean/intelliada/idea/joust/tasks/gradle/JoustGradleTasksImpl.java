@@ -67,6 +67,21 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
     }
 
     @Override
+    public Path linkedRootOf(Project project, Path path) {
+        try {
+            Path p = path.toRealPath();
+            Path best = null;
+            for (var ps : org.jetbrains.plugins.gradle.settings.GradleSettings.getInstance(project).getLinkedProjectsSettings()) {
+                Path root = Path.of(ps.getExternalProjectPath()).toRealPath();
+                if (p.startsWith(root) && (best == null || root.getNameCount() > best.getNameCount())) best = root;
+            }
+            return best;
+        } catch (java.io.IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    @Override
     public Path selectedModuleDir(AnActionEvent e) {
         if (!GradleConstants.SYSTEM_ID.equals(e.getData(com.intellij.openapi.externalSystem.model.ExternalSystemDataKeys.EXTERNAL_SYSTEM_ID))) return null;
         var nodes = e.getData(com.intellij.openapi.externalSystem.model.ExternalSystemDataKeys.SELECTED_NODES);

@@ -48,7 +48,7 @@ public final class JoustOutputCapture {
 
     private void keep(String line, boolean beyondHead) {
         if (!beyondHead) return;
-        if (line.contains("accepted") && outcomeLines < MAX_EXTRA_LINES) {
+        if ((line.contains("accepted") || line.contains("created the ABI manifest")) && outcomeLines < MAX_EXTRA_LINES) {
             outcomes.append(line).append('\n');
             outcomeLines++;
             return;
@@ -60,7 +60,8 @@ public final class JoustOutputCapture {
 
     @Override
     public synchronized String toString() {
-        String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || partial.indexOf("accepted") >= 0)
+        String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || partial.indexOf("accepted") >= 0
+                || partial.indexOf("created the ABI manifest") >= 0)
                 ? partial + "\n" : "";
         return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() ? head.toString() : head + "\n" + extra + outcomes + tail;
     }

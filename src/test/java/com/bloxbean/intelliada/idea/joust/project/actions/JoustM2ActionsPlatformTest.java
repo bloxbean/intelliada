@@ -391,4 +391,35 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
             com.intellij.openapi.util.Disposer.dispose(descriptor);
         }
     }
+
+    /** M2-CDX-3: the console failing to open after the process started: the process is ended before the tracker lets go. */
+    public void testAConsoleFailureEndsTheProcess() throws Exception {
+        if (!configureNode()) return;
+        Files.writeString(web.resolve("node_modules/@julclang/joust/bin/joust.js"),
+                "require('fs').writeFileSync('pid', String(process.pid)); setTimeout(() => {}, 120000);\n");
+        var layout = com.bloxbean.intelliada.idea.joust.project.JoustProjectLayout.scan(base, com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current());
+        var root = layout.npmRoots().stream().filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+        Path pidFile = web.resolve("pid");
+        JoustNpmTasks.setConsoleOpenerForTests(h -> {
+            long end = System.currentTimeMillis() + 10_000;
+            while (!Files.exists(pidFile) && System.currentTimeMillis() < end) Thread.onSpinWait();
+            throw new IllegalStateException("a console filter provider failed");
+        });
+        try {
+            JoustRunGuard guard = JoustRunGuard.capture(getProject());
+            var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("build"), "build"));
+            waitFor(result::isDone, 30_000);
+            try {
+                result.get();
+                fail("the console failure propagates");
+            } catch (java.util.concurrent.ExecutionException expected) {
+                // expected
+            }
+            assertEquals("released", 0, JoustTaskTracker.getInstance(getProject()).runningCount());
+            long pid = Long.parseLong(Files.readString(pidFile).trim());
+            assertFalse("the process was ended before release", ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+        } finally {
+            JoustNpmTasks.setConsoleOpenerForTests(null);
+        }
+    }
 }

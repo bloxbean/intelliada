@@ -79,8 +79,13 @@ public final class JoustReviewAbiAction extends JoustProjectAction {
         JoustAbiReview.Runner runner = ctx.gradle() != null ? gradleRunner(ctx, guard, title(ctx)) : npmRunner(ctx, guard, title(ctx));
         Path tmp = privateTmp();
         if (tmp == null) throw new Exception("IntelliAda's temporary directory is not usable (it must be outside every open project).");
+        java.util.function.Supplier<String> linkedNow = () -> {
+            if (ctx.gradle() == null) return "npm";
+            var l = JoustGradleTasks.getInstance().linked(ctx.project(), ctx.gradle().dir());
+            return l == null ? null : l.rootDir() + "|" + l.gradlePath();
+        };
         new JoustAbiReview(target, () -> JoustProjectLayout.scan(base, JoustPaths.Flavor.current()), runner,
-                new JoustAbiDialogUi(ctx.project()), guard::live, tmp, () -> start(ctx)).run();
+                new JoustAbiDialogUi(ctx.project()), guard::live, tmp, () -> start(ctx), linkedNow).run();
     }
 
     /** IntelliAda's own temporary directory for ABI exchanges, verified outside every open project (§12 E12). */

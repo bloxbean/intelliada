@@ -159,11 +159,11 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                 com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(project).generation(), null);
     }
 
-    /** Whether a linked module is the run's: the same Gradle path and, when the run's build root is known, that root. */
-    static boolean sameBuild(JoustGradleTasks.Linked linked, String rootPath) {
-        if (rootPath == null) return true;
+    /** Whether a linked module belongs to the run's build ({@code buildRoot}, a real path; null: unknown, any build). */
+    static boolean sameBuild(JoustGradleTasks.Linked linked, Path buildRoot) {
+        if (buildRoot == null) return true;
         try {
-            return linked.rootDir().toRealPath().toString().equals(Path.of(rootPath).toRealPath().toString());
+            return linked.rootDir().toRealPath().toString().equals(buildRoot.toString());
         } catch (java.io.IOException | RuntimeException e) {
             return false;
         }
@@ -192,6 +192,25 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             Set<String> owners = new HashSet<>();
             if (diag.task() != null) owners.add(ownerOf(diag.task()));
             else failedTasks.forEach(t -> owners.add(ownerOf(t)));
+            // The run's own linked build first (M2-CDX-13): its start path, resolved through IntelliJ's linked projects (a run
+            // may start from a module directory), scopes the candidates before any task-path or ambiguity rule.
+            Path buildRoot = rootPath == null || gradle == null ? null : gradle.linkedRootOf(project, Path.of(rootPath));
+            if (buildRoot != null) {
+                List<JoustProjectLayout.SourceRoot> inBuild = new ArrayList<>();
+                for (JoustProjectLayout.SourceRoot r : candidates) {
+                    var linked = gradle.linked(project, r.ownerDir());
+                    if (linked != null && sameBuild(linked, buildRoot)) inBuild.add(r);
+                }
+                if (inBuild.isEmpty() && !candidates.isEmpty()) {
+                    if (seen.add("!" + buildRoot + printed.rel())) {
+                        JoustProjectAction.notifyUnresolvedAbiFailure(project, f, List.of(owners.isEmpty()
+                                ? "at " + layout.base().relativize(buildRoot) : String.join(", ", new java.util.TreeSet<>(owners))), List.of());
+                        n++;
+                    }
+                    continue;
+                }
+                candidates = inBuild;
+            }
             // When the failing task is known, only its module may get the notification, even for a single candidate;
             // a source no longer there names the failing module without an action (M2-CDX-13).
             if (gradle != null && !owners.isEmpty()) {
@@ -200,7 +219,7 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());
                     if (linked == null) unlinked.add(layout.base().relativize(r.ownerDir()).toString());
-                    else if (owners.contains(linked.gradlePath()) && sameBuild(linked, rootPath)) failed.add(r);
+                    else if (owners.contains(linked.gradlePath()) && sameBuild(linked, buildRoot)) failed.add(r);
                 }
                 if (failed.isEmpty()) {
                     if (seen.add("!" + owners + printed.rel())) {

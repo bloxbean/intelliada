@@ -66,6 +66,13 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
             public JoustAbiReview.Result run(JoustRunGuard guard, Path rootDir, List<String> args, String title) {
                 return new JoustAbiReview.Result(false, "", false);
             }
+
+            @Override
+            public Path linkedRootOf(Project project, Path path) {
+                Path p = path.toAbsolutePath().normalize();
+                if (p.startsWith(base.resolve("other2"))) return base.resolve("other2");
+                return p.startsWith(base) ? base : null;
+            }
         }, getTestRootDisposable());
         getProject().getMessageBus().connect(getTestRootDisposable()).subscribe(Notifications.TOPIC, new Notifications() {
             @Override
@@ -358,5 +365,34 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(1 << 20);
         capture.append(verbose);
         assertEquals(1, com.bloxbean.intelliada.idea.joust.abi.JoustAbi.failures(capture.toString()).size());
+    }
+
+    /** M2-CDX-13: a run started from a module directory belongs to its linked build; the module's task is named. */
+    public void testARunStartedFromAModuleDirectory() throws Exception {
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        listener.onStart(base.resolve("other").toString(), id);
+        feed(listener, id, "> Task :other:generateJsc\n" + log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains("Gradle project :other changed"));
+    }
+
+    /** M2-CDX-13: a known build root with no task header: a copy in a different linked build gets no action. */
+    public void testAnotherBuildsCopyNeverGetsTheAction() throws Exception {
+        Path other2 = base.resolve("other2");
+        Files.move(base.resolve("other"), other2);
+        Files.delete(other2.resolve("src/main/jsc/org/acme/Counter.jsc"));
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        listener.onStart(other2.toString(), id);
+        feed(listener, id, log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains("Build again") || titles.get(0).contains("not in the module now"));
     }
 }

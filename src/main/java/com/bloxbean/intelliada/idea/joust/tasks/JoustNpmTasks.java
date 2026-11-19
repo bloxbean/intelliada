@@ -69,28 +69,36 @@ public final class JoustNpmTasks {
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
             GeneralCommandLine cl = new GeneralCommandLine(cmd).withWorkDirectory(root.dir().toFile())
                     .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
-            OSProcessHandler handler = new OSProcessHandler(cl);
-            run.attach(handler::destroyProcess);   // runs at once if cancelled while starting
-            JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP);
-            handler.addProcessListener(new ProcessListener() {
-                @Override
-                public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                    out.append(event.getText());
+            OSProcessHandler handler = new OSProcessHandler(cl);   // the process runs from here
+            boolean ended = false;
+            try {
+                run.attach(() -> destroy(handler));   // runs at once if cancelled while starting; never blocks (it may be the EDT)
+                JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP);
+                handler.addProcessListener(new ProcessListener() {
+                    @Override
+                    public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
+                        out.append(event.getText());
+                    }
+                });
+                var opener = consoleOpener;
+                if (opener != null) {
+                    opener.accept(handler);
+                } else if (showsConsole()) {
+                    ApplicationManager.getApplication().invokeAndWait(() -> openConsole(project, root, handler, PlainText.title(title, 120)));
                 }
-            });
-            if (showsConsole()) {
-                ApplicationManager.getApplication().invokeAndWait(() -> openConsole(project, root, handler, PlainText.title(title, 120)));
                 handler.startNotify();
-            } else {
-                handler.startNotify();
+                if (!handler.waitFor(TIMEOUT_MS)) {
+                    return new JoustAbiReview.Result(false, "joust did not finish within " + TIMEOUT_MS / 60000 + " minutes", false);
+                }
+                ended = true;
+                if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
+                Integer code = handler.getExitCode();
+                return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false);
+            } finally {
+                // Whatever happened after the process started (a console that failed to open, a timeout, an exception),
+                // it is ended before the tracker lets go of it (M2-CDX-3).
+                if (!ended) kill(handler);
             }
-            if (!handler.waitFor(TIMEOUT_MS)) {
-                handler.destroyProcess();
-                return new JoustAbiReview.Result(false, "joust did not finish within " + TIMEOUT_MS / 60000 + " minutes", false);
-            }
-            if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
-            Integer code = handler.getExitCode();
-            return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false);
         } finally {
             tracker.done(run);
         }
@@ -142,6 +150,37 @@ public final class JoustNpmTasks {
         com.intellij.execution.ui.RunContentManager.getInstance(project)
                 .showRunContent(com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance(), descriptor);
         return descriptor;
+    }
+
+    /** For tests: replaces opening the Run console (it may throw); null for the normal console. */
+    static volatile java.util.function.Consumer<com.intellij.execution.process.ProcessHandler> consoleOpener;
+
+    public static void setConsoleOpenerForTests(java.util.function.Consumer<com.intellij.execution.process.ProcessHandler> opener) {
+        consoleOpener = opener;
+    }
+
+    /**
+     * Ends the process and its children: a handler not yet start-notified queues destruction until then, so it is
+     * notified first; then the tree is destroyed and awaited (bounded).
+     */
+    static void destroy(OSProcessHandler handler) {
+        try {
+            if (!handler.isStartNotified()) handler.startNotify();
+        } catch (RuntimeException ignored) {
+            // already started elsewhere
+        }
+        handler.destroyProcess();
+    }
+
+    /** {@link #destroy}, then waits for the end (bounded) and forces it; off the EDT. */
+    static void kill(OSProcessHandler handler) {
+        destroy(handler);
+        handler.waitFor(10_000);
+        if (!handler.isProcessTerminated()) {
+            Process p = handler.getProcess();
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+        }
     }
 
     /** A Run console in the IDE; tests without one read the captured output only. */

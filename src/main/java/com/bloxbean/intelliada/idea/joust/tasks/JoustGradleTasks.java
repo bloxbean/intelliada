@@ -36,6 +36,11 @@ public interface JoustGradleTasks {
      * The module directory selected in the Gradle tool window (a project or module node), or null. Lets the JOUST
      * actions appear there too (D7).
      */
+    /** The real root of the linked Gradle build that {@code path} (a run's external project path) belongs to, or null. */
+    default Path linkedRootOf(Project project, Path path) {
+        return null;
+    }
+
     default Path selectedModuleDir(com.intellij.openapi.actionSystem.AnActionEvent e) {
         return null;
     }

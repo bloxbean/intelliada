@@ -112,10 +112,18 @@ public final class JoustAbi {
                 + requireHash(d.committedSha(), true) + ".." + requireHash(d.nowSha(), false));
     }
 
-    /** A contracts directory relative to the npm root: plain segments, no {@code ..}, not an option. */
+    /**
+     * A contracts directory relative to the npm root, passed as one argument (M2-CDX-26): any name the scanner confined
+     * (spaces included), {@code .} for the root itself; never absolute, never {@code ..}, never an option, no control
+     * characters.
+     */
     static String requireSrc(String src) throws AbiException {
-        if (src == null || !src.matches("[A-Za-z0-9_.][A-Za-z0-9_./-]{0,400}") || src.contains("..") || src.contains("//")) {
+        if (src == null || src.isEmpty() || src.length() > 1000 || src.startsWith("-") || src.startsWith("/") || src.startsWith("\\")
+                || src.matches("^[A-Za-z]:.*") || src.chars().anyMatch(c -> c < 0x20 || c == 0x7f)) {
             throw new AbiException("not a contracts directory: " + src);
+        }
+        for (String seg : src.split("[/\\\\]", -1)) {
+            if (seg.equals("..") || (seg.isEmpty() && !src.equals("."))) throw new AbiException("not a contracts directory: " + src);
         }
         return src;
     }

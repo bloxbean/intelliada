@@ -65,6 +65,8 @@ public final class JoustAbiReview {
     private final BooleanSupplier live;
     private final Path privateTmp;
     private final Runnable reviewAgain;
+    private final Supplier<String> linkedNow;
+    private String linkedAtStart;
 
     /**
      * @param scan       a fresh scan of the project, taken right before and right after accepting
@@ -73,6 +75,16 @@ public final class JoustAbiReview {
      */
     public JoustAbiReview(Target target, Supplier<JoustProjectLayout> scan, Runner runner, Ui ui, BooleanSupplier live, Path privateTmp,
                           Runnable reviewAgain) {
+        this(target, scan, runner, ui, live, privateTmp, reviewAgain, () -> target.gradle() ? "gradle:" + target.gradlePath() : "npm");
+    }
+
+    /**
+     * @param linkedNow the module's linked build and Gradle path as of now ({@code root|path}), or null when not linked;
+     *                  compared before accepting with its value when the review started (M2-CDX-23)
+     */
+    public JoustAbiReview(Target target, Supplier<JoustProjectLayout> scan, Runner runner, Ui ui, BooleanSupplier live, Path privateTmp,
+                          Runnable reviewAgain, Supplier<String> linkedNow) {
+        this.linkedNow = linkedNow;
         this.target = target;
         this.scan = scan;
         this.runner = runner;
@@ -87,6 +99,7 @@ public final class JoustAbiReview {
         Path tmp = null;
         try {
             if (!live.getAsBoolean()) return false;
+            linkedAtStart = linkedNow.get();
             String contract = JoustAbi.requireContract(target.contract());
             tmp = Files.createTempDirectory(privateTmp, "abi-");
             Path out = tmp.resolve("diff.json");   // written by the task into a directory only IntelliAda uses (M2-SEC-3)
@@ -148,18 +161,18 @@ public final class JoustAbiReview {
             // An explicit refusal of this contract by the bound task wins over what the files look like afterwards: another
             // acceptance may have written the same new hash meanwhile (M2-CDX-6).
             String jscRel = target.contractsDir().relativize(target.jsc()).toString().replace('\\', '/');
-            if (!a.ok()) {
-                // A failed run is an acceptance only when it says so: an explicit refusal wins over the files, and output
-                // that is missing or incomplete is no evidence of acceptance (M2-CDX-6).
-                String refusedByTask = JoustAbi.refusal(a.output(), jscRel, contract);
-                if (refusedByTask == null && !JoustAbi.reportsAccepted(a.output(), jscRel, manifest.getFileName().toString(),
-                        target.dir().relativize(manifest).toString())) {
-                    refusedByTask = "the accept task failed without reporting that it accepted " + manifest.getFileName();
-                }
-                if (refusedByTask != null) {
-                    ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
-                    return false;
-                }
+            // A run is an acceptance only when it says so, whether it succeeded or failed (M2-CDX-6): an explicit refusal
+            // wins over the files, and a run that does not report writing this manifest did not accept it (npm skips a
+            // target another acceptance already wrote, and succeeds).
+            String refusedByTask = JoustAbi.refusal(a.output(), jscRel, contract);
+            if (refusedByTask == null && !JoustAbi.reportsAccepted(a.output(), jscRel, manifest.getFileName().toString(),
+                    target.dir().relativize(manifest).toString())) {
+                refusedByTask = "the accept task " + (a.ok() ? "succeeded" : "failed") + " without reporting that it accepted "
+                        + manifest.getFileName();
+            }
+            if (refusedByTask != null) {
+                ui.refused("ABI change not accepted", refusedByTask + "\nReview the change again.", reviewAgain);
+                return false;
             }
             String wrong = JoustAbi.verifyAccepted(before, after, manifest, d);
             if (wrong != null) {
@@ -184,7 +197,8 @@ public final class JoustAbiReview {
 
     /** The npm contracts directory relative to the npm root, for {@code --src}. */
     private String npmSrc() {
-        return target.dir().relativize(target.contractsDir()).toString().replace('\\', '/');
+        String rel = target.dir().relativize(target.contractsDir()).toString().replace('\\', '/');
+        return rel.isEmpty() ? "." : rel;
     }
 
     /**
@@ -201,12 +215,19 @@ public final class JoustAbiReview {
             if (ownerDir == null || owner.gradle() != null != target.gradle() || !ownerDir.toString().equals(target.dir().toString())) {
                 return "the source's module changed";
             }
+            // By owner kind as well as directory: a directory can be both a Gradle module and an npm root (M2-CDX-25).
             JoustProjectLayout.SourceRoot root = fresh.sourceRoots().stream()
-                    .filter(r -> r.ownerDir().toString().equals(ownerDir.toString())).findFirst().orElse(null);
+                    .filter(r -> (r.gradle() != null) == target.gradle() && r.ownerDir().toString().equals(ownerDir.toString()))
+                    .findFirst().orElse(null);
             Path contracts = root == null ? null : root.verifiedContracts(fresh.base());
             if (contracts == null || !contracts.toString().equals(target.contractsDir().toString())) return "the contracts directory changed";
             String simple = target.contract().substring(target.contract().lastIndexOf('.') + 1);
             if (!jsc.resolveSibling(simple + ".abi.json").toString().equals(manifest.toString())) return "the manifest's place changed";
+            // Gradle: the module must still be the same linked build and qualified project (a reimport may remap them).
+            if (target.gradle()) {
+                String now = linkedNow.get();
+                if (now == null || !now.equals(linkedAtStart)) return "the module's Gradle project changed (" + now + ")";
+            }
             return null;
         } catch (IOException | RuntimeException e) {
             return "the selected source is gone";
