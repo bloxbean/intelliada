@@ -36,6 +36,8 @@ import com.intellij.psi.PsiRecordComponent;
 import com.intellij.psi.PsiReferenceExpression;
 import com.intellij.psi.PsiStatement;
 import com.intellij.psi.PsiSwitchBlock;
+import com.intellij.psi.PsiSwitchLabelStatementBase;
+import com.intellij.psi.PsiSwitchLabeledRuleStatement;
 import com.intellij.psi.PsiTypeCastExpression;
 import com.intellij.psi.PsiTypeElement;
 import com.intellij.psi.PsiTypeTestPattern;
@@ -69,8 +71,9 @@ import java.util.Set;
  *       local variables that are never reassigned;</li>
  *   <li>a check guards a use when it dominates it structurally: it sits in an earlier statement of an enclosing block
  *       (not inside a branch or block of that statement), in the condition of an enclosing {@code if}, loop or
- *       {@code ?:}, in an earlier operand of an enclosing {@code &&}/{@code ||}, or in a {@code case} label of an
- *       enclosing {@code switch}. The check's polarity is not analysed.</li>
+ *       {@code ?:}, in an earlier operand of an enclosing {@code &&}/{@code ||}, or in the {@code case} label of the
+ *       {@code switch} arm (its body or its {@code when} guard) that holds the use. Another arm, {@code default}
+ *       included, is not guarded by it. The check's polarity is not analysed.</li>
  * </ul>
  */
 public final class JoustUncheckedFiniteBoundInspection extends JoustContractInspection {
@@ -275,12 +278,24 @@ public final class JoustUncheckedFiniteBoundInspection extends JoustContractInsp
         PsiElement child = use;
         PsiElement parent = use.getParent();
         while (parent != null && !(child instanceof PsiMember) && !(child instanceof PsiFile)) {
-            if (parent instanceof PsiCodeBlock && child instanceof PsiStatement) {
+            if (parent instanceof PsiCodeBlock && child instanceof PsiStatement
+                    && !(child instanceof PsiSwitchLabeledRuleStatement)) {
+                // a rule arm (case ... ->) never falls through, so earlier arms do not guard it (see below)
                 for (PsiElement sibling = child.getPrevSibling(); sibling != null; sibling = sibling.getPrevSibling()) {
+                    if (sibling instanceof PsiSwitchLabelStatementBase label) {
+                        // an old-style arm (case ...:) is guarded only by its own, nearest label
+                        if (within(check, label.getCaseLabelElementList())) return true;
+                        break;
+                    }
                     if (sibling instanceof PsiStatement statement && PsiTreeUtil.getParentOfType(check,
                             PsiStatement.class, PsiLambdaExpression.class, PsiClass.class) == statement) {
                         return true;
                     }
+                }
+            } else if (parent instanceof PsiSwitchLabelStatementBase label) {
+                // the guard (when ...) or the body of the arm whose own case label holds the check
+                if (child != label.getCaseLabelElementList() && within(check, label.getCaseLabelElementList())) {
+                    return true;
                 }
             } else if (parent instanceof PsiIfStatement statement) {
                 if (child != statement.getCondition() && within(check, statement.getCondition())) return true;
@@ -297,12 +312,6 @@ public final class JoustUncheckedFiniteBoundInspection extends JoustContractInsp
                 for (PsiExpression operand : polyadic.getOperands()) {
                     if (operand == child) break;
                     if (within(check, operand)) return true;
-                }
-            } else if (parent instanceof PsiSwitchBlock block) {
-                if (child == block.getBody() && within(check, block.getBody())
-                        && PsiTreeUtil.getParentOfType(check, PsiCaseLabelElementList.class) instanceof PsiCaseLabelElementList list
-                        && PsiTreeUtil.getParentOfType(list, PsiSwitchBlock.class) == block) {
-                    return true;
                 }
             }
             child = parent;

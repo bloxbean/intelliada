@@ -11,8 +11,9 @@ variable it is stored in) and no compared use is guarded by a check of <em>that<
 or a record pattern) of <code>i.to().boundType()</code> for <code>finiteUpperBound(i)</code>, or of
 <code>i.from().boundType()</code> for <code>finiteLowerBound(i)</code>. A check guards a use when it comes first in an
 enclosing block (not inside a branch of an earlier statement), or sits in the condition of an enclosing <code>if</code>,
-loop or <code>?:</code>, in an earlier operand of <code>&amp;&amp;</code>/<code>||</code>, or in a <code>case</code>
-label of an enclosing <code>switch</code>. Checking the lower bound does not silence the upper one.</p>
+loop or <code>?:</code>, in an earlier operand of <code>&amp;&amp;</code>/<code>||</code>, or in the <code>case</code>
+label of the <code>switch</code> arm (its body or <code>when</code> guard) that holds the use; other arms, including
+<code>default</code>, are not guarded by it. Checking the lower bound does not silence the upper one.</p>
 <!-- tooltip end -->
 <p>Advice only: JOUST's build stays the authority (IntelliAda ADR-004 D10).</p>
 </body>

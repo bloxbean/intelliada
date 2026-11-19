@@ -244,6 +244,27 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
                         }
                         return IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
                     }
+                    static boolean defaultArmOfACaseFiniteSwitch(Interval i, BigInteger t) {
+                        return switch (i.to().boundType()) {
+                            case IntervalBoundType.Finite f -> f.time().compareTo(t) < 0;
+                            default -> IntervalLib.<weak_warning descr="IntervalLib.finiteUpperBound returns -1 for an infinite bound; check IntervalBoundType.Finite before comparing it">finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
+                        };
+                    }
+                    static boolean guardOfAnotherArm(Interval i, BigInteger t) {
+                        return switch (i.to().boundType()) {
+                            case IntervalBoundType.Finite f -> true;
+                            case IntervalBoundType b when IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0 -> false;
+                            default -> true;
+                        };
+                    }
+                    static boolean oldStyleSwitch(Interval i, BigInteger t) {
+                        switch (i.to().boundType()) {
+                            case IntervalBoundType.Finite f:
+                                return IntervalLib.finiteUpperBound(i).compareTo(t) < 0;
+                            default:
+                                return IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
+                        }
+                    }
                     static boolean notAFiniteCheck(Interval i, BigInteger t) {
                         Object unused = new IntervalBoundType.Finite(t);
                         return IntervalLib.<weak_warning>finiteUpperBound</weak_warning>(i).compareTo(t) < 0;
@@ -282,6 +303,12 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
                     static boolean switched(Interval i, BigInteger t) {
                         return switch (i.to().boundType()) {
                             case IntervalBoundType.Finite f -> IntervalLib.finiteUpperBound(i).compareTo(t) < 0;
+                            default -> false;
+                        };
+                    }
+                    static boolean guardOfTheCaseFiniteArm(Interval i, BigInteger t) {
+                        return switch (i.to().boundType()) {
+                            case IntervalBoundType.Finite f when IntervalLib.finiteUpperBound(i).compareTo(t) < 0 -> true;
                             default -> false;
                         };
                     }
@@ -457,7 +484,7 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
         assertCompilesAndResolves();
     }
 
-    public void testQuickFixQualifiesWhenAnotherByteStringLibIsImported() {
+    public void testNoQuickFixWhenAnotherByteStringLibIsImported() {
         myFixture.addFileToProject("other/ByteStringLib.java",
                 "package other; public class ByteStringLib { public static String name() { return \"other\"; } }");
         myFixture.configureByText("Fix4.java", """
@@ -470,21 +497,10 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
                     static boolean m(byte[] x, byte[] y) { return x !<caret>= y; }
                 }
                 """);
-        applyFix();
-        myFixture.checkResult("""
-                import org.julclang.state.api.StateContract;
-                import other.ByteStringLib;
-
-                @StateContract
-                public class Fix4 {
-                    static String n() { return ByteStringLib.name(); }
-                    static boolean m(byte[] x, byte[] y) { return !org.julclang.stdlib.lib.ByteStringLib.equals(x, y); }
-                }
-                """);
-        assertCompilesAndResolves();
+        assertWarnedWithoutAFix("byte[] !=");
     }
 
-    public void testQuickFixQualifiesWhenANestedByteStringLibShadowsIt() {
+    public void testNoQuickFixWhenANestedByteStringLibShadowsIt() {
         myFixture.configureByText("Fix5.java", """
                 import org.julclang.state.api.StateContract;
                 import java.util.Objects;
@@ -495,18 +511,16 @@ public class JoustInspectionsPlatformTest extends BasePlatformTestCase {
                     static boolean m(byte[] x, byte[] y) { return Objects.equ<caret>als(x, y); }
                 }
                 """);
-        applyFix();
-        myFixture.checkResult("""
-                import org.julclang.state.api.StateContract;
-                import java.util.Objects;
+        assertWarnedWithoutAFix("Objects.equals on byte[]");
+    }
 
-                @StateContract
-                public class Fix5 {
-                    static class ByteStringLib {}
-                    static boolean m(byte[] x, byte[] y) { return org.julclang.stdlib.lib.ByteStringLib.equals(x, y); }
-                }
-                """);
-        assertCompilesAndResolves();
+    /**
+     * Another ByteStringLib is in scope: the simple name would mean it, and JuLC rejects the qualified call (JULC0123),
+     * so the warning stays and no fix is offered.
+     */
+    private void assertWarnedWithoutAFix(String messageStart) {
+        assertEquals(HighlightSeverity.WARNING, severityOf(myFixture.doHighlighting(), messageStart));
+        assertEmpty(myFixture.filterAvailableIntentions(FIX));
     }
 
     /** The fixed file has no error highlighting: every call resolves and type-checks (no unresolved references). */
