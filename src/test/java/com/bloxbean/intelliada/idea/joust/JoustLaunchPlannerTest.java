@@ -60,14 +60,18 @@ public class JoustLaunchPlannerTest {
     @Test
     public void changedNodeIsRefusedWithoutRunningIt() throws Exception {
         int probes = NodeVersionProbe.invocations();
-        Files.writeString(node, "#!/bin/sh\necho evil\n");
+        // Same length, same mtime: only the SHA-256 differs, so the hash check alone must refuse it (M1-DES-10).
+        String original = Files.readString(node);
+        String evil = "#!/bin/sh\necho EVIL\n".substring(0, 0) + original.replace("v22.0.0", "vEVIL00");
+        assertEquals(original.length(), evil.length());
+        Files.writeString(node, evil);
+        Files.setLastModifiedTime(node, FileTime.fromMillis(identity.modifiedMillis()));
+        assertEquals(identity.size(), Files.size(node));
+        assertEquals(identity.modifiedMillis(), Files.getLastModifiedTime(node).toMillis());
         var plan = JoustLaunchPlanner.plan(new JoustLaunchPlanner.Settings(node.toString(), lspShim.toString(), identity),
                 List.of(project), storage, flavor);
         assertFalse(plan.ok());
         assertTrue(plan.needsRevalidation());
-        Files.setLastModifiedTime(node, FileTime.fromMillis(identity.modifiedMillis()));
-        assertFalse(JoustLaunchPlanner.plan(new JoustLaunchPlanner.Settings(node.toString(), lspShim.toString(), identity),
-                List.of(project), storage, flavor).ok());
         assertEquals(probes, NodeVersionProbe.invocations());
     }
 

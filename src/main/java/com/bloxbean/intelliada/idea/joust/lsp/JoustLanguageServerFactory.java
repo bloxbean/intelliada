@@ -19,7 +19,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class JoustLanguageServerFactory implements LanguageServerFactory, LanguageServerEnablementSupport {
 
-    /** The user's own on/off switch from LSP4IJ's UI, per project (kept on the project, so it goes with it). */
+    /** The user's own on/off switch from LSP4IJ's UI, per project (kept on the open project for this session; like LSP4IJ's own toggle it is not persisted, so it resets on reopen). */
     private static final Key<Boolean> USER_DISABLED = Key.create("intelliada.joust.userDisabled");
 
     @Override

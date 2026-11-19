@@ -15,7 +15,7 @@ import java.util.Map;
 import static org.junit.Assert.*;
 
 /** ADR-004 D4's Detect…: directory reads only, version-manager shims skipped. */
-public class JoustLaunchOptionsTest {
+public class JoustToolDetectorTest {
 
     @Rule
     public TemporaryFolder tmp = new TemporaryFolder();
