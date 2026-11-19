@@ -33,7 +33,8 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             JoustNpmTasks.setConsoleOpenerForTests(null);
             JoustNpmTasks.killHookForTests = null;
             JoustNpmTasks.enumerationDeniedForTests = false;
-            JoustNpmTasks.samplerPauseForTests = null;
+            JoustNpmTasks.beforePublishForTests = null;
+            JoustNpmTasks.afterListingForTests = null;
             JoustTaskTracker.getInstance(getProject()).forgetAllForTests();
             JoustToolsState.getInstance().loadState(saved);
             TrustedProjects.setProjectTrusted(getProject(), true);
@@ -112,7 +113,9 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         Files.writeString(web.resolve("joust.config.json"), "{}");
         Path bin = Files.createDirectories(web.resolve("node_modules/@julclang/joust/bin"));
         Files.writeString(bin.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\"}");
-        Files.writeString(bin.resolve("joust.js"), "require('fs').writeFileSync('pid', String(process.pid)); setTimeout(() => {}, 120000);\n");
+        // Owns its shutdown: exits when the test writes its stop file, or after 60 s (M2-CDX-40, M2-DES-16, M2-SEC-13).
+        Files.writeString(bin.resolve("joust.js"), "const fs = require('fs'); fs.writeFileSync('pid', String(process.pid));"
+                + " setInterval(() => { if (fs.existsSync('stop')) process.exit(0); }, 100); setTimeout(() => process.exit(0), 60000);\n");
         var root = JoustProjectLayout.scan(base, com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current()).npmRoots().stream()
                 .filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
         Path pidFile = web.resolve("pid");
@@ -127,6 +130,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         var tracker = JoustTaskTracker.getInstance(getProject());
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
         var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("build"), "build"));
+        try {
         long end = System.currentTimeMillis() + 30_000;
         while (!result.isDone() && System.currentTimeMillis() < end) {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue();   // the run saves editors on the EDT before it starts
@@ -136,10 +140,13 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         long pid = Long.parseLong(Files.readString(pidFile).trim());
         assertTrue("the cleanup failed, so the child still lives", alive(pid));
         assertEquals("tracked while it lives", 1, tracker.runningCount());
-        ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+        Files.writeString(web.resolve("stop"), "x");   // the fixture ends itself
         end = System.currentTimeMillis() + 10_000;
         while (tracker.runningCount() != 0 && System.currentTimeMillis() < end) Thread.sleep(20);
         assertEquals("released on its exit", 0, tracker.runningCount());
+        } finally {
+            Files.writeString(web.resolve("stop"), "x");
+        }
     }
 
     /**
@@ -318,7 +325,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         Path dir = Files.createDirectories(Path.of(getProject().getBasePath()).resolve("in-flight")).toRealPath();
         java.util.concurrent.CountDownLatch paused = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.CountDownLatch resume = new java.util.concurrent.CountDownLatch(1);
-        JoustNpmTasks.samplerPauseForTests = now -> {
+        JoustNpmTasks.beforePublishForTests = now -> {
             if (now.isEmpty() || paused.getCount() == 0) return;
             paused.countDown();
             try {
@@ -335,6 +342,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         h.setShouldDestroyProcessRecursively(false);
         JoustNpmTasks.Launch launch = new JoustNpmTasks.Launch(h);
         try {
+            launch.ensureStarted();   // the handler's waiter completes only once start-notified (M2-CDX-41)
             launch.sample();
             assertTrue("a sample listed the child", paused.await(20, java.util.concurrent.TimeUnit.SECONDS));
             assertTrue("the parent exited meanwhile", h.getProcess().waitFor(20, java.util.concurrent.TimeUnit.SECONDS));
@@ -353,8 +361,113 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             long end = System.currentTimeMillis() + 15_000;
             while (!released.get() && System.currentTimeMillis() < end) Thread.sleep(50);
             assertTrue("released once the child exited", released.get());
+            assertTrue("the handler saw the end", h.waitFor(10_000));
         } finally {
             resume.countDown();
+            Files.writeString(dir.resolve("stop"), "x");
+        }
+    }
+
+    /** A parent that starts a child owning its shutdown (the stop file, or 60 s), then lives for {@code parentMs}. */
+    private static OSProcessHandler parentWithChild(String node, Path dir, int parentMs) throws Exception {
+        String child = "const fs = require('fs'); fs.writeFileSync('child', String(process.pid));"
+                + " setInterval(() => { if (fs.existsSync('stop')) process.exit(0); }, 100); setTimeout(() => process.exit(0), 60000)";
+        OSProcessHandler h = new OSProcessHandler(new GeneralCommandLine(node, "-e",
+                "const c = require('child_process').spawn(process.execPath, ['-e', " + jsString(child) + "], { stdio: 'ignore' }); c.unref();"
+                        + " const fs = require('fs'); setInterval(() => { if (fs.existsSync('stop')) process.exit(0); }, 100);"
+                        + " setTimeout(() => process.exit(0), " + parentMs + ");").withWorkDirectory(dir.toFile()));
+        h.setShouldDestroyProcessRecursively(false);
+        return h;
+    }
+
+    private static String jsString(String s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    /**
+     * M2-CDX-3: the cancellation's own listing (destroyTree) holds the release too: confirmed while the parent lived but
+     * not yet published, its child keeps the run; the run is released only after that child is gone.
+     */
+    public void testACancellationListingHoldsTheRelease() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        Path dir = Files.createDirectories(Path.of(getProject().getBasePath()).resolve("cancel-in-flight")).toRealPath();
+        OSProcessHandler h = parentWithChild(node, dir, 1500);
+        JoustNpmTasks.Launch launch = new JoustNpmTasks.Launch(h);
+        java.util.concurrent.CountDownLatch paused = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch resume = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<ProcessHandle> confirmed = new java.util.concurrent.atomic.AtomicReference<>();
+        try {
+            launch.ensureStarted();
+            long end = System.currentTimeMillis() + 20_000;
+            while (!Files.exists(dir.resolve("child")) && System.currentTimeMillis() < end) Thread.sleep(20);
+            assertTrue(Files.exists(dir.resolve("child")) && h.getProcess().isAlive());
+            JoustNpmTasks.beforePublishForTests = now -> {
+                if (now.isEmpty() || paused.getCount() == 0) return;
+                confirmed.set(now.get(0));
+                paused.countDown();
+                try {
+                    resume.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            };
+            launch.killed = true;
+            var cancelling = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.destroyTree(launch, h.getProcess()));
+            assertTrue("the cancellation listed the child", paused.await(20, java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue("the parent exited meanwhile", h.getProcess().waitFor(20, java.util.concurrent.TimeUnit.SECONDS));
+            java.util.concurrent.atomic.AtomicBoolean released = new java.util.concurrent.atomic.AtomicBoolean();
+            var asking = ApplicationManager.getApplication().executeOnPooledThread(
+                    () -> JoustNpmTasks.releaseWhenTreeGone(launch, () -> released.set(true)));
+            Thread.sleep(300);
+            assertFalse("the decision waits for the cancellation's listing", asking.isDone());
+            assertFalse(released.get());
+            resume.countDown();
+            end = System.currentTimeMillis() + 15_000;
+            while (!released.get() && System.currentTimeMillis() < end) Thread.sleep(20);
+            assertTrue("released", released.get());
+            assertFalse("only after the confirmed child was gone", confirmed.get().isAlive());
+            cancelling.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(h.waitFor(10_000));
+        } finally {
+            resume.countDown();
+            Files.writeString(dir.resolve("stop"), "x");
+        }
+    }
+
+    /** M2-CDX-32: a listing whose parent exits during the enumeration is discarded: none of its handles is kept or signalled. */
+    public void testAListingRacingTheParentsExitIsDiscarded() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        Path dir = Files.createDirectories(Path.of(getProject().getBasePath()).resolve("racing-exit")).toRealPath();
+        OSProcessHandler h = parentWithChild(node, dir, 60_000);
+        JoustNpmTasks.Launch launch = new JoustNpmTasks.Launch(h);
+        java.util.concurrent.atomic.AtomicReference<ProcessHandle> candidate = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.CountDownLatch raced = new java.util.concurrent.CountDownLatch(1);
+        // The parent ends during the enumeration: after the listing returned, before it is re-checked.
+        JoustNpmTasks.afterListingForTests = now -> {
+            if (now.isEmpty() || raced.getCount() == 0) return;
+            candidate.set(now.get(0));
+            h.getProcess().destroyForcibly();
+            try {
+                h.getProcess().waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            raced.countDown();
+        };
+        try {
+            launch.ensureStarted();
+            launch.sample();
+            assertTrue("a listing raced the parent's exit", raced.await(20, java.util.concurrent.TimeUnit.SECONDS));
+            Thread.sleep(600);   // later samples see the parent gone
+            assertTrue("the candidate is a live process (only the discard keeps it from being ours)", candidate.get().isAlive());
+            assertEquals("discarded: nothing kept", List.of(), launch.liveSeen());
+            assertFalse("the listing proves nothing", launch.enumerated);
+            assertTrue("treated as gone: the candidate is not ours to wait for", JoustNpmTasks.treeGone(launch));
+            assertTrue(candidate.get().isAlive());   // never signalled
+            assertTrue(h.waitFor(10_000));
+        } finally {
             Files.writeString(dir.resolve("stop"), "x");
         }
     }

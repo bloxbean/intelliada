@@ -233,7 +233,7 @@ public final class JoustNpmTasks {
                     List<ProcessHandle> now = descendants(p);
                     boolean stillAlive = p.isAlive();
                     enumerated = now != null && stillAlive;
-                    var pause = samplerPauseForTests;
+                    var pause = beforePublishForTests;
                     if (pause != null && now != null) pause.accept(now);
                     // Kept only if the parent still lived after the listing: a listing racing its death, possibly with its
                     // PID reused, identifies nothing of ours (M2-SEC-12, M2-CDX-32).
@@ -263,7 +263,10 @@ public final class JoustNpmTasks {
     static List<ProcessHandle> descendants(Process p) {
         try {
             if (enumerationDeniedForTests) throw new UnsupportedOperationException("Operation not permitted (sysctl failed)");
-            return p.descendants().toList();
+            List<ProcessHandle> now = p.descendants().toList();
+            var hook = afterListingForTests;
+            if (hook != null) hook.accept(now);
+            return now;
         } catch (RuntimeException refused) {
             return null;
         }
@@ -278,10 +281,16 @@ public final class JoustNpmTasks {
      */
     static void destroyTree(Launch launch, Process p) {
         for (int round = 0; round < 16 && p.isAlive(); round++) {
-            List<ProcessHandle> now = descendants(p);
-            if (now == null || !p.isAlive()) break;
             boolean added = false;
-            for (ProcessHandle h : now) if (launch.seen.add(h)) added = true;
+            // Listed, confirmed and published under the launch's lock, like a sample: release never decides in between
+            // (M2-CDX-3).
+            synchronized (launch) {
+                List<ProcessHandle> now = descendants(p);
+                if (now == null || !p.isAlive()) break;
+                var pause = beforePublishForTests;
+                if (pause != null) pause.accept(now);
+                for (ProcessHandle h : now) if (launch.seen.add(h)) added = true;
+            }
             for (ProcessHandle h : launch.liveSeen()) h.destroyForcibly();
             if (!added) break;   // nothing new since the last listing
         }
@@ -299,8 +308,10 @@ public final class JoustNpmTasks {
         }
     }
 
-    /** For tests: runs inside a sample, under the lock, after the listing and before it is published. */
-    static volatile java.util.function.Consumer<List<ProcessHandle>> samplerPauseForTests;
+    /** For tests: runs under the lock in a sample or in {@link #destroyTree}, after the listing is confirmed, before it is published. */
+    static volatile java.util.function.Consumer<List<ProcessHandle>> beforePublishForTests;
+    /** For tests: runs right after a listing returns, before the parent is re-checked. */
+    static volatile java.util.function.Consumer<List<ProcessHandle>> afterListingForTests;
 
     /**
      * Runs {@code release} once {@link #treeGone} holds: a one-shot check that reschedules itself only while something
