@@ -5,7 +5,6 @@ import com.bloxbean.intelliada.idea.joust.core.NodeVersionProbe;
 import com.bloxbean.intelliada.idea.joust.lsp.JoustServerControl;
 import com.bloxbean.intelliada.idea.joust.lsp.JoustStreamConnectionProvider;
 import com.bloxbean.intelliada.idea.joust.settings.JoustToolsState;
-import com.intellij.ide.trustedProjects.TrustedProjectsListener;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -41,6 +40,11 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
         }
     }
 
+    private static java.util.Set<Long> descendants() {
+        return ProcessHandle.current().descendants().filter(ProcessHandle::isAlive).map(ProcessHandle::pid)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
     public void testOpeningAJscStartsOnlyTheUsersServer() throws Exception {
         String node = System.getenv("JOUST_NODE");
         String lsp = System.getenv("JOUST_LSP");
@@ -71,21 +75,37 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
         state.setValidatedNode(JoustToolValidator.identityOf(Path.of(node).toRealPath()), "test");
         JoustStreamConnectionProvider.setLaunchRecorderForTests(launches::add);
         int probes = NodeVersionProbe.invocations();
+        java.util.Set<Long> before = descendants();
+        // Untrusted first (T2): the same advisory command, nothing planted runs.
+        com.intellij.ide.trustedProjects.TrustedProjects.setProjectTrusted(getProject(), false);
 
         VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(jsc);
         assertNotNull(vf);
         ApplicationManager.getApplication().invokeAndWait(() -> FileEditorManager.getInstance(getProject()).openFile(vf, true));
         PlatformTestUtil.waitWithEventsDispatching("the JOUST server starts", () -> JoustServerControl.status(getProject()) == ServerStatus.started, 60);
         assertEquals("one launch: " + launches, 1, launches.size());
+        java.util.Set<Long> started = descendants();
+        started.removeAll(before);
+        assertEquals("one process at the JVM boundary (I1): " + started, 1, started.size());
+        long firstPid = started.iterator().next();
+        // A sync (VFS refresh and indexing) starts nothing (I1).
+        com.intellij.openapi.vfs.VirtualFileManager.getInstance().syncRefresh();
+        com.intellij.testFramework.IndexingTestUtil.waitUntilIndexesAreReady(getProject());
         List<String> cmd = launches.get(0);
         assertEquals(List.of(Path.of(node).toRealPath().toString(),
                 JoustToolValidator.resolveJoustLsp(lsp, List.of(base), com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current()).realPath().toString(),
                 "--stdio", "--storage", JoustStreamConnectionProvider.storageDir().toString()), cmd);
 
-        ApplicationManager.getApplication().getMessageBus().syncPublisher(TrustedProjectsListener.TOPIC).onProjectUntrusted(getProject());
+        // A real trust change restarts it with the same advisory command; the old process exits (I4, I20).
+        com.intellij.ide.trustedProjects.TrustedProjects.setProjectTrusted(getProject(), true);
         PlatformTestUtil.waitWithEventsDispatching("the JOUST server restarts", () -> launches.size() >= 2
                 && JoustServerControl.status(getProject()) == ServerStatus.started, 60);
         assertEquals("the restart uses the same advisory command", cmd, launches.get(1));
+        PlatformTestUtil.waitWithEventsDispatching("the old process exits",
+                () -> !ProcessHandle.of(firstPid).map(ProcessHandle::isAlive).orElse(false), 30);
+        java.util.Set<Long> now = descendants();
+        now.removeAll(before);
+        assertEquals("still exactly one JOUST process: " + now, 1, now.size());
 
         Thread.sleep(3000);
         assertEquals("no node --version ran", probes, NodeVersionProbe.invocations());

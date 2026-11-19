@@ -10,6 +10,8 @@ import com.intellij.notification.Notifications;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
@@ -59,9 +61,35 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
     @Override
     protected void tearDown() throws Exception {
         try {
+            listening.forEach(f -> f.cancel(true));
+            for (java.io.Closeable c : pipes) {
+                try {
+                    c.close();
+                } catch (java.io.IOException ignored) {
+                    // already closed
+                }
+            }
             Files.deleteIfExists(outside);
         } finally {
             super.tearDown();
+        }
+    }
+
+    private final List<java.io.Closeable> pipes = new ArrayList<>();
+    private final List<java.util.concurrent.Future<Void>> listening = new ArrayList<>();
+
+    /** A client whose filtered registrations are recorded instead of handed to an LSP4IJ wrapper. */
+    static final class RecordingClient extends JoustLanguageClient {
+        final List<String> accepted = new CopyOnWriteArrayList<>();
+
+        RecordingClient(com.intellij.openapi.project.Project p) {
+            super(p);
+        }
+
+        @Override
+        protected CompletableFuture<Void> acceptRegistration(RegistrationParams params) {
+            params.getRegistrations().forEach(r -> accepted.add(r.getMethod()));
+            return CompletableFuture.completedFuture(null);
         }
     }
 
@@ -71,10 +99,11 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
         PipedOutputStream serverOut = new PipedOutputStream(clientIn);
         PipedInputStream serverIn = new PipedInputStream(1 << 16);
         PipedOutputStream clientOut = new PipedOutputStream(serverIn);
+        pipes.addAll(List.of(clientIn, serverOut, serverIn, clientOut));
         Launcher<LanguageServer> clientSide = LSPLauncher.createClientLauncher(client, clientIn, clientOut);
-        clientSide.startListening();
+        listening.add(clientSide.startListening());
         Launcher<LanguageClient> serverSide = LSPLauncher.createServerLauncher(new FakeServer(), serverIn, serverOut);
-        serverSide.startListening();
+        listening.add(serverSide.startListening());
         return serverSide.getRemoteProxy();
     }
 
@@ -89,27 +118,103 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
     }
 
     public void testEditingRegistrationsAreRefused() throws Exception {
-        LanguageClient c = connect(new JoustLanguageClient(getProject()));
+        RecordingClient client = new RecordingClient(getProject());
+        LanguageClient c = connect(client);
         for (String method : new String[]{"textDocument/formatting", "textDocument/rangeFormatting", "textDocument/rename",
                 "textDocument/completion", "textDocument/codeAction", "workspace/executeCommand", "workspace/didChangeWatchedFiles",
                 "workspace/willRenameFiles"}) {
             CompletableFuture<Void> f = c.registerCapability(new RegistrationParams(List.of(new Registration("id-" + method, method))));
-            try {
-                f.get(10, TimeUnit.SECONDS);
-                fail("accepted " + method);
-            } catch (java.util.concurrent.ExecutionException expected) {
-                // refused with an error
-            }
+            assertInvalidRequest(method, f);
         }
+        assertTrue("nothing refused reached LSP4IJ: " + client.accepted, client.accepted.isEmpty());
+        // an allowed registration reaches LSP4IJ
+        c.registerCapability(new RegistrationParams(List.of(new Registration("h", "textDocument/hover")))).get(10, TimeUnit.SECONDS);
+        assertEquals(List.of("textDocument/hover"), client.accepted);
+        client.accepted.clear();
         // a mixed request is refused whole
         CompletableFuture<Void> mixed = c.registerCapability(new RegistrationParams(List.of(
                 new Registration("a", "textDocument/hover"), new Registration("b", "textDocument/formatting"))));
+        assertInvalidRequest("mixed", mixed);
+        assertTrue("a mixed request changes no capability", client.accepted.isEmpty());
+    }
+
+    private static void assertInvalidRequest(String what, CompletableFuture<Void> f) throws Exception {
         try {
-            mixed.get(10, TimeUnit.SECONDS);
-            fail("accepted a request containing formatting");
-        } catch (java.util.concurrent.ExecutionException expected) {
-            // refused
+            f.get(10, TimeUnit.SECONDS);
+            fail("accepted " + what);
+        } catch (java.util.concurrent.ExecutionException e) {
+            assertTrue(what + ": " + e.getCause(), e.getCause() instanceof org.eclipse.lsp4j.jsonrpc.ResponseErrorException);
+            assertEquals(what, org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.InvalidRequest.getValue(),
+                    ((org.eclipse.lsp4j.jsonrpc.ResponseErrorException) e.getCause()).getResponseError().getCode());
         }
+    }
+
+    /** M1-CDX-17: clicking an action answers with that item; dismissing answers null. */
+    public void testMessageRequestAnswersTheClickedItem() throws Exception {
+        List<Notification> seen = new CopyOnWriteArrayList<>();
+        getProject().getMessageBus().connect(getTestRootDisposable()).subscribe(Notifications.TOPIC, new Notifications() {
+            @Override
+            public void notify(Notification n) {
+                seen.add(n);
+            }
+        });
+        LanguageClient c = connect(new JoustLanguageClient(getProject()));
+        ShowMessageRequestParams req = new ShowMessageRequestParams(List.of(new MessageActionItem("Yes"), new MessageActionItem("No")));
+        req.setType(MessageType.Info);
+        req.setMessage("choose");
+        CompletableFuture<MessageActionItem> answer = c.showMessageRequest(req);
+        PlatformTestUtil.waitWithEventsDispatching("the request notification", () -> !seen.isEmpty(), 10);
+        Notification n = seen.get(0);
+        var yes = n.getActions().get(0);
+        ApplicationManager.getApplication().invokeAndWait(() -> Notification.fire(n, yes, null));
+        assertEquals("Yes", answer.get(10, TimeUnit.SECONDS).getTitle());
+        seen.clear();
+        CompletableFuture<MessageActionItem> dismissed = c.showMessageRequest(req);
+        PlatformTestUtil.waitWithEventsDispatching("the second notification", () -> !seen.isEmpty(), 10);
+        seen.get(0).expire();
+        assertNull(dismissed.get(10, TimeUnit.SECONDS));
+    }
+
+    /** M1-CDX-1, M1-CDX-2: native and generated targets are refused; a target moved out after listing is refused. */
+    public void testSafeOpenRefusesNativeGeneratedAndMovedTargets() throws Exception {
+        Path png = Files.write(base.resolve("contracts/app/pic.png"), new byte[]{(byte) 0x89, 'P', 'N', 'G'});
+        VirtualFile pngVf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(png);
+        VirtualFile in = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside);
+        com.intellij.testFramework.ExtensionTestUtil.addExtensions(com.intellij.openapi.roots.GeneratedSourcesFilter.EP_NAME,
+                List.of(new com.intellij.openapi.roots.GeneratedSourcesFilter() {
+                    @Override
+                    public boolean isGeneratedSource(VirtualFile file, com.intellij.openapi.project.Project project) {
+                        return file.getName().equals("Gen.jsc");
+                    }
+                }), getTestRootDisposable());
+        Path gen = Files.writeString(base.resolve("contracts/app/Gen.jsc"), "x");
+        VirtualFile genVf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(gen);
+        Path movable = Files.writeString(base.resolve("contracts/app/Movable.jsc"), "x");
+        VirtualFile movableVf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(movable);
+        Files.move(movable, outside.resolveSibling("moved-" + System.nanoTime() + ".jsc"));
+        Files.createSymbolicLink(movable, outside);
+        ApplicationManager.getApplication().invokeAndWait(() -> {
+            assertFalse(com.bloxbean.intelliada.idea.joust.editor.JoustSafeOpen.open(getProject(), pngVf, 0, false));
+            assertFalse(com.bloxbean.intelliada.idea.joust.editor.JoustSafeOpen.open(getProject(), genVf, 0, false));
+            assertFalse(com.bloxbean.intelliada.idea.joust.editor.JoustSafeOpen.open(getProject(), movableVf, 0, false));
+            assertTrue(com.bloxbean.intelliada.idea.joust.editor.JoustSafeOpen.open(getProject(), in, 0, false));
+        });
+    }
+
+    /** G1.1 (M1-CDX-20): TextMate's flat PSI accepts a LineMarkerProvider (ADR-005 D15's gutter icons rely on it). */
+    public void testTextMatePsiAcceptsALineMarkerProvider() {
+        List<PsiElement> seen = new CopyOnWriteArrayList<>();
+        com.intellij.codeInsight.daemon.LineMarkerProviders.getInstance().addExplicitExtension(
+                org.jetbrains.plugins.textmate.TextMateLanguage.LANGUAGE, new com.intellij.codeInsight.daemon.LineMarkerProvider() {
+                    @Override
+                    public com.intellij.codeInsight.daemon.LineMarkerInfo<?> getLineMarkerInfo(PsiElement element) {
+                        seen.add(element);
+                        return null;
+                    }
+                }, getTestRootDisposable());
+        myFixture.configureByText("Probe.jsc", "jsc 1\npackage app\n");
+        myFixture.doHighlighting();
+        assertFalse("the provider ran on the .jsc file's PSI", seen.isEmpty());
     }
 
     public void testShowDocumentIsConfined() throws Exception {
@@ -158,9 +263,19 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
     }
 
     public void testWorkspaceFoldersAreConfined() throws Exception {
-        LanguageClient c = connect(new JoustLanguageClient(getProject()));
-        List<WorkspaceFolder> folders = c.workspaceFolders().get(10, TimeUnit.SECONDS);
-        assertFalse(folders.isEmpty());
+        VirtualFile inBase = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(Files.createDirectories(base.resolve("contracts")));
+        VirtualFile external = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(outside.getParent());
+        com.intellij.testFramework.PsiTestUtil.addContentRoot(getModule(), inBase);
+        com.intellij.testFramework.PsiTestUtil.addContentRoot(getModule(), external);
+        List<WorkspaceFolder> folders;
+        try {
+            LanguageClient c = connect(new JoustLanguageClient(getProject()));
+            folders = c.workspaceFolders().get(10, TimeUnit.SECONDS);
+        } finally {
+            com.intellij.testFramework.PsiTestUtil.removeContentEntry(getModule(), inBase);
+            com.intellij.testFramework.PsiTestUtil.removeContentEntry(getModule(), external);
+        }
+        assertEquals(1, folders.size());
         for (WorkspaceFolder f : folders) {
             Path p = Path.of(java.net.URI.create(f.getUri())).toRealPath();
             assertTrue(p + " is inside " + base, p.startsWith(base));

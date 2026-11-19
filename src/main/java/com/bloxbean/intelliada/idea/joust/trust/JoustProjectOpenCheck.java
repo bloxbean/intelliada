@@ -18,8 +18,9 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * ADR-004 D4: when a project opens whose roots contain a configured tool path (or its real target), the JOUST servers
- * stop and the user is told. Nothing is executed: this is the text and real-path check only.
+ * ADR-004 D4: when a project opens whose roots contain a configured tool path or its real target, the JOUST servers
+ * stop (without being disabled: they start again once the conflict is gone) and the user is told. Nothing is executed:
+ * the selected and real paths are checked against the new project's roots ({@link #conflict}).
  */
 public final class JoustProjectOpenCheck implements ProjectActivity {
 
@@ -27,15 +28,29 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
     public @Nullable Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
         JoustToolsState state = JoustToolsState.getInstance();
         if (!state.looksConfigured()) return Unit.INSTANCE;
-        List<Path> roots = JoustForbiddenRoots.of(project);
-        JoustPaths.Flavor flavor = JoustPaths.Flavor.current();
-        var node = JoustToolValidator.checkNode(state.getState().nodePath, roots, flavor);
-        var lsp = JoustToolValidator.resolveJoustLsp(state.getState().joustLspPath, roots, flavor);
-        String problem = !node.ok() ? node.error() : !lsp.ok() ? lsp.error() : null;
-        if (problem != null && (problem.contains("inside an open project") || problem.contains("node_modules/.bin"))) {
+        String problem = conflict(state.getState().nodePath, state.getState().joustLspPath, JoustForbiddenRoots.of(project),
+                JoustPaths.Flavor.current());
+        if (problem != null) {
             JoustServerControl.stopAll("a configured JOUST tool is inside " + project.getName());
             JoustNotifications.show(project, "JOUST language server stopped", problem, NotificationType.WARNING);
         }
         return Unit.INSTANCE;
+    }
+
+    /** Why a configured tool lies inside {@code roots} (selected or real path), or {@code null}. Executes nothing. */
+    public static String conflict(String nodePath, String lspPath, List<Path> roots, JoustPaths.Flavor flavor) {
+        for (String[] tool : new String[][]{{"Node", nodePath}, {"joust-lsp", lspPath}}) {
+            if (tool[1] == null || tool[1].isBlank() || !JoustPaths.isAbsolute(tool[1].trim(), flavor)) continue;
+            Path selected = Path.of(tool[1].trim());
+            Path real;
+            try {
+                real = selected.toRealPath();
+            } catch (java.io.IOException e) {
+                real = selected;
+            }
+            String where = JoustToolValidator.locationProblem(selected, real, roots, flavor);
+            if (where != null) return tool[0] + " " + where;
+        }
+        return null;
     }
 }

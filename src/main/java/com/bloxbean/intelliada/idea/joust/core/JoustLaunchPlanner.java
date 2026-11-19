@@ -16,6 +16,41 @@ public final class JoustLaunchPlanner {
     private JoustLaunchPlanner() {
     }
 
+    /**
+     * The storage directory's real path, created if needed, or {@code null} (M1-CDX-4). Its destination is resolved
+     * through the nearest <b>existing</b> ancestor's real path <b>before</b> anything is created, so a symlinked ancestor
+     * into a project is refused without writing there; the created directory's real path is checked again.
+     */
+    static Path verifiedStorage(Path storageDir, Collection<Path> forbiddenRoots, JoustPaths.Flavor flavor) {
+        if (storageDir == null || !JoustPaths.isAbsolute(storageDir.toString(), flavor)) return null;
+        Path p = storageDir.toAbsolutePath().normalize();
+        Path existing = p;
+        while (existing != null && !Files.exists(existing)) existing = existing.getParent();
+        if (existing == null) return null;
+        Path destination;
+        try {
+            destination = existing.toRealPath().resolve(existing.relativize(p)).normalize();
+        } catch (IOException e) {
+            return null;
+        }
+        if (insideAny(destination, forbiddenRoots, flavor)) return null;
+        try {
+            Files.createDirectories(destination);
+            Path real = destination.toRealPath();
+            if (!Files.isDirectory(real) || insideAny(real, forbiddenRoots, flavor)) return null;
+            return real;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static boolean insideAny(Path p, Collection<Path> roots, JoustPaths.Flavor flavor) {
+        for (Path root : roots) {
+            if (JoustPaths.isInside(p.toString(), root.toString(), flavor)) return true;
+        }
+        return false;
+    }
+
     /** What the configured settings say. */
     public record Settings(String nodePath, String joustLspPath, NodeIdentity validatedNode) {
     }
@@ -48,19 +83,10 @@ public final class JoustLaunchPlanner {
                     + "). Validate it again in Settings | Tools | JOUST.", true);
         }
 
-        if (storageDir == null || !JoustPaths.isAbsolute(storageDir.toString(), flavor)) {
-            return new Plan(null, "No storage directory for joust-lsp.", false);
+        Path storage = verifiedStorage(storageDir, forbiddenRoots, flavor);
+        if (storage == null) {
+            return new Plan(null, "joust-lsp's storage directory must be a directory outside every project: " + storageDir, false);
         }
-        for (Path root : forbiddenRoots) {
-            if (JoustPaths.isInside(storageDir.toString(), root.toString(), flavor)) {
-                return new Plan(null, "joust-lsp's storage directory must be outside every project: " + storageDir, false);
-            }
-        }
-        try {
-            Files.createDirectories(storageDir);
-        } catch (IOException e) {
-            return new Plan(null, "joust-lsp's storage directory could not be created: " + e.getMessage(), false);
-        }
-        return new Plan(JoustLaunch.of(node.realPath(), lsp.realPath(), storageDir), null, false);
+        return new Plan(JoustLaunch.of(node.realPath(), lsp.realPath(), storage), null, false);
     }
 }

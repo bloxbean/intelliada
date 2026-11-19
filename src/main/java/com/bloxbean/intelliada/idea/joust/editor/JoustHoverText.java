@@ -16,6 +16,12 @@ import java.util.List;
 public final class JoustHoverText {
 
     static final int CAP = 20_000;
+    static final int MAX_PARTS = 50;
+
+    /** Each part is cut to the cap before anything is concatenated or split (M1-CDX-13). */
+    private static String capped(String s) {
+        return s == null ? "" : s.length() > CAP ? s.substring(0, CAP) : s;
+    }
 
     private JoustHoverText() {
     }
@@ -26,12 +32,14 @@ public final class JoustHoverText {
         StringBuilder sb = new StringBuilder();
         Either<List<Either<String, MarkedString>>, MarkupContent> c = hover.getContents();
         if (c.isRight()) {
-            if (c.getRight() != null) sb.append(c.getRight().getValue());
+            if (c.getRight() != null) sb.append(capped(c.getRight().getValue()));
         } else if (c.getLeft() != null) {
+            int parts = 0;
             for (Either<String, MarkedString> e : c.getLeft()) {
                 if (e == null) continue;
+                if (++parts > MAX_PARTS || sb.length() >= CAP) break;
                 if (sb.length() > 0) sb.append("\n\n");
-                sb.append(e.isLeft() ? e.getLeft() : e.getRight() == null ? "" : e.getRight().getValue());
+                sb.append(capped(e.isLeft() ? e.getLeft() : e.getRight() == null ? "" : e.getRight().getValue()));
             }
         }
         String text = sb.toString();

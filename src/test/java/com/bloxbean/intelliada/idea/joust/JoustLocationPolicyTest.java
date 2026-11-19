@@ -39,14 +39,14 @@ public class JoustLocationPolicyTest {
 
     @Test
     public void onlyInProjectFilesOpen() throws Exception {
-        assertEquals(inside, JoustLocationPolicy.allowedTarget(inside.toUri().toString(), project, flavor));
-        assertNull(JoustLocationPolicy.allowedTarget(outside.toUri().toString(), project, flavor));
-        assertNull(JoustLocationPolicy.allowedTarget(lspJs.toUri().toString(), project, flavor));
-        assertNull(JoustLocationPolicy.allowedTarget(storageFile.toUri().toString(), project, flavor));
+        assertEquals(inside, JoustLocationPolicy.allowedTarget(inside.toUri().toString(), project));
+        assertNull(JoustLocationPolicy.allowedTarget(outside.toUri().toString(), project));
+        assertNull(JoustLocationPolicy.allowedTarget(lspJs.toUri().toString(), project));
+        assertNull(JoustLocationPolicy.allowedTarget(storageFile.toUri().toString(), project));
         Path link = Files.createSymbolicLink(project.resolve("contracts/app/Link.jsc"), outside);
-        assertNull("an in-project symlink to an outside file", JoustLocationPolicy.allowedTarget(link.toUri().toString(), project, flavor));
+        assertNull("an in-project symlink to an outside file", JoustLocationPolicy.allowedTarget(link.toUri().toString(), project));
         Path linkIn = Files.createSymbolicLink(project.resolve("contracts/Alias.jsc"), inside);
-        assertEquals(inside, JoustLocationPolicy.allowedTarget(linkIn.toUri().toString(), project, flavor));
+        assertEquals(inside, JoustLocationPolicy.allowedTarget(linkIn.toUri().toString(), project));
     }
 
     @Test
@@ -54,20 +54,41 @@ public class JoustLocationPolicyTest {
         for (String uri : new String[]{"https://example.com/Counter.jsc", "joust-lib:/std/List.jsc", "jar:file:/x.jar!/a",
                 "file://evil-host/share/Counter.jsc", inside.toUri() + "?q=1", "Counter.jsc", "../../etc/passwd",
                 "file:" + project.resolve("missing.jsc"), project.toUri().toString(), "file:///%2e%2e/etc/passwd", "", null}) {
-            assertNull(String.valueOf(uri), JoustLocationPolicy.allowedTarget(uri, project, flavor));
+            assertNull(String.valueOf(uri), JoustLocationPolicy.allowedTarget(uri, project));
         }
-        assertNotNull(JoustLocationPolicy.allowedTarget(inside.toUri() + "#L3", project, flavor));
-        assertNull(JoustLocationPolicy.allowedTarget(inside.toUri().toString(), null, flavor));
+        assertNotNull(JoustLocationPolicy.allowedTarget(inside.toUri() + "#L3", project));
+        assertNull(JoustLocationPolicy.allowedTarget(inside.toUri().toString(), null));
     }
 
     @Test
-    public void workspaceFoldersAreConfined() throws Exception {
+    public void workspaceFoldersAreTheInBaseTopLevelRoots() throws Exception {
         Path module = Files.createDirectories(project.resolve("module"));
+        Path module2 = Files.createDirectories(project.resolve("libs/module2"));
+        Path nested = Files.createDirectories(module.resolve("sub"));
         Path external = Files.createDirectories(project.resolveSibling("included-build"));
         Path lookAlike = Files.createDirectories(project.resolveSibling("repo-evil"));
-        List<Path> got = JoustWorkspaceFolders.confine(List.of(project, module, external, lookAlike), project, flavor);
-        assertEquals(List.of(project), got);
-        assertEquals(List.of(module), JoustWorkspaceFolders.confine(List.of(module, external), project, flavor));
-        assertEquals(List.of(project), JoustWorkspaceFolders.confine(List.of(external), project, flavor));
+        assertEquals(List.of(project), JoustWorkspaceFolders.confine(List.of(project, module, external, lookAlike), project));
+        assertEquals("the base is not added when it is not a content root (M1-CDX-12)", List.of(module2, module),
+                JoustWorkspaceFolders.confine(List.of(module, module2, nested, external), project));
+        assertEquals(List.of(), JoustWorkspaceFolders.confine(List.of(external, lookAlike), project));
+    }
+
+    @Test
+    public void remoteAndDeviceFormsAreRefusedFromTheText() {
+        for (String uri : new String[]{"file:////server/share/repo/a.jsc", "file://server/share/a.jsc", "file:///%2F%2Fserver/share/a.jsc",
+                "file:///%5C%5Cserver%5Cshare", "file:///?/C:/a.jsc", "file:///./C:/a.jsc", "file:///UNC/server/a.jsc",
+                "file:///a/../b.jsc", "file:///a%00b.jsc"}) {
+            assertNull(uri, JoustLocationPolicy.localPathOf(uri));
+        }
+        assertNotNull(JoustLocationPolicy.localPathOf("file:///repo/a.jsc"));
+        assertNotNull(JoustLocationPolicy.localPathOf("file://localhost/repo/a.jsc"));
+    }
+
+    @Test
+    public void containmentIsByIdentityNotSpelling() throws Exception {
+        Path sibling = Files.createDirectories(project.resolveSibling(project.getFileName() + "-x"));
+        Path f = Files.writeString(sibling.resolve("a.jsc"), "x");
+        assertFalse(com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(f, project));
+        assertTrue(com.bloxbean.intelliada.idea.joust.core.JoustRealPaths.isInside(inside, project));
     }
 }

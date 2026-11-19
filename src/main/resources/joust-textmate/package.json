@@ -1,8 +1,5 @@
 {
   "name": "intelliada-joust-jsc",
-  "displayName": "JOUST (.jsc)",
-  "description": "The .jsc TextMate grammar and language configuration from JOUST's vscode-joust extension (MIT), bundled by IntelliAda.",
-  "license": "MIT",
   "contributes": {
     "languages": [
       {

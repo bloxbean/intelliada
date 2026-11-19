@@ -192,6 +192,8 @@
         <notificationGroup id="JOUST" displayType="BALLOON"/>
         <gotoDeclarationHandler id="IntelliAdaJoustGotoDeclaration" order="first"
                                 implementation="com.bloxbean.intelliada.idea.joust.editor.JoustGotoDeclarationHandler"/>
+        <platform.backend.documentation.psiTargetProvider id="IntelliAdaJoustNavigationHint" order="first"
+                implementation="com.bloxbean.intelliada.idea.joust.editor.JoustNavigationHintProvider"/>
         <platform.backend.documentation.targetProvider id="IntelliAdaJoustHover" order="first"
                 implementation="com.bloxbean.intelliada.idea.joust.editor.JoustDocumentationTargetProvider"/>
         <statusBarWidgetFactory id="IntelliAdaJoustStatus" order="after positionWidget"

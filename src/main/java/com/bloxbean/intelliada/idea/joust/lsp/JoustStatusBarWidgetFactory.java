@@ -41,8 +41,15 @@ public final class JoustStatusBarWidgetFactory implements StatusBarWidgetFactory
     }
 
     static final class Widget extends EditorBasedWidget implements StatusBarWidget.TextPresentation {
+        private final Project project;
+
         Widget(Project project) {
             super(project);
+            this.project = project;
+        }
+
+        private Project project() {
+            return project;
         }
 
         @Override
@@ -60,8 +67,20 @@ public final class JoustStatusBarWidgetFactory implements StatusBarWidgetFactory
             VirtualFile f = getSelectedFile();
             if (f == null || !JoustConstants.isJscName(f.getName())) return "";
             if (!JoustToolsState.getInstance().looksConfigured()) return "JOUST: not configured";
-            JoustStatusCache.Status s = JoustStatusCache.getInstance(getProject()).forUri(com.redhat.devtools.lsp4ij.LSPIJUtils.toUriAsString(f));
-            return s == null ? "JOUST: advisory" : s.summary();
+            if (JoustServerControl.status(project()) != com.redhat.devtools.lsp4ij.ServerStatus.started) return "JOUST: not running";
+            JoustStatusCache.Status s = JoustStatusCache.getInstance(project()).forUri(com.redhat.devtools.lsp4ij.LSPIJUtils.toUriAsString(f));
+            String declared = declaredVersion(f);
+            if (s == null) return "JOUST: advisory" + (declared == null ? "" : "; project pins " + declared);
+            return s.summary(declared);
+        }
+
+        private String declaredVersion(VirtualFile f) {
+            try {
+                java.nio.file.Path base = com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots.baseReal(project());
+                return com.bloxbean.intelliada.idea.joust.core.JoustDeclaredVersion.forFile(f.toNioPath().toRealPath(), base);
+            } catch (java.io.IOException | RuntimeException e) {
+                return null;
+            }
         }
 
         @Override
@@ -77,7 +96,7 @@ public final class JoustStatusBarWidgetFactory implements StatusBarWidgetFactory
         @Override
         public void install(@NotNull StatusBar statusBar) {
             super.install(statusBar);
-            getProject().getMessageBus().connect(this).subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER,
+            project().getMessageBus().connect(this).subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER,
                     new FileEditorManagerListener() {
                         @Override
                         public void selectionChanged(@NotNull FileEditorManagerEvent event) {

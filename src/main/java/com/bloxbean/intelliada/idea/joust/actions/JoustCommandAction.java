@@ -49,7 +49,15 @@ abstract class JoustCommandAction extends AnAction {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 JoustLanguageServerApi server = JoustServerAccess.server(project);
-                if (server == null) return;
+                if (server == null) {
+                    var n = com.bloxbean.intelliada.idea.joust.lsp.JoustNotifications.create("JOUST language server unavailable",
+                            "The .jsc language server is not configured or did not start.",
+                            com.intellij.notification.NotificationType.WARNING);
+                    n.addAction(com.intellij.notification.NotificationAction.createSimpleExpiring("Configure JOUST…",
+                            () -> com.intellij.openapi.options.ShowSettingsUtil.getInstance().showSettingsDialog(project, "JOUST")));
+                    n.notify(project);
+                    return;
+                }
                 String uri = ReadAction.compute(() -> JoustServerAccess.uriOf(vf));
                 perform(server, new Context(project, vf, uri, pos));
             }

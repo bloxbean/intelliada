@@ -1,6 +1,5 @@
 package com.bloxbean.intelliada.idea.joust.editor;
 
-import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiElement;
@@ -58,7 +57,7 @@ final class JoustNavigationElement extends FakePsiElement {
     @Override
     public void navigate(boolean requestFocus) {
         VirtualFile vf = file.getVirtualFile();
-        if (vf != null) new OpenFileDescriptor(getProject(), vf, offset).navigate(requestFocus);
+        if (vf != null) JoustSafeOpen.open(getProject(), vf, offset, requestFocus);
     }
 
     @Override

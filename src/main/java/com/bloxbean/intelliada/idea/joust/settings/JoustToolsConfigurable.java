@@ -91,7 +91,7 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
     public boolean isModified() {
         JoustToolsState.Data d = JoustToolsState.getInstance().getState();
         return !Objects.equals(text(nodeField), nz(d.nodePath)) || !Objects.equals(text(lspField), nz(d.joustLspPath))
-                || buildOnSave.isSelected() != d.buildOnSave;
+                || buildOnSave.isSelected() != d.buildOnSave || nodeChangedOnDisk(d);
     }
 
     @Override
@@ -147,9 +147,11 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         String version;
         NodeIdentity id;
         try {
-            version = ProgressManager.getInstance().runProcessWithProgressSynchronously(
-                    () -> NodeVersionProbe.probe(n.realPath()), "Checking Node", true, null);
-            id = JoustToolValidator.identityOf(n.realPath());
+            Object[] r = ProgressManager.getInstance().runProcessWithProgressSynchronously(
+                    () -> new Object[]{NodeVersionProbe.probe(n.realPath()), JoustToolValidator.identityOf(n.realPath())},
+                    "Checking Node", true, null);
+            version = (String) r[0];
+            id = (NodeIdentity) r[1];
         } catch (IOException e) {
             throw new ConfigurationException("Node could not be run: " + e.getMessage(), "Node");
         }
@@ -205,6 +207,20 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         if (picked == null) return;
         int cut = picked.indexOf("  (");
         field.setText(cut > 0 ? picked.substring(0, cut) : picked);
+    }
+
+    /**
+     * True when the validated Node's size or modification time changed since it was validated: Settings then offers
+     * Apply, which validates it again (M1-CDX-14). A stat only; the hash is recomputed on Apply.
+     */
+    static boolean nodeChangedOnDisk(JoustToolsState.Data d) {
+        if (d.nodeRealPath == null) return false;
+        try {
+            Path p = Path.of(d.nodeRealPath);
+            return java.nio.file.Files.size(p) != d.nodeSize || java.nio.file.Files.getLastModifiedTime(p).toMillis() != d.nodeModified;
+        } catch (IOException | RuntimeException e) {
+            return true;
+        }
     }
 
     private static Path userHome() {

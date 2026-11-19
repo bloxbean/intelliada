@@ -1,0 +1,1 @@
+{"name":"@julclang/joust","version":"0.0.0-hostile-fake","private":true,"bin":{"joust-lsp":"bin/joust-lsp.js"}}

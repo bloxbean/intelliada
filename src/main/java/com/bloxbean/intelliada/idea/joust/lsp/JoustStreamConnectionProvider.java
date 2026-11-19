@@ -35,6 +35,9 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
         launchRecorder = recorder;
     }
 
+    /** The only text IntelliAda hands to LSP4IJ when a start is refused. */
+    static final String SAFE_FAILURE = "The JOUST tools are not valid. See the JOUST notification, or Settings | Tools | JOUST.";
+
     private final Project project;
 
     public JoustStreamConnectionProvider(Project project) {
@@ -55,7 +58,9 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
             n.addAction(NotificationAction.createSimpleExpiring("Configure JOUST…",
                     () -> ShowSettingsUtil.getInstance().showSettingsDialog(project, "JOUST")));
             n.notify(project);
-            throw new CannotStartProcessException(plan.error());
+            // LSP4IJ shows this message in a notification of its own, unescaped: keep it fixed and free of paths
+            // (M1-CDX-7). The details are in IntelliAda's escaped notification above.
+            throw new CannotStartProcessException(SAFE_FAILURE);
         }
         JoustLaunch launch = plan.launch();
         setCommands(launch.command());
@@ -65,6 +70,21 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
         if (rec != null) rec.accept(launch.command());
         super.start();
     }
+
+    /** The server's output, with JSON-RPC error messages escaped before LSP4J reads them (M1-SEC-1). */
+    @Override
+    public java.io.InputStream getInputStream() {
+        java.io.InputStream raw = super.getInputStream();
+        if (raw == null) return null;
+        if (sanitized == null || sanitizedFrom != raw) {
+            sanitizedFrom = raw;
+            sanitized = new JoustSanitizingInput(raw);
+        }
+        return sanitized;
+    }
+
+    private java.io.InputStream sanitizedFrom;
+    private java.io.InputStream sanitized;
 
     @Override
     protected ProcessBuilder createProcessBuilder() {

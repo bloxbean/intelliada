@@ -26,6 +26,10 @@ public final class JoustToolValidator {
     static final int PACKAGE_JSON_CAP = 256 * 1024;
     public static final String PACKAGE_NAME = "@julclang/joust";
     public static final int MIN_NODE_MAJOR = 22;
+    /** The file names a Node binary has, selected and real (M1-CDX-5): this refuses npx, npm and script shims. */
+    static final java.util.Set<String> NODE_NAMES = java.util.Set.of("node", "node.exe", "nodejs");
+    /** Selected names that are never Node, whatever they resolve to. */
+    static final java.util.Set<String> NOT_NODE = java.util.Set.of("npx", "npm", "corepack", "pnpm", "yarn", "bun");
 
     private JoustToolValidator() {
     }
@@ -58,6 +62,15 @@ public final class JoustToolValidator {
         }
         if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) return Result.fail(selected, "Node must be a file: " + real);
         if (!Files.isExecutable(real)) return Result.fail(selected, "Node is not executable: " + real);
+        if (JoustPaths.hasRefusedExtension(real.toString())) {
+            return Result.fail(selected, "Node resolves to a script shim, which is never run: " + real);
+        }
+        String selectedName = selected.getFileName().toString().toLowerCase(java.util.Locale.ROOT).replaceAll("\\.(exe|cmd|bat|ps1|js)$", "");
+        if (!NODE_NAMES.contains(real.getFileName().toString().toLowerCase(java.util.Locale.ROOT))
+                || NOT_NODE.contains(selectedName)) {
+            return Result.fail(selected, "Node must be the node binary itself (named node, node.exe or nodejs), not "
+                    + selected.getFileName() + " -> " + real.getFileName() + ": no npx, npm or version-manager shim.");
+        }
         String where = locationProblem(selected, real, forbiddenRoots, flavor);
         if (where != null) return Result.fail(selected, "Node " + where);
         return new Result(selected, real, null);

@@ -43,7 +43,7 @@ public class JoustGrammarSyncTest {
         assertEquals("source.jsc", grammars.getJSONObject(0).getString("scopeName"));
         assertEquals("./syntaxes/jsc.tmLanguage.json", grammars.getJSONObject(0).getString("path"));
         assertEquals(".jsc", contributes.getJSONArray("languages").getJSONObject(0).getJSONArray("extensions").getString(0));
-        assertFalse("no activation code, commands or other contributions", pkg.has("main") || pkg.has("activationEvents"));
+        assertEquals("only name and contributes (D2, M1-CDX-21)", java.util.Set.of("name", "contributes"), pkg.keySet());
     }
 
     @Test
@@ -56,6 +56,18 @@ public class JoustGrammarSyncTest {
             byte[] theirs = gitBytes(repo, "show", rec.get("tag") + ":js/vscode-joust/" + f);
             assertArrayEquals(f, theirs, JoustGrammarBundle.resource(f));
         }
+    }
+
+    /** M1-DES-13: IntelliAda's catalogue constant equals JOUST's CATALOGUE at the recorded tag. */
+    @Test
+    public void catalogueUrlEqualsJoustsAtTheTag() throws Exception {
+        String repo = System.getProperty("joust.repo", System.getenv("JOUST_REPO"));
+        Assume.assumeTrue("set -Djoust.repo or JOUST_REPO", repo != null && new File(repo, ".git").exists());
+        String model = git(repo, "show", JoustConstants.JOUST_TAG + ":js/joust/src/lsp/model.js");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("export const CATALOGUE = '([^']+)'").matcher(model);
+        assertTrue(m.find());
+        assertEquals(m.group(1), JoustConstants.DIAGNOSTICS_CATALOGUE);
+        assertTrue("the fragment rule is JOUST's", model.contains("#:~:text=${code},-${d.severity === 'error' ? 'error' : 'warning'}"));
     }
 
     private static String git(String repo, String... args) throws Exception {

@@ -85,6 +85,7 @@ public class JoustLspIntegrationTest {
     private static String lspPath;
 
     private Path project;
+    private List<String> beforeLaunch;
     private Process process;
     private RecordingClient client;
     private JoustLanguageServerApi server;
@@ -101,6 +102,10 @@ public class JoustLspIntegrationTest {
         Path base = tmp.getRoot().toPath().toRealPath();
         project = Files.createDirectories(base.resolve("repo"));
         plant(project);
+        Files.createDirectories(project.resolve("contracts/app"));
+        Files.writeString(project.resolve("contracts/app/Counter.jsc"), COUNTER);
+        Files.writeString(project.resolve("contracts/app/Broken.jsc"), BROKEN);
+        beforeLaunch = snapshot();
 
         JoustPaths.Flavor flavor = JoustPaths.Flavor.current();
         Path realNode = JoustToolValidator.checkNode(nodePath, List.of(project), flavor).realPath();
@@ -161,6 +166,9 @@ public class JoustLspIntegrationTest {
         if (process != null) {
             process.waitFor(5, TimeUnit.SECONDS);
             process.destroyForcibly();
+            process.waitFor(5, TimeUnit.SECONDS);
+            // I21 (M1-CDX-10): from before the launch to after the shutdown, no project file changed.
+            assertEquals(beforeLaunch, snapshot());
         }
     }
 
@@ -255,8 +263,6 @@ public class JoustLspIntegrationTest {
     // ------------------------------------------------------------------ helpers
 
     private void open(String name, String text) throws IOException {
-        Path f = project.resolve("contracts/app/" + name);
-        Files.writeString(f, text);
         server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri(name), "jsc", 1, text)));
     }
 

@@ -52,6 +52,16 @@ public final class JoustForbiddenRoots {
         }
     }
 
+    /** The project's base directory as spelled (absolute, normalised), or {@code null}. */
+    public static Path baseSpelled(Project project) {
+        String base = project.getBasePath();
+        try {
+            return base == null ? null : Path.of(base).toAbsolutePath().normalize();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private static void add(Set<Path> out, String path) {
         if (path == null) return;
         try {

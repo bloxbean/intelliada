@@ -23,6 +23,12 @@ public final class JoustStatusCache {
             String m = mode.isEmpty() ? "advisory" : mode;
             return "JOUST " + (compiler.isEmpty() ? "" : compiler + " ") + "(" + (source.isEmpty() ? "bundled" : source) + ", " + m + ")";
         }
+
+        /** The summary, plus the project's declared version when it differs from the compiler's (D5's version skew). */
+        public String summary(String declared) {
+            if (declared == null || declared.isEmpty() || declared.equals(compiler)) return summary();
+            return summary() + "; project pins " + PlainText.label(declared, 40);
+        }
     }
 
     private final Project project;

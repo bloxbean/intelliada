@@ -13,6 +13,8 @@ import java.util.Map;
  * compiler; it writes nothing. Its diagnostics arrive as ordinary diagnostics.
  */
 public final class JoustCheckBuildAction extends JoustCommandAction {
+    static final long BUILD_SECONDS = 150;
+
     @Override
     String title() {
         return "Checking the JOUST build in memory";
@@ -20,7 +22,8 @@ public final class JoustCheckBuildAction extends JoustCommandAction {
 
     @Override
     void perform(JoustLanguageServerApi server, Context ctx) {
-        Map<String, Object> r = JoustServerAccess.await(server.joustCheckBuild(Map.of("uri", ctx.uri())));
+        // joust-lsp 0.1.0-pre2 allows its build worker 120 s (server.js:55, :2327); wait a little longer (M1-CDX-18).
+        Map<String, Object> r = JoustServerAccess.await(server.joustCheckBuild(Map.of("uri", ctx.uri())), BUILD_SECONDS);
         if (r == null) {
             JoustNotifications.show(ctx.project(), "JOUST build check", "The language server did not answer.", NotificationType.WARNING);
         } else if (r.containsKey("error")) {

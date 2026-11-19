@@ -2,7 +2,6 @@ package com.bloxbean.intelliada.idea.joust.editor;
 
 import com.bloxbean.intelliada.idea.joust.core.JoustConstants;
 import com.bloxbean.intelliada.idea.joust.core.JoustLocationPolicy;
-import com.bloxbean.intelliada.idea.joust.core.JoustPaths;
 import com.bloxbean.intelliada.idea.joust.lsp.JoustLanguageServerApi;
 import com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots;
 import com.intellij.openapi.progress.util.ProgressIndicatorUtils;
@@ -55,14 +54,25 @@ public final class JoustServerAccess {
         return LSPIJUtils.toUriAsString(file);
     }
 
-    /** Waits for a server answer, with cancellation and a timeout; {@code null} on failure. */
+    /** Waits for a server answer, with cancellation and the default timeout; {@code null} on failure. */
     public static <T> T await(CompletableFuture<T> f) {
+        return await(f, TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Waits up to {@code seconds} for a server answer; {@code null} on failure or timeout. On the user's cancellation
+     * or a timeout the request itself is cancelled, which LSP4J sends to the server as {@code $/cancelRequest}
+     * (M1-CDX-18).
+     */
+    public static <T> T await(CompletableFuture<T> f, long seconds) {
         if (f == null) return null;
         try {
-            return ProgressIndicatorUtils.awaitWithCheckCanceled(f.orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            return ProgressIndicatorUtils.awaitWithCheckCanceled(f.orTimeout(seconds, TimeUnit.SECONDS));
         } catch (com.intellij.openapi.progress.ProcessCanceledException e) {
+            f.cancel(true);
             throw e;
         } catch (RuntimeException e) {
+            f.cancel(true);
             return null;
         }
     }
@@ -74,7 +84,7 @@ public final class JoustServerAccess {
         Path base = JoustForbiddenRoots.baseReal(project);
         for (Location l : locations) {
             if (l == null) continue;
-            Path real = JoustLocationPolicy.allowedTarget(l.getUri(), base, JoustPaths.Flavor.forAllowDecisions());
+            Path real = JoustLocationPolicy.allowedTarget(l.getUri(), base, JoustForbiddenRoots.baseSpelled(project));
             if (real == null) continue;
             VirtualFile vf = LocalFileSystem.getInstance().findFileByNioFile(real);
             if (vf != null) out.add(new Target(vf, l.getRange()));

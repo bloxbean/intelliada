@@ -1,7 +1,6 @@
 package com.bloxbean.intelliada.idea.joust.lsp;
 
 import com.bloxbean.intelliada.idea.joust.core.JoustLocationPolicy;
-import com.bloxbean.intelliada.idea.joust.core.JoustPaths;
 import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.core.ReadOnlyFeatureSet;
 import com.bloxbean.intelliada.idea.joust.settings.JoustForbiddenRoots;
@@ -10,7 +9,7 @@ import com.intellij.notification.NotificationAction;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.fileEditor.OpenFileDescriptor;
+import com.bloxbean.intelliada.idea.joust.editor.JoustSafeOpen;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -80,6 +79,11 @@ public class JoustLanguageClient extends LanguageClientImpl {
             }
         }
         if (regs.isEmpty()) return CompletableFuture.completedFuture(null);
+        return acceptRegistration(params);
+    }
+
+    /** Hands a registration that passed the filter to LSP4IJ; a test seam for the filter. */
+    protected CompletableFuture<Void> acceptRegistration(RegistrationParams params) {
         return super.registerCapability(params);
     }
 
@@ -90,21 +94,19 @@ public class JoustLanguageClient extends LanguageClientImpl {
         }
         Project project = getProject();
         Path base = JoustForbiddenRoots.baseReal(project);
-        Path target = JoustLocationPolicy.allowedTarget(params.getUri(), base, JoustPaths.Flavor.forAllowDecisions());
+        Path target = JoustLocationPolicy.allowedTarget(params.getUri(), base, JoustForbiddenRoots.baseSpelled(project));
         if (target == null) return CompletableFuture.completedFuture(new ShowDocumentResult(false));
         VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target);
         if (vf == null) return CompletableFuture.completedFuture(new ShowDocumentResult(false));
-        int line = params.getSelection() == null ? 0 : Math.max(0, params.getSelection().getStart().getLine());
-        int col = params.getSelection() == null ? 0 : Math.max(0, params.getSelection().getStart().getCharacter());
+        int line = params.getSelection() == null || params.getSelection().getStart() == null ? 0
+                : Math.max(0, params.getSelection().getStart().getLine());
+        int col = params.getSelection() == null || params.getSelection().getStart() == null ? 0
+                : Math.max(0, params.getSelection().getStart().getCharacter());
         boolean focus = !Boolean.FALSE.equals(params.getTakeFocus());
         CompletableFuture<ShowDocumentResult> done = new CompletableFuture<>();
         ApplicationManager.getApplication().invokeLater(() -> {
-            if (project.isDisposed()) {
-                done.complete(new ShowDocumentResult(false));
-                return;
-            }
-            new OpenFileDescriptor(project, vf, line, col).navigate(focus);
-            done.complete(new ShowDocumentResult(true));
+            boolean opened = !project.isDisposed() && JoustSafeOpen.open(project, vf, line, col, focus);
+            done.complete(new ShowDocumentResult(opened));
         });
         return done;
     }
@@ -128,8 +130,10 @@ public class JoustLanguageClient extends LanguageClientImpl {
         for (MessageActionItem item : actions.subList(0, Math.min(actions.size(), 5))) {
             String label = PlainText.label(item.getTitle(), 40);
             if (label.isEmpty()) continue;
-            n.addAction(NotificationAction.createSimpleExpiring(label, () -> {
+            n.addAction(NotificationAction.create(label, (event, notification) -> {
+                // Answer first: expiring runs whenExpired synchronously, which would otherwise answer null (M1-CDX-17).
                 if (answered.compareAndSet(false, true)) answer.complete(item);
+                notification.expire();
             }));
         }
         n.whenExpired(() -> {

@@ -30,7 +30,7 @@ public class JoustLaunchOptionsTest {
         Path pathNode = JoustTestFiles.executable(pathDir.resolve("node"), "x");
         String path = String.join(File.pathSeparator, home.resolve(".volta/bin").toString(), home.resolve(".asdf/shims").toString(),
                 pathDir.toString(), "relative/bin");
-        List<Path> found = JoustToolDetector.nodeCandidates(Map.of("PATH", path), home, JoustPaths.Flavor.UNIX);
+        List<Path> found = JoustToolDetector.nodeCandidates(Map.of("PATH", path), home, JoustPaths.Flavor.current());
         assertTrue(found.toString(), found.contains(nvmNode));
         assertTrue(found.contains(pathNode));
         assertFalse(found.toString(), found.stream().anyMatch(p -> p.toString().contains(".volta/bin") || p.toString().contains(".asdf/shims")));

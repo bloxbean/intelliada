@@ -4,7 +4,6 @@ import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.editor.JoustServerAccess;
 import com.bloxbean.intelliada.idea.joust.lsp.JoustLanguageServerApi;
 import com.bloxbean.intelliada.idea.joust.lsp.JoustNotifications;
-import com.intellij.ide.highlighter.JavaFileType;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
@@ -15,7 +14,7 @@ import java.util.regex.Pattern;
 
 /**
  * JOUST: Show generated Java ({@code joust/generatedJava}, then {@code joust/generatedContent}): opened as a read-only
- * light virtual file, never written to disk.
+ * plain-text light virtual file, never written to disk and never rendered as Javadoc (M1-SEC-4).
  */
 public final class JoustShowGeneratedJavaAction extends JoustCommandAction {
 
@@ -29,7 +28,7 @@ public final class JoustShowGeneratedJavaAction extends JoustCommandAction {
 
     @Override
     void perform(JoustLanguageServerApi server, Context ctx) {
-        Map<String, Object> g = JoustServerAccess.await(server.joustGeneratedJava(Map.of("uri", ctx.uri(), "position", ctx.position())));
+        Map<String, Object> g = JoustServerAccess.await(server.joustGeneratedJava(Map.of("uri", ctx.uri(), "position", ctx.position())), 60);
         if (g == null || g.containsKey("error") || !(g.get("id") instanceof String)) {
             fail(ctx, g == null ? "The language server did not answer." : str(g, "error"));
             return;
@@ -43,7 +42,8 @@ public final class JoustShowGeneratedJavaAction extends JoustCommandAction {
         if (text.length() > MAX_CHARS) text = text.substring(0, MAX_CHARS);
         String name = fileName(str(g, "javaFile"));
         int line = g.get("line") instanceof Number n ? (int) Math.max(0, Math.min(n.longValue(), 10_000_000)) : 0;
-        LightVirtualFile file = new LightVirtualFile(name, JavaFileType.INSTANCE, text);
+        // Plain text, not Java: Quick Documentation would render the server's doc comments as HTML (M1-SEC-4, I15).
+        LightVirtualFile file = new LightVirtualFile(name, com.intellij.openapi.fileTypes.PlainTextFileType.INSTANCE, text);
         file.setWritable(false);
         ApplicationManager.getApplication().invokeLater(() -> {
             if (!ctx.project().isDisposed()) new OpenFileDescriptor(ctx.project(), file, line, 0).navigate(true);

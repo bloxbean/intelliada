@@ -36,7 +36,7 @@ public final class JoustDocumentationTargetProvider implements DocumentationTarg
         return List.of(new HoverTarget(file.getProject(), vf, LSPIJUtils.toPosition(offset, doc), file.getName()));
     }
 
-    static final class HoverTarget implements DocumentationTarget {
+    public static final class HoverTarget implements DocumentationTarget {
         private final Project project;
         private final VirtualFile file;
         private final Position position;
@@ -67,15 +67,21 @@ public final class JoustDocumentationTargetProvider implements DocumentationTarg
         @Override
         public @Nullable DocumentationResult computeDocumentation() {
             return DocumentationResult.asyncDocumentation(() -> {
-                if (project.isDisposed()) return null;
-                var server = JoustServerAccess.server(project);
-                if (server == null) return null;
-                String uri = ReadAction.compute(() -> JoustServerAccess.uriOf(file));
-                var hover = JoustServerAccess.await(server.getTextDocumentService()
-                        .hover(new HoverParams(new TextDocumentIdentifier(uri), position)));
-                String text = JoustHoverText.plain(hover);
-                return text == null ? null : DocumentationResult.documentation(JoustHoverText.html(text));
+                String html = computeHtml();
+                return html == null ? null : DocumentationResult.documentation(html);
             });
+        }
+
+        /** Requests the hover and renders it as escaped literal text; off the EDT. Null when there is none. */
+        public @Nullable String computeHtml() {
+            if (project.isDisposed()) return null;
+            var server = JoustServerAccess.server(project);
+            if (server == null) return null;
+            String uri = ReadAction.compute(() -> JoustServerAccess.uriOf(file));
+            var hover = JoustServerAccess.await(server.getTextDocumentService()
+                    .hover(new HoverParams(new TextDocumentIdentifier(uri), position)));
+            String text = JoustHoverText.plain(hover);
+            return text == null ? null : JoustHoverText.html(text);
         }
     }
 }

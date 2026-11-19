@@ -31,6 +31,18 @@ public class JoustHoverAndTokensTest {
     }
 
     @Test
+    public void hoverIsCappedBeforeItIsJoined() {
+        String huge = "x".repeat(5_000_000);
+        java.util.List<Either<String, MarkedString>> parts = new java.util.ArrayList<>();
+        for (int i = 0; i < 1000; i++) parts.add(Either.forLeft(huge));
+        long t0 = System.nanoTime();
+        String plain = JoustHoverText.plain(new Hover(parts));
+        assertTrue(plain.length() <= 2 * 20_000 + 10);
+        assertTrue("bounded work", (System.nanoTime() - t0) / 1_000_000 < 2_000);
+        assertTrue(JoustHoverText.html("\u001B[31m" + plain).length() < 200_000);
+    }
+
+    @Test
     public void legacyMarkedStrings() {
         Hover h = new Hover(List.of(Either.forLeft("<b>a</b>"), Either.forRight(new MarkedString("jsc", "b"))));
         assertEquals("<b>a</b>\n\nb", JoustHoverText.plain(h));

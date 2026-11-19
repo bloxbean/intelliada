@@ -10,7 +10,6 @@ import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
@@ -37,7 +36,7 @@ import java.util.List;
  */
 public final class JoustFindReferencesAction extends AnAction {
 
-    record Hit(VirtualFile file, int offset, String where, String line) {
+    public record Hit(VirtualFile file, int offset, String where, String line) {
     }
 
     @Override
@@ -62,22 +61,27 @@ public final class JoustFindReferencesAction extends AnAction {
         new Task.Backgroundable(project, "Finding JOUST references", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
-                var server = JoustServerAccess.server(project);
-                if (server == null) return;
-                String uri = ReadAction.compute(() -> JoustServerAccess.uriOf(vf));
-                var params = new ReferenceParams(new TextDocumentIdentifier(uri), pos, new ReferenceContext(true));
-                var locs = JoustServerAccess.await(server.getTextDocumentService().references(params));
-                List<JoustServerAccess.Target> targets = new ArrayList<>(JoustServerAccess.confine(project,
-                        locs == null ? List.of() : new ArrayList<>(locs)));
-                List<Hit> hits = ReadAction.compute(() -> toHits(project, targets));
+                List<Hit> hits = findHits(project, vf, pos);
                 ApplicationManager.getApplication().invokeLater(() -> show(project, editor, hits));
             }
         }.queue();
     }
 
+    /** Asks the server for references and keeps only in-project targets (D3a item 7); off the EDT. */
+    public static List<Hit> findHits(Project project, VirtualFile vf, Position pos) {
+        var server = JoustServerAccess.server(project);
+        if (server == null) return List.of();
+        String uri = ReadAction.compute(() -> JoustServerAccess.uriOf(vf));
+        var params = new ReferenceParams(new TextDocumentIdentifier(uri), pos, new ReferenceContext(true));
+        var locs = JoustServerAccess.await(server.getTextDocumentService().references(params));
+        List<JoustServerAccess.Target> targets = new ArrayList<>(JoustServerAccess.confine(project,
+                locs == null ? List.of() : new ArrayList<>(locs)));
+        return ReadAction.compute(() -> toHits(project, targets));
+    }
+
     private static List<Hit> toHits(Project project, List<JoustServerAccess.Target> targets) {
         List<Hit> out = new ArrayList<>();
-        VirtualFile base = project.getBaseDir();
+        VirtualFile base = com.intellij.openapi.project.ProjectUtil.guessProjectDir(project);
         for (JoustServerAccess.Target t : targets) {
             Document doc = FileDocumentManager.getInstance().getDocument(t.file());
             if (doc == null) continue;
@@ -92,7 +96,7 @@ public final class JoustFindReferencesAction extends AnAction {
     }
 
     private static void show(Project project, Editor editor, List<Hit> hits) {
-        if (project.isDisposed()) return;
+        if (project.isDisposed() || editor.isDisposed()) return;
         if (hits.isEmpty()) {
             JBPopupFactory.getInstance().createMessage("No references inside the project").showInBestPositionFor(editor);
             return;
@@ -106,7 +110,7 @@ public final class JoustFindReferencesAction extends AnAction {
                         append("  " + h.line(), SimpleTextAttributes.REGULAR_ATTRIBUTES);
                     }
                 })
-                .setItemChosenCallback(h -> new OpenFileDescriptor(project, h.file(), h.offset()).navigate(true))
+                .setItemChosenCallback(h -> JoustSafeOpen.open(project, h.file(), h.offset(), true))
                 .createPopup()
                 .showInBestPositionFor(editor);
     }

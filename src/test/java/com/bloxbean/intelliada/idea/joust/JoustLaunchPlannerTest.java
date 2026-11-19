@@ -87,6 +87,34 @@ public class JoustLaunchPlannerTest {
     }
 
     @Test
+    public void storageThroughASymlinkIntoAProjectIsRefusedWithoutWriting() throws Exception {
+        Path system = tmp.getRoot().toPath().toRealPath().resolve("system2");
+        Files.createDirectories(system);
+        Files.createSymbolicLink(system.resolve("intelliada"), project);
+        List<String> before = listing(project);
+        var plan = JoustLaunchPlanner.plan(new JoustLaunchPlanner.Settings(node.toString(), lspShim.toString(), identity),
+                List.of(project), system.resolve("intelliada/joust-lsp"), flavor);
+        assertFalse(plan.ok());
+        assertEquals("the project is unchanged", before, listing(project));
+    }
+
+    @Test
+    public void storageIsPassedAsItsRealPath() throws Exception {
+        Path real = Files.createDirectories(tmp.getRoot().toPath().toRealPath().resolve("realsys"));
+        Path link = Files.createSymbolicLink(tmp.getRoot().toPath().toRealPath().resolve("linksys"), real);
+        var plan = JoustLaunchPlanner.plan(new JoustLaunchPlanner.Settings(node.toString(), lspShim.toString(), identity),
+                List.of(project), link.resolve("joust-lsp"), flavor);
+        assertTrue(plan.error(), plan.ok());
+        assertEquals(real.resolve("joust-lsp").toString(), plan.launch().command().get(4));
+    }
+
+    private static List<String> listing(Path dir) throws Exception {
+        try (var s = Files.walk(dir)) {
+            return s.map(Path::toString).sorted().toList();
+        }
+    }
+
+    @Test
     public void toolsInsideANewlyOpenedProjectAreRefused() {
         var plan = JoustLaunchPlanner.plan(new JoustLaunchPlanner.Settings(node.toString(), lspShim.toString(), identity),
                 List.of(project, node.getParent()), storage, flavor);

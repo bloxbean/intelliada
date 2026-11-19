@@ -129,6 +129,19 @@ public class JoustToolValidatorTest {
     }
 
     @Test
+    public void nodeMustBeTheNodeBinary() throws Exception {
+        Path cmd = JoustTestFiles.executable(tools.resolve("shims/node.cmd"), "@echo off\n");
+        Path viaLink = Files.createSymbolicLink(tools.resolve("shims/node"), cmd);
+        assertFalse("an extensionless node resolving to a .cmd", JoustToolValidator.checkNode(viaLink.toString(), roots, flavor).ok());
+        Path npx = JoustTestFiles.executable(tools.resolve("bin2/npx"), "#!/bin/sh\n");
+        assertFalse("an absolute npx", JoustToolValidator.checkNode(npx.toString(), roots, flavor).ok());
+        Path npm = JoustTestFiles.executable(tools.resolve("bin3/npm"), "#!/bin/sh\n");
+        Path nodeToNpm = Files.createSymbolicLink(tools.resolve("bin3/node"), npm);
+        assertFalse("node resolving to npm", JoustToolValidator.checkNode(nodeToNpm.toString(), roots, flavor).ok());
+        assertTrue(JoustToolValidator.checkNode(node.toString(), roots, flavor).ok());
+    }
+
+    @Test
     public void nodeMajor() {
         assertEquals(22, JoustToolValidator.nodeMajor("v22.12.0"));
         assertEquals(24, JoustToolValidator.nodeMajor("v24.0.0\n"));
