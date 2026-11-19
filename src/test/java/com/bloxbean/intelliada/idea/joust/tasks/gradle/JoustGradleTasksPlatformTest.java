@@ -153,7 +153,7 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         listener.onEnd(id);
         waitForTitles(1);
         assertEquals(titles.toString(), 1, titles.size());
-        assertTrue(titles.get(0), titles.get(0).startsWith("ABI change in Counter") && titles.get(0).contains("Counter in other changed"));
+        assertTrue(titles.get(0), titles.get(0).startsWith("ABI change in Counter") && titles.get(0).contains("Counter in Gradle project :other changed"));
     }
 
     /** M2-DES-5: the same source in two modules with no failed task in the output: named, with no action. */
@@ -239,6 +239,7 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         Path src = base.resolve("other");
         Path unlinked = base.resolve("unlinked");
         Files.move(src, unlinked);
+        Files.delete(base.resolve("src/main/jsc/org/acme/Counter.jsc"));   // only the unlinked module has the source
         LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
         assertEquals(1, JoustAbiFailureListener.notifyFailures(getProject(), List.of(log().lines()
                 .filter(l -> l.contains("JSC0002")).findFirst().orElseThrow()), Set.of(":unlinked:generateJsc")));

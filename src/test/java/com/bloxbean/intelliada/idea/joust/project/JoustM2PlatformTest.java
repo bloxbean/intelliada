@@ -160,7 +160,10 @@ public class JoustM2PlatformTest extends BasePlatformTestCase {
             var result = ApplicationManager.getApplication().executeOnPooledThread(
                     () -> com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.run(guard, root, java.util.List.of("build"), "build"));
             Path pid = dir.resolve("pid");
-            for (int i = 0; i < 200 && !Files.exists(pid); i++) Thread.sleep(50);
+            for (int i = 0; i < 200 && !Files.exists(pid); i++) {
+                PlatformTestUtil.dispatchAllEventsInIdeEventQueue();   // the CLI starts after the editors are saved on the EDT
+                Thread.sleep(50);
+            }
             long id = Long.parseLong(Files.readString(pid).trim());
             PlatformTestUtil.forceCloseProjectWithoutSaving(p);
             assertTrue("cancelled", result.get(20, java.util.concurrent.TimeUnit.SECONDS).cancelled());
