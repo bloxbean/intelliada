@@ -91,7 +91,7 @@ public final class JoustNpmTasks {
                 handler.addProcessListener(new ProcessListener() {
                     @Override
                     public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                        out.append(event.getText(), outputType.toString());   // per stream (M2-CDX-6)
+                        out.append(event.getText(), JoustOutputCapture.baseStream(outputType));   // per base stream (M2-CDX-6, M2-CDX-15)
                     }
                 });
                 var opener = consoleOpener;
@@ -112,7 +112,7 @@ public final class JoustNpmTasks {
                 ended = true;
                 if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
                 Integer code = handler.getExitCode();
-                return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false);
+                return new JoustAbiReview.Result(code != null && code == 0, out.toString(), false, watch == null ? null : out.records());
             } finally {
                 // Whatever happened after the process started (a console that failed to open, a timeout, an exception),
                 // it is ended before the tracker lets go of it (M2-CDX-3).
@@ -196,13 +196,21 @@ public final class JoustNpmTasks {
 
     /**
      * The one owner of a launched handler's start notification (M2-CDX-3): {@code startNotify()} runs exactly once. It
-     * also records the process's descendants while it runs (M2-CDX-3, round 11): {@code joust test} starts a Node test
-     * runner of its own, and a later enumeration may be refused, so the PIDs seen are kept and ended by PID.
+     * also records the process's descendants while it runs: {@code joust test} starts a Node test runner of its own, and
+     * a later enumeration may be refused. Descendants are kept as the {@link ProcessHandle}s observed, never re-created
+     * from a bare PID, so a PID reused by an unrelated process is never touched (M2-CDX-32, M2-DES-13).
      */
     static final class Launch {
         final OSProcessHandler handler;
         private boolean started;
-        final java.util.Set<Long> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        /** Observed descendants (handles carry their start time); dropped once they have exited. */
+        final java.util.Set<ProcessHandle> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        /** Whether listing descendants ever succeeded while the process lived: the only way to know its tree. */
+        volatile boolean enumerated;
+        /** Whether IntelliJ's own tree kill reported success. */
+        volatile boolean treeKilled;
+        /** Whether IntelliAda had to end it (cancellation, failure): only then must the tree be shown gone. */
+        volatile boolean killed;
         private java.util.concurrent.ScheduledFuture<?> sampler;
 
         Launch(OSProcessHandler handler) {
@@ -215,7 +223,12 @@ public final class JoustNpmTasks {
             Process p = handler.getProcess();
             sampler = com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(() -> {
                 if (!p.isAlive()) return;
-                for (ProcessHandle d : descendants(p)) seen.add(d.pid());
+                List<ProcessHandle> now = descendants(p);
+                if (now != null) {
+                    enumerated = true;
+                    seen.addAll(now);
+                }
+                seen.removeIf(h -> !h.isAlive());
             }, 0, 250, java.util.concurrent.TimeUnit.MILLISECONDS);
             p.onExit().thenRun(() -> {
                 synchronized (Launch.this) {
@@ -224,11 +237,10 @@ public final class JoustNpmTasks {
             });
         }
 
-        /** The recorded descendants still alive. */
+        /** The observed descendants still alive (each handle checks its own process, not whoever has its PID now). */
         List<ProcessHandle> liveSeen() {
-            List<ProcessHandle> out = new ArrayList<>();
-            for (long pid : seen) ProcessHandle.of(pid).filter(ProcessHandle::isAlive).ifPresent(out::add);
-            return out;
+            seen.removeIf(h -> !h.isAlive());
+            return List.copyOf(seen);
         }
 
         synchronized void ensureStarted() {
@@ -240,68 +252,82 @@ public final class JoustNpmTasks {
 
     /** For tests: when true, enumerating descendants is refused, as some sandboxes do. */
     static volatile boolean enumerationDeniedForTests;
+    /** For tests: when true, IntelliJ's tree kill reports failure. */
+    static volatile boolean treeKillFailsForTests;
 
-    /** The process's descendants, or none when the system refuses to list them. */
+    /** The process's descendants, or null when the system refuses to list them. */
     static List<ProcessHandle> descendants(Process p) {
         try {
             if (enumerationDeniedForTests) throw new UnsupportedOperationException("Operation not permitted (sysctl failed)");
             return p.descendants().toList();
         } catch (RuntimeException refused) {
-            return List.of();
+            return null;
         }
     }
 
     /**
-     * Ends {@code p} and its whole tree by every means available: the descendants it lists now, the ones recorded while
-     * it ran (by PID, no enumeration needed), and IntelliJ's own tree kill (which walks the tree with {@code ps}); then
-     * the process itself.
+     * Ends {@code p} and its whole tree by every means available: the descendants it lists now and the ones observed
+     * while it ran (their own handles), IntelliJ's tree kill (which walks the tree with {@code ps}), then the process.
      */
     static void destroyTree(Launch launch, Process p) {
-        for (ProcessHandle d : descendants(p)) d.destroyForcibly();
+        List<ProcessHandle> now = descendants(p);
+        if (now != null) {
+            launch.enumerated = true;
+            launch.seen.addAll(now);
+        }
         for (ProcessHandle d : launch.liveSeen()) d.destroyForcibly();
         try {
-            com.intellij.execution.process.OSProcessUtil.killProcessTree(p);
+            boolean killed = !treeKillFailsForTests && com.intellij.execution.process.OSProcessUtil.killProcessTree(p);
+            if (killed) launch.treeKilled = true;
         } catch (RuntimeException | Error unavailable) {
-            // the other means above still apply
+            // the other means still apply
         }
         p.destroyForcibly();
     }
 
-    /** True when the process and every descendant recorded for it have exited. */
+    /**
+     * True only when the tree is <b>known</b> to be gone (M2-CDX-3): the process has exited, every observed descendant
+     * has exited, and, for a run IntelliAda had to end, the tree was actually known, by a listing that succeeded while it
+     * lived or by IntelliJ's tree kill reporting success. An empty sample from a refused listing proves nothing.
+     */
     static boolean treeGone(Launch launch) {
-        return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty();
+        boolean known = !launch.killed || launch.enumerated || launch.treeKilled;
+        return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty() && known;
     }
 
-
-    /** Runs {@code release} once the process and its recorded descendants have all exited. */
+    /**
+     * Runs {@code release} once {@link #treeGone} holds: a one-shot check that reschedules itself only while work remains
+     * (M2-CDX-33). A tree that can never be shown gone keeps its run tracked, so a later cancellation still applies.
+     */
     static void releaseWhenTreeGone(Launch launch, Runnable release) {
-        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean();
-        var poll = new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>>();
-        poll.set(com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(() -> {
-            if (treeGone(launch) && done.compareAndSet(false, true)) {
-                release.run();
-                var f = poll.get();
-                if (f != null) f.cancel(false);
-            }
-        }, 0, 200, java.util.concurrent.TimeUnit.MILLISECONDS));
+        if (treeGone(launch)) {
+            release.run();
+            return;
+        }
+        if (launch.killed && !launch.handler.getProcess().isAlive() && !launch.enumerated && !launch.treeKilled) {
+            // The parent is gone and its tree was never known: retry the tree kill once more, then keep checking.
+            destroyTree(launch, launch.handler.getProcess());
+        }
+        com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
+                .schedule(() -> releaseWhenTreeGone(launch, release), 200, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
-    /** Returns true when the process itself was seen to exit (a detached handler is no proof, M2-CDX-3). */
+    /** Returns true only when the tree is known to be gone ({@link #treeGone}); a detached handler is no proof. */
     static boolean kill(Launch launch) {
         Runnable hook = killHookForTests;
         if (hook != null) hook.run();
         OSProcessHandler handler = launch.handler;
         Process p = handler.getProcess();
+        launch.killed = true;
         launch.ensureStarted();
-        // The whole tree first (a joust test runner is a child of the CLI), then the handler's own destruction.
-        destroyTree(launch, p);
+        destroyTree(launch, p);   // the whole tree first (a joust test runner is a child of the CLI)
         handler.destroyProcess();
         boolean interrupted = false;
         try {
-            for (int attempt = 0; attempt < 6 && !treeGone(launch); attempt++) {
+            for (int attempt = 0; attempt < 6 && (p.isAlive() || !launch.liveSeen().isEmpty()); attempt++) {
                 destroyTree(launch, p);
                 try {
-                    p.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS);   // destroyForcibly returns before the exit
+                    p.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS);
                     for (ProcessHandle d : launch.liveSeen()) d.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS);
                 } catch (InterruptedException e) {
                     interrupted = true;   // keep waiting: releasing a live process is not an option

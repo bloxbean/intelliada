@@ -1058,4 +1058,36 @@ public class JoustAbiTest {
         streams.append(" done\n", "stdout");
         assertNotNull(JoustAbi.refusal(streams.toString(), "org/acme/Counter.jsc", "org.acme.Counter"));
     }
+
+    /** M2-CDX-6: records come from complete per-stream lines; pieces split across streams never make one. */
+    @Test
+    public void recordsAreNotAssembledAcrossStreams() throws Exception {
+        java.util.function.Predicate<String> watch = line -> JoustAbi.refusal(line, "org/acme/Counter.jsc", "org.acme.Counter") != null
+                || JoustAbi.reportsAccepted(line, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json");
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(1 << 20, watch);
+        capture.append("org/", "stdout");
+        capture.append(JoustM2Fixtures.text("acceptJscAbi-accepted.log").replace("org/acme/", "acme/"), "stderr");
+        String records = String.join("\n", capture.records());
+        assertFalse(JoustAbi.reportsAccepted(records, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
+    }
+
+    /** M2-CDX-24: an ordinary npm Build past the cap, with thousands of manifest decoys, still yields its JSC0002 failure. */
+    @Test
+    public void aVerboseNpmBuildKeepsItsFailure() throws Exception {
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP);
+        capture.append("y".repeat(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP) + "\n");
+        capture.append("copying ABI manifest metadata\n".repeat(4_096));
+        capture.append(JoustM2Fixtures.text("npm-build-JSC0002.log"));
+        assertEquals(1, JoustAbi.failures(capture.toString()).size());
+    }
+
+    /** M2-CDX-15, M2-SEC-8: IntelliJ's styled output types share their base stream; distinct keys cannot grow the buffers. */
+    @Test
+    public void streamsAreBounded() {
+        assertEquals("stdout", com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture.baseStream(com.intellij.execution.process.ProcessOutputType.STDOUT));
+        assertEquals("stderr", com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture.baseStream(com.intellij.execution.process.ProcessOutputType.STDERR));
+        var capture = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64);
+        for (int i = 0; i < 20_000; i++) capture.append("x".repeat(100), "colour-" + i);
+        assertTrue(capture.toString().length() < 64 + 50_000);
+    }
 }

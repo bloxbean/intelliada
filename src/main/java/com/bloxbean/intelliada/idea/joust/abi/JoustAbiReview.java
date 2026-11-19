@@ -31,8 +31,14 @@ public final class JoustAbiReview {
         }
     }
 
-    /** A run's outcome. */
-    public record Result(boolean ok, String output, boolean cancelled) {
+    /**
+     * A run's outcome. {@code records} are the selected contract's outcome records from complete per-stream lines, when
+     * the runner watched for them; null when it did not (the display {@code output} is then all there is).
+     */
+    public record Result(boolean ok, String output, boolean cancelled, java.util.List<String> records) {
+        public Result(boolean ok, String output, boolean cancelled) {
+            this(ok, output, cancelled, null);
+        }
     }
 
     /** What the user sees. Each method may block on the user (it runs the dialog on the EDT itself). */
@@ -185,8 +191,10 @@ public final class JoustAbiReview {
             // A run is an acceptance only when it says so, whether it succeeded or failed (M2-CDX-6): an explicit refusal
             // wins over the files, and a run that does not report writing this manifest did not accept it (npm skips a
             // target another acceptance already wrote, and succeeds).
-            String refusedByTask = JoustAbi.refusal(a.output(), jscRel, contract);
-            if (refusedByTask == null && !JoustAbi.reportsAccepted(a.output(), jscRel, manifest.getFileName().toString(),
+            // From the runner's per-stream records when it kept them, never the merged display text (M2-CDX-6).
+            String evidence = a.records() != null ? String.join("\n", a.records()) : a.output();
+            String refusedByTask = JoustAbi.refusal(evidence, jscRel, contract);
+            if (refusedByTask == null && !JoustAbi.reportsAccepted(evidence, jscRel, manifest.getFileName().toString(),
                     slashed(target.dir().relativize(manifest)))) {
                 refusedByTask = "the accept task " + (a.ok() ? "succeeded" : "failed") + " without reporting that it accepted "
                         + manifest.getFileName();

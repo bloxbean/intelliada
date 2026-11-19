@@ -97,6 +97,11 @@ public final class JoustTaskTracker implements Disposable {
         return running.size();
     }
 
+    /** For tests: forgets runs a test deliberately left tracked (a tree that could not be shown gone). */
+    public void forgetAllForTests() {
+        running.clear();
+    }
+
     /**
      * Cancels everything running and discards late results. A cancelled task stays registered until its owner calls
      * {@link #done} after its work has ended (M2-CDX-3, M2-DES-12): an npm run once its process is seen to exit (later, if

@@ -229,7 +229,7 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
             h.addProcessListener(new ProcessListener() {
                 @Override
                 public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                    out.append(event.getText(), outputType.toString());   // per stream (M2-CDX-6)
+                    out.append(event.getText(), JoustOutputCapture.baseStream(outputType));   // per base stream (M2-CDX-6, M2-CDX-15)
                 }
 
                 @Override
@@ -323,7 +323,7 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
             Boolean ok = await(run, binding.done, TIMEOUT_MINUTES, TimeUnit.MINUTES);
             if (ok == null) return new JoustAbiReview.Result(false, "the Gradle task did not finish within " + TIMEOUT_MINUTES + " minutes", false);
             if (run.cancelled() || !guard.live()) return new JoustAbiReview.Result(false, "", true);
-            return new JoustAbiReview.Result(ok, binding.out.toString(), false);
+            return new JoustAbiReview.Result(ok, binding.out.toString(), false, watch == null ? null : binding.out.records());
         } finally {
             // Never let go of work that may still run (M2-CDX-3): cancel what did not finish, and keep listening for a
             // handler that has not arrived yet, so the cancellation reaches it.

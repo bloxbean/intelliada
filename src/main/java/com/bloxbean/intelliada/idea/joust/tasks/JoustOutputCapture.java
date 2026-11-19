@@ -57,6 +57,11 @@ public final class JoustOutputCapture {
         }
     }
 
+    /** For tests: how many line buffers are kept. */
+    synchronized int streamCount() {
+        return streams.size();
+    }
+
     public JoustOutputCapture(int cap) {
         this(cap, null);
     }
@@ -71,13 +76,28 @@ public final class JoustOutputCapture {
         append(text, "");
     }
 
-    /** Output from one stream ({@code stream} is any key: IntelliJ's output type, say). */
+    /** At most this many streams are assembled apart; any further key shares one buffer (memory stays bounded). */
+    static final int MAX_STREAMS = 4;
+
+    /**
+     * The base stream of an IntelliJ output type (M2-CDX-15, M2-SEC-8): stdout, stderr or system. IntelliJ makes a new
+     * type per ANSI style, and a style change inside a line must not split it, nor every colour make a buffer.
+     */
+    public static String baseStream(com.intellij.openapi.util.Key<?> outputType) {
+        if (com.intellij.execution.process.ProcessOutputType.isStderr(outputType)) return "stderr";
+        if (com.intellij.execution.process.ProcessOutputType.isStdout(outputType)) return "stdout";
+        return "system";
+    }
+
+    /** Output from one stream ({@code stream} names it: {@link #baseStream} of IntelliJ's output type, say). */
     public synchronized void append(String text, Object stream) {
         if (text == null) return;
         int take = Math.min(text.length(), Math.max(0, cap - head.length()));
         head.append(text, 0, take);
         boolean pastCap = head.length() >= cap;
-        Line line = streams.computeIfAbsent(stream == null ? "" : stream, k -> new Line());
+        Object key = stream == null ? "" : stream;
+        if (!streams.containsKey(key) && streams.size() >= MAX_STREAMS) key = "*";
+        Line line = streams.computeIfAbsent(key, k -> new Line());
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c == '\n') {
@@ -104,23 +124,48 @@ public final class JoustOutputCapture {
             }
         }
         if (!beyondHead) return;
-        if (outcome(line)) {
-            if (outcomeLines < MAX_OUTCOME_LINES) {
+        // JOUST diagnostics (JSC0002 failures included) have their own slots, then fall back to the outcome slots; the
+        // outcome slots take only JOUST's acceptance phrases, so other lines about manifests cannot fill them (M2-CDX-24).
+        if (line.contains("error[JSC")) {
+            if (extraLines < MAX_EXTRA_LINES) {
+                extra.append(line).append('\n');
+                extraLines++;
+            } else if (outcomeLines < MAX_OUTCOME_LINES) {
                 outcomes.append(line).append('\n');
                 outcomeLines++;
             }
-        } else if (extraLines < MAX_EXTRA_LINES && line.contains("error[JSC")) {
-            extra.append(line).append('\n');
-            extraLines++;
+        } else if (outcome(line) && outcomeLines < MAX_OUTCOME_LINES) {
+            outcomes.append(line).append('\n');
+            outcomeLines++;
         }
     }
 
-    /**
-     * JOUST's own acceptance records only (M2-CDX-6): {@code … ABI manifest …} (accepted the changed, created the) and
-     * {@code error[JSC0002]} (not accepted, nothing accepted). Other lines that merely say "accepted" never take a slot.
-     */
+    /** JOUST's acceptance phrases (the producers' "accepted the changed" / "created the" ABI manifest records). */
     static boolean outcome(String line) {
-        return line.contains("ABI manifest") || line.contains("error[JSC0002]");
+        return line.contains("accepted the changed ABI manifest") || line.contains("created the ABI manifest");
+    }
+
+    /**
+     * The watched records, from complete lines of single streams (M2-CDX-6): the first watched refusal, then the others,
+     * then each stream's pending last line if it is watched. Never the merged display text.
+     */
+    public synchronized java.util.List<String> records() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        String refusal = firstRefusal;
+        java.util.List<String> pending = new java.util.ArrayList<>();
+        if (watch != null) {
+            for (Line line : streams.values()) {
+                if (line.isEmpty()) continue;
+                String text = line.text();
+                if (!watch.test(text)) continue;
+                if (refusal == null && text.contains("error[JSC0002]")) refusal = text;
+                else pending.add(text);
+            }
+        }
+        if (refusal != null) out.add(refusal);
+        if (!watched.isEmpty()) out.addAll(java.util.List.of(watched.toString().split("\n")));
+        out.addAll(pending);
+        return out;
     }
 
     @Override
@@ -141,7 +186,7 @@ public final class JoustOutputCapture {
                     pendingWatched.append(text).append('\n');
                     w++;
                 }
-            } else if (pastCap && !line.longLine && (outcome(text) || text.contains("error[JSC"))) {
+            } else if (pastCap && !line.longLine && (outcome(text) || text.contains("error[JSC"))) {   // display only
                 pendingOther.append(text).append('\n');
             }
         }

@@ -33,6 +33,8 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             JoustNpmTasks.setConsoleOpenerForTests(null);
             JoustNpmTasks.killHookForTests = null;
             JoustNpmTasks.enumerationDeniedForTests = false;
+            JoustNpmTasks.treeKillFailsForTests = false;
+            JoustTaskTracker.getInstance(getProject()).forgetAllForTests();
             JoustToolsState.getInstance().loadState(saved);
             TrustedProjects.setProjectTrusted(getProject(), true);
         } finally {
@@ -191,5 +193,63 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             assertFalse("denied=" + denied + ": the test runner is gone", alive(child));
             assertEquals("released after both exited", 0, JoustTaskTracker.getInstance(getProject()).runningCount());
         }
+    }
+
+    /** M2-CDX-32, M2-DES-13, M2-SEC-9: an observed descendant is kept as its handle; once it exited, nothing is killed in its name. */
+    public void testAnExitedDescendantIsNeverKilledByPid() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        OSProcessHandler h = new OSProcessHandler(new GeneralCommandLine(node, "-e", "setTimeout(() => {}, 120000)"));
+        JoustNpmTasks.Launch launch = new JoustNpmTasks.Launch(h);
+        launch.ensureStarted();
+        Process shortLived = new ProcessBuilder(node, "-e", "0").start();
+        ProcessHandle observed = shortLived.toHandle();
+        launch.seen.add(observed);
+        shortLived.waitFor();
+        assertFalse("its own handle knows it exited, whoever has its PID now", observed.isAlive());
+        assertEquals(List.of(), launch.liveSeen());
+        assertTrue(JoustNpmTasks.kill(launch));
+    }
+
+    /** M2-CDX-3: listing refused from launch and the tree kill failing: the run stays tracked; the tree cannot be shown gone. */
+    public void testAnUnknowableTreeKeepsTheRunTracked() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        JoustNpmTasks.enumerationDeniedForTests = true;
+        JoustNpmTasks.treeKillFailsForTests = true;
+        var d = new JoustToolsState.Data();
+        d.nodePath = node;
+        JoustToolsState.getInstance().loadState(d);
+        JoustToolsState.getInstance().setValidatedNode(JoustToolValidator.identityOf(Path.of(node).toRealPath()), "test");
+        Path base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
+        Path web = Files.createDirectories(base.resolve("web-unknowable"));
+        Files.writeString(web.resolve("joust.config.json"), "{}");
+        Path bin = Files.createDirectories(web.resolve("node_modules/@julclang/joust/bin"));
+        Files.writeString(bin.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\"}");
+        Files.writeString(bin.resolve("joust.js"), "const { spawn } = require('child_process');\n"
+                + "const c = spawn(process.execPath, ['-e', \"require('fs').writeFileSync('child', String(process.pid)); setTimeout(() => {}, 120000)\"],"
+                + " { stdio: 'ignore' });\n"
+                + "require('fs').writeFileSync('pid', String(process.pid));\n"
+                + "c.on('exit', () => process.exit(0));\n");
+        var root = JoustProjectLayout.scan(base, com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current()).npmRoots().stream()
+                .filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("test"), "test"));
+        long end = System.currentTimeMillis() + 20_000;
+        while ((!Files.exists(web.resolve("pid")) || !Files.exists(web.resolve("child"))) && System.currentTimeMillis() < end) {
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(50);
+        }
+        long child = Long.parseLong(Files.readString(web.resolve("child")).trim());
+        TrustedProjects.setProjectTrusted(getProject(), false);
+        end = System.currentTimeMillis() + 30_000;
+        while (!result.isDone() && System.currentTimeMillis() < end) {
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(50);
+        }
+        assertTrue(result.isDone());
+        Thread.sleep(1_000);
+        assertEquals("the tree was never known: the run stays tracked", 1, JoustTaskTracker.getInstance(getProject()).runningCount());
+        ProcessHandle.of(child).ifPresent(ProcessHandle::destroyForcibly);   // test cleanup only
     }
 }
