@@ -99,9 +99,9 @@ public final class JoustTaskTracker implements Disposable {
 
     /**
      * Cancels everything running and discards late results. A cancelled task stays registered until its owner calls
-     * {@link #done} (M2-CDX-3): an npm run does so only once its process is seen to exit. A Gradle run does so when
-     * IntelliAda stops waiting; its binding then keeps listening and cancels the task when its handler arrives, and
-     * IntelliJ's shared Gradle daemon is not IntelliAda's to stop (I20, M2-DES-12).
+     * {@link #done} after its work has ended (M2-CDX-3, M2-DES-12): an npm run once its process is seen to exit (later, if
+     * it outlived the kill); a submitted Gradle run once its handler terminates or it reports that it did not start.
+     * IntelliJ's shared Gradle daemon is not IntelliAda's to stop (I20).
      */
     public void cancelAll() {
         generation.incrementAndGet();

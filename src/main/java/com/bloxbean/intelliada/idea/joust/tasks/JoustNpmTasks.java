@@ -107,7 +107,11 @@ public final class JoustNpmTasks {
             } finally {
                 // Whatever happened after the process started (a console that failed to open, a timeout, an exception),
                 // it is ended before the tracker lets go of it (M2-CDX-3).
-                if (!ended) gone = kill(launch);
+                if (!ended) {
+                    gone = kill(launch);
+                    // A process that outlived every attempt is released when it does exit (M2-CDX-3).
+                    if (!gone) launch.handler.getProcess().onExit().thenRun(() -> tracker.done(run));
+                }
             }
         } finally {
             // Released only once its process is gone: a process that outlived every attempt stays tracked, so a later

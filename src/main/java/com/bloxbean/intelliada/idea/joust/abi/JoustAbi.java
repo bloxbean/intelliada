@@ -1,5 +1,7 @@
 package com.bloxbean.intelliada.idea.joust.abi;
 
+import com.bloxbean.intelliada.idea.joust.core.JoustPaths;
+
 import com.bloxbean.intelliada.idea.joust.core.JoustRealPaths;
 import com.bloxbean.intelliada.idea.joust.core.JoustToolValidator;
 import com.bloxbean.intelliada.idea.joust.project.JoustProjectLayout;
@@ -123,10 +125,21 @@ public final class JoustAbi {
                 || src.codePoints().anyMatch(c -> Character.isISOControl(c) || Character.getType(c) == Character.FORMAT)) {   // M2-SEC-7
             throw new AbiException("not a contracts directory: " + src);
         }
-        for (String seg : src.split("[/\\\\]", -1)) {
+        for (String seg : src.split(SEPARATORS, -1)) {
             if (seg.equals("..") || (seg.isEmpty() && !src.equals("."))) throw new AbiException("not a contracts directory: " + src);
         }
         return src;
+    }
+
+    /**
+     * This host's path separators (M2-CDX-26): on Windows {@code \} and {@code /} both separate components; on POSIX
+     * only {@code /} does, and a {@code \} is part of a name.
+     */
+    static final String SEPARATORS = JoustPaths.Flavor.current() == JoustPaths.Flavor.WINDOWS ? "[/\\\\]" : "/";
+
+    /** A path as JOUST prints it, in this host's spelling with {@code /}: on Windows its {@code \} are separators. */
+    static String hostSlashed(String path) {
+        return JoustPaths.Flavor.current() == JoustPaths.Flavor.WINDOWS ? path.replace('\\', '/') : path;
     }
 
     /** A qualified Gradle task: {@code :generateJsc} for the root project, {@code :a:b:generateJsc} for a module. */
@@ -164,11 +177,11 @@ public final class JoustAbi {
      */
     public static String refusal(String output, String jscRel, String contract) {
         if (output == null) return null;
-        String prefix = jscRel == null ? null : jscRel.replace('\\', '/') + ":";
+        String prefix = jscRel == null ? null : hostSlashed(jscRel) + ":";
         String bound = contract == null ? null : "--accept-abi=" + contract + "@";
         for (String line : (Iterable<String>) output.lines()::iterator) {
             String l = line.strip();
-            String slashed = l.replace('\\', '/');
+            String slashed = hostSlashed(l);
             boolean hit = (prefix != null && slashed.startsWith(prefix) && l.contains(": error[JSC0002]: not accepted"))
                     || (bound != null && l.contains("error[JSC0002]: " + bound) && l.endsWith("nothing accepted"));
             if (hit) return l.length() > 1000 ? l.substring(0, 1000) : l;
@@ -187,10 +200,10 @@ public final class JoustAbi {
      */
     public static boolean reportsAccepted(String output, String jscRel, String manifestName, String manifestRelToRoot) {
         if (output == null) return false;
-        String src = jscRel == null ? null : jscRel.replace('\\', '/') + ": note: ";
-        String rel = manifestRelToRoot == null ? null : manifestRelToRoot.replace('\\', '/') + ": ";
+        String src = jscRel == null ? null : hostSlashed(jscRel) + ": note: ";
+        String rel = manifestRelToRoot == null ? null : hostSlashed(manifestRelToRoot) + ": ";
         for (String line : (Iterable<String>) output.lines()::iterator) {
-            String l = line.strip().replace('\\', '/');
+            String l = hostSlashed(line.strip());
             boolean says = l.contains("accepted the changed ABI manifest") || l.contains("created the ABI manifest");
             if (!says) continue;
             if (src != null && l.startsWith(src) && l.contains("ABI manifest " + manifestName)) return true;

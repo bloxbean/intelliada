@@ -204,6 +204,15 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
                 }
                 continue;
             }
+            // Unlinked modules holding the source, kept through scoping for the reason they get (M2-CDX-13).
+            List<String> unlinkedAll = new ArrayList<>();
+            if (gradle != null) {
+                for (JoustProjectLayout.SourceRoot r : candidates) {
+                    if (gradle.linked(project, r.ownerDir()) == null && (buildRoot == null || r.ownerDir().startsWith(buildRoot))) {
+                        unlinkedAll.add(layout.base().relativize(r.ownerDir()).toString());
+                    }
+                }
+            }
             if (buildRoot != null) {
                 List<JoustProjectLayout.SourceRoot> inBuild = new ArrayList<>();
                 List<String> unlinkedHere = new ArrayList<>();
@@ -240,11 +249,10 @@ public final class JoustAbiFailureListener implements ExternalSystemTaskNotifica
             // a source no longer there names the failing module without an action (M2-CDX-13).
             if (gradle != null && !owners.isEmpty()) {
                 List<JoustProjectLayout.SourceRoot> failed = new ArrayList<>();
-                List<String> unlinked = new ArrayList<>();
+                List<String> unlinked = new ArrayList<>(unlinkedAll);
                 for (JoustProjectLayout.SourceRoot r : candidates) {
                     var linked = gradle.linked(project, r.ownerDir());
-                    if (linked == null) unlinked.add(layout.base().relativize(r.ownerDir()).toString());
-                    else if (owners.contains(linked.gradlePath()) && sameBuild(linked, buildRoot)) failed.add(r);
+                    if (linked != null && owners.contains(linked.gradlePath()) && sameBuild(linked, buildRoot)) failed.add(r);
                 }
                 if (failed.isEmpty()) {
                     if (!live(project, generation)) return n;

@@ -568,7 +568,9 @@ public class JoustAbiTest {
                 "org/acme/Counter.jsc", "org.acme.Counter"));
         assertNull(JoustAbi.refusal("jsc: error[JSC0002]: --accept-abi=org.acme.CounterX@…: no contract; nothing accepted",
                 "org/acme/Counter.jsc", "org.acme.Counter"));
-        assertNotNull(JoustAbi.refusal(sourceChanged.replace("org/acme/", "org\\acme\\"), "org/acme/Counter.jsc"));
+        // A Windows Gradle prints native separators; on POSIX a backslash belongs to a name (M2-CDX-26).
+        if (JoustTestTools.windows()) assertNotNull(JoustAbi.refusal(sourceChanged.replace("org/acme/", "org\\acme\\"), "org/acme/Counter.jsc"));
+        else assertNull(JoustAbi.refusal(sourceChanged.replace("org/acme/", "org\\acme\\"), "org/acme/Counter.jsc"));
         // Evidence of acceptance, in both producers' forms.
         assertTrue(JoustAbi.reportsAccepted("org/acme/Counter.jsc: note: accepted the changed ABI manifest Counter.abi.json", "org/acme/Counter.jsc",
                 "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json"));
@@ -906,6 +908,7 @@ public class JoustAbiTest {
                         capture.append("y".repeat(com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP) + "\n");
                         capture.append("copying ABI manifest metadata\n".repeat(4_096));
                         capture.append("other/X.jsc:1:1: error[JSC0002]: not accepted: unrelated\n".repeat(4_352));
+                        capture.append("org/acme/Counter.jsc: note: generated the Java for this contract\n".repeat(200));   // same source, no outcome
                         capture.append(JoustM2Fixtures.text(outcome.equals("accepted") ? "acceptJscAbi-accepted.log" : "acceptJscAbi-refused.log"));
                         return new JoustAbiReview.Result(outcome.equals("accepted"), capture.toString(), false);
                     } catch (Exception e) {
@@ -931,17 +934,15 @@ public class JoustAbiTest {
         java.util.concurrent.atomic.AtomicBoolean live = new java.util.concurrent.atomic.AtomicBoolean(true);
         FakeJoust joust = new FakeJoust();
         FakeUi ui = new FakeUi();
-        Assume.assumeTrue(other.resolve("build.gradle").toFile().setReadable(false, false));   // the first scan is incomplete
-        try {
-            boolean ok = new JoustAbiReview(target(module, "app", "org.acme.Counter"), () -> {
-                live.set(false);
-                return JoustProjectLayout.scan(base, JoustPaths.Flavor.current());
-            }, joust, ui, live::get, ide.getRoot().toPath().toRealPath(), () -> {
-            }).run();
-            assertFalse(ok);
-        } finally {
-            other.resolve("build.gradle").toFile().setReadable(true, false);
-        }
+        // Deterministically incomplete, whatever the process's privileges (M2-CDX-28): a build file that is not UTF-8.
+        Files.write(other.resolve("build.gradle"), new byte[]{'p', 'l', (byte) 0xC3, (byte) 0x28});
+        assertFalse(JoustProjectLayout.scan(base, JoustPaths.Flavor.current()).complete());
+        boolean ok = new JoustAbiReview(target(module, "app", "org.acme.Counter"), () -> {
+            live.set(false);
+            return JoustProjectLayout.scan(base, JoustPaths.Flavor.current());
+        }, joust, ui, live::get, ide.getRoot().toPath().toRealPath(), () -> {
+        }).run();
+        assertFalse(ok);
         assertEquals("zero accept calls", 1, joust.runs.size());
         assertEquals("zero notifications", List.of(), ui.reports);
     }
@@ -978,5 +979,22 @@ public class JoustAbiTest {
         }).run());
         assertEquals("contracts\\v2", runs.get(0).get(4));
         assertEquals("contracts\\v2", runs.get(1).get(2));
+    }
+
+    /** M2-CDX-26: paths follow this host's separators, in --src and in the records credited to the selected manifest. */
+    @Test
+    public void pathsFollowTheHostsSeparators() throws Exception {
+        JoustAbi.Diff d = JoustAbi.parse(diffJson);
+        String accepted = "contracts/v2/app/Counter.abi.json: accepted the changed ABI manifest (a -> b)";
+        if (JoustTestTools.windows()) {
+            assertTrue(JoustAbi.reportsAccepted(accepted, "app/Counter.jsc", "Counter.abi.json", "contracts\\v2/app/Counter.abi.json"));
+        } else {
+            // On POSIX "contracts\v2" is one directory, distinct from contracts/v2: a record for the other is not this one's.
+            assertFalse(JoustAbi.reportsAccepted(accepted, "app/Counter.jsc", "Counter.abi.json", "contracts\\v2/app/Counter.abi.json"));
+            assertEquals("a\\", JoustAbi.npmAcceptArgs(d, "a\\").get(2));
+            assertEquals("a\\\\b", JoustAbi.npmAcceptArgs(d, "a\\\\b").get(2));
+            assertNotNull(JoustAbi.refusal("org\\acme\\Counter.jsc:1:1: error[JSC0002]: not accepted: x", "org\\acme\\Counter.jsc"));
+            assertNull(JoustAbi.refusal("org/acme/Counter.jsc:1:1: error[JSC0002]: not accepted: x", "org\\acme\\Counter.jsc"));
+        }
     }
 }

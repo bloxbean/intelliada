@@ -46,7 +46,7 @@ public class JoustGradleTaskAction extends JoustProjectAction {
 
     @Override
     void perform(Ctx ctx, JoustRunGuard guard) throws Exception {
-        reportResult(ctx, title(ctx), gradleRunner(ctx, guard, title(ctx)).run(list(JoustAbi.task(ctx.linked().gradlePath(), task))));
+        reportResult(ctx, guard, title(ctx), gradleRunner(ctx, guard, title(ctx)).run(list(JoustAbi.task(ctx.linked().gradlePath(), task))));
     }
 
     /** Build. */

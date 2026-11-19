@@ -242,15 +242,14 @@ public final class JoustAbiReview {
         return slashed(target.dir().relativize(target.contractsDir()));
     }
 
-    /** The selected contract's records in task output: its source, its manifest, or its bound acceptance. */
+    /**
+     * The selected contract's <b>outcome records</b> in task output, classified as each line arrives (M2-CDX-6): its
+     * refusal (by source path or bound contract) or its acceptance of this manifest, in this host's path spelling. Other
+     * lines about the same source (notes, diagnostics) are not kept here, so they cannot fill the slots.
+     */
     private java.util.function.Predicate<String> watch(String jscRel, String manifestRel, String contract) {
-        String a = jscRel + ":";
-        String b = manifestRel + ":";
-        String c = "--accept-abi=" + contract + "@";
-        return line -> {
-            String l = line.strip();
-            return l.startsWith(a) || l.startsWith(b) || l.contains(c);
-        };
+        String manifestName = target.jsc().resolveSibling(contract.substring(contract.lastIndexOf('.') + 1) + ".abi.json").getFileName().toString();
+        return line -> JoustAbi.refusal(line, jscRel, contract) != null || JoustAbi.reportsAccepted(line, jscRel, manifestName, manifestRel);
     }
 
     /**

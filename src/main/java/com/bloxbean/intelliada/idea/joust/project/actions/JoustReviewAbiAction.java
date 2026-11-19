@@ -64,7 +64,7 @@ public final class JoustReviewAbiAction extends JoustProjectAction {
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 } catch (Exception ex) {
-                    JoustNotifications.show(ctx.project(), title(ctx), String.valueOf(ex.getMessage()), NotificationType.ERROR);
+                    if (guard.live()) JoustNotifications.show(ctx.project(), title(ctx), String.valueOf(ex.getMessage()), NotificationType.ERROR);
                 }
             }
         }.queue();

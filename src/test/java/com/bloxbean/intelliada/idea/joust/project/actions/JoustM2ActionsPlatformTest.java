@@ -484,4 +484,33 @@ public class JoustM2ActionsPlatformTest extends BasePlatformTestCase {
             JoustNpmTasks.setConsoleOpenerForTests(null);
         }
     }
+
+    /** M2-CDX-2: trust revoked and re-granted while the console opens, then the opening fails: the Build publishes nothing. */
+    public void testABuildPublishesNothingOnceItsGuardEnded() throws Exception {
+        if (!configureNode()) return;
+        List<String> shown = new CopyOnWriteArrayList<>();
+        getProject().getMessageBus().connect(getTestRootDisposable()).subscribe(com.intellij.notification.Notifications.TOPIC,
+                new com.intellij.notification.Notifications() {
+                    @Override
+                    public void notify(@org.jetbrains.annotations.NotNull com.intellij.notification.Notification n) {
+                        shown.add(n.getTitle() + " | " + n.getContent());
+                    }
+                });
+        JoustNpmTasks.setConsoleOpenerForTests(h -> {
+            ApplicationManager.getApplication().invokeAndWait(() -> {
+                TrustedProjects.setProjectTrusted(getProject(), false);
+                TrustedProjects.setProjectTrusted(getProject(), true);
+            });
+            throw new IllegalStateException("a console filter provider failed");
+        });
+        try {
+            VirtualFile jsc = vf(web.resolve("contracts/app/Counter.jsc"));
+            AnAction build = new JoustNpmActions.Build();
+            build.actionPerformed(event(build, jsc));
+            waitFor(() -> false, 3_000);
+            assertEquals(shown.toString(), List.of(), shown.stream().filter(t -> t.startsWith("JOUST Build")).toList());
+        } finally {
+            JoustNpmTasks.setConsoleOpenerForTests(null);
+        }
+    }
 }

@@ -303,15 +303,19 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
         assertTrue(run.cancelled());
         assertTrue(b.done.isDone());
         b.release(true);   // IntelliAda stops waiting; the binding keeps listening, with no time limit
-        tracker.done(run);
+        b.releaseWhenEnded(tracker);
         Thread.sleep(1_500);   // well after IntelliAda let go
         assertTrue("still listening for the submitted run's handler", b.listening());
+        assertEquals("still tracked before its handler arrives (M2-CDX-3)", 1, tracker.runningCount());
         var h = new com.intellij.execution.process.NopProcessHandler();
         h.startNotify();
         bus().processStarting("Run", b.env(), h);
         assertTrue("the late handler is destroyed", h.waitFor(5_000));
         assertTrue(h.isProcessTerminated());
         assertFalse("and then it stops listening", b.listening());
+        long end = System.currentTimeMillis() + 5_000;
+        while (tracker.runningCount() != 0 && System.currentTimeMillis() < end) Thread.sleep(20);
+        assertEquals("released once its handler ended", 0, tracker.runningCount());
     }
 
     /** M2-CDX-3: a run revoked and re-trusted before its first output is not published. */
@@ -453,5 +457,22 @@ public class JoustGradleTasksPlatformTest extends BasePlatformTestCase {
                 }
             }
         }
+    }
+
+    /** M2-CDX-13: the failing task is known, and its module holds the source but is not linked: "Link the Gradle build first". */
+    public void testAKnownUnlinkedFailingModuleIsToldToLink() throws Exception {
+        JoustM2ActionsCopy.copy(Path.of(getClass().getClassLoader().getResource("joust-m2/SOURCE.txt").toURI()).getParent().resolve("gradle-jsc"),
+                base.resolve("unlinked"));
+        LocalFileSystem.getInstance().refreshAndFindFileByNioFile(base).refresh(false, true);
+        com.bloxbean.intelliada.idea.joust.project.JoustProjectService.getInstance(getProject()).invalidate();
+        var listener = new JoustAbiFailureListener();
+        var id = ExternalSystemTaskId.create(GradleConstants.SYSTEM_ID, ExternalSystemTaskType.EXECUTE_TASK, getProject());
+        listener.onStart(base.toString(), id);
+        feed(listener, id, "> Task :unlinked:generateJsc\n" + log().lines().filter(l -> l.contains("JSC0002")).findFirst().orElseThrow() + "\n");
+        listener.onEnd(id);
+        waitForTitles(1);
+        assertEquals(titles.toString(), 1, titles.size());
+        assertTrue(titles.get(0), titles.get(0).contains("Link the Gradle build first") && titles.get(0).contains("unlinked"));
+        assertFalse(titles.get(0).contains("Build again"));
     }
 }

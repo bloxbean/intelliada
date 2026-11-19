@@ -34,7 +34,7 @@ public final class JoustNpmActions {
 
         @Override
         void perform(Ctx ctx, JoustRunGuard guard) throws Exception {
-            reportResult(ctx, title(ctx), npmRunner(ctx, guard, title(ctx)).run(args(ctx)));
+            reportResult(ctx, guard, title(ctx), npmRunner(ctx, guard, title(ctx)).run(args(ctx)));
         }
     }
 

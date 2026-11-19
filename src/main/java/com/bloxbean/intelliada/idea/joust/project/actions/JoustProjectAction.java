@@ -86,7 +86,7 @@ public abstract class JoustProjectAction extends AnAction {
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 } catch (Exception ex) {
-                    JoustNotifications.show(project, title(ctx), String.valueOf(ex.getMessage()), NotificationType.ERROR);
+                    if (guard.live()) JoustNotifications.show(project, title(ctx), String.valueOf(ex.getMessage()), NotificationType.ERROR);
                 }
             }
         }.queue();
@@ -199,6 +199,11 @@ public abstract class JoustProjectAction extends AnAction {
      * source</b>, resolved under the npm root that ran the build, and bound to that file (M2-CDX-20).
      */
     static List<Ctx> notifyAbiFailures(Ctx ctx, String output) {
+        return notifyAbiFailures(ctx, output, null);
+    }
+
+    /** As {@link #notifyAbiFailures(Ctx, String)}, publishing only while {@code guard} (when given) is live (M2-CDX-2). */
+    static List<Ctx> notifyAbiFailures(Ctx ctx, String output, JoustRunGuard guard) {
         List<Ctx> notified = new java.util.ArrayList<>();
         JoustProjectLayout.SourceRoot root = ctx.layout().sourceRoots().stream()
                 .filter(r -> r.npm() != null && r.npm().dir().equals(ctx.npm().dir())).findFirst().orElse(null);
@@ -210,6 +215,7 @@ public abstract class JoustProjectAction extends AnAction {
             VirtualFile vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(jsc);
             Ctx forFile = vf == null ? null : context(ctx.project(), vf);
             if (forFile != null && forFile.npm() != null && forFile.npm().dir().equals(ctx.npm().dir())) {
+                if (guard != null && !guard.live()) return notified;
                 notifyAbiFailure(forFile, f);
                 notified.add(forFile);
             }
@@ -253,12 +259,15 @@ public abstract class JoustProjectAction extends AnAction {
                 + " does not say which failed. Open the .jsc in its module and use Review ABI Change… there.", NotificationType.WARNING);
     }
 
-    static void reportResult(Ctx ctx, String title, JoustAbiReview.Result r) {
-        if (r.cancelled()) return;
-        if (ctx.npm() != null) notifyAbiFailures(ctx, r.output());
+    /** The action's outcome, published only while its guard is live (M2-CDX-2). */
+    static void reportResult(Ctx ctx, JoustRunGuard guard, String title, JoustAbiReview.Result r) {
+        if (r.cancelled() || !guard.live()) return;
+        if (ctx.npm() != null) notifyAbiFailures(ctx, r.output(), guard);
+        if (!guard.live()) return;
         JoustNotifications.show(ctx.project(), title, r.ok() ? "Done." : "Failed. See the build output.",
                 r.ok() ? NotificationType.INFORMATION : NotificationType.WARNING);
     }
+
 
     static List<String> list(String... a) {
         return List.of(a);

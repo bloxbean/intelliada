@@ -186,6 +186,8 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
         final CompletableFuture<Boolean> done = new CompletableFuture<>();
         private final AtomicReference<ProcessHandler> handler = new AtomicReference<>();
         private final CompletableFuture<Void> settled = new CompletableFuture<>();
+        /** The run's work has ended: its handler terminated, or it did not start (M2-CDX-3). */
+        final CompletableFuture<Void> ended = new CompletableFuture<>();
         private final MessageBusConnection bus;
         private final ExecutionEnvironment env;
 
@@ -214,6 +216,7 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
                 public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment e) {
                     if (e == env) {
                         done.complete(false);
+                        ended.complete(null);
                         settle();
                     }
                 }
@@ -232,9 +235,13 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
                 @Override
                 public void processTerminated(@NotNull ProcessEvent event) {
                     done.complete(event.getExitCode() == 0);
+                    ended.complete(null);
                 }
             });
-            if (h.isProcessTerminated()) done.complete(Integer.valueOf(0).equals(h.getExitCode()));
+            if (h.isProcessTerminated()) {
+                done.complete(Integer.valueOf(0).equals(h.getExitCode()));
+                ended.complete(null);
+            }
             run.attach(() -> {
                 if (h instanceof ExternalSystemProcessHandler es) es.getTask().cancel();
                 h.destroyProcess();
@@ -252,7 +259,15 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
          * not start, or the project closes and its message bus with it (M2-CDX-3). One never submitted lets go now.
          */
         void release(boolean submitted) {
-            if (!submitted) settle();
+            if (!submitted) {
+                ended.complete(null);
+                settle();
+            }
+        }
+
+        /** Unregisters the run from {@code tracker} once its work has ended, not before (M2-CDX-3). */
+        void releaseWhenEnded(JoustTaskTracker tracker) {
+            ended.thenRun(() -> tracker.done(run));
         }
 
         boolean listening() {
@@ -313,8 +328,12 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
             // Never let go of work that may still run (M2-CDX-3): cancel what did not finish, and keep listening for a
             // handler that has not arrived yet, so the cancellation reaches it.
             if (binding == null || !binding.done.isDone() || binding.done.isCancelled()) run.cancel();
-            if (binding != null) binding.release(submitted);
-            tracker.done(run);
+            if (binding != null) {
+                binding.release(submitted);
+                binding.releaseWhenEnded(tracker);   // a submitted run stays tracked until its handler ends or it did not start
+            } else {
+                tracker.done(run);
+            }
         }
     }
 }
