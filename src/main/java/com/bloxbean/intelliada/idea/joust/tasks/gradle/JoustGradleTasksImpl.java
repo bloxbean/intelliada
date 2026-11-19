@@ -229,7 +229,7 @@ public final class JoustGradleTasksImpl implements JoustGradleTasks {
             h.addProcessListener(new ProcessListener() {
                 @Override
                 public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                    out.append(event.getText());
+                    out.append(event.getText(), outputType.toString());   // per stream (M2-CDX-6)
                 }
 
                 @Override

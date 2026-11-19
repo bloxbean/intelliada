@@ -1,82 +1,119 @@
 package com.bloxbean.intelliada.idea.joust.tasks;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Predicate;
+
 /**
- * A task's output, bounded as it arrives: the first {@code cap} characters, and after that only JOUST diagnostic lines
- * ({@code error[JSC…]}, up to {@link #MAX_EXTRA_LINES} lines of {@link #MAX_LINE} characters), so a refusal printed
- * after a long build is never lost to the cap (M2-CDX-6, M2-CDX-15).
+ * A task's output, bounded as it arrives (M2-CDX-6, M2-CDX-15):
+ * <ul>
+ *   <li>the first {@code cap} characters, as printed;</li>
+ *   <li>after that, JOUST diagnostic lines ({@code error[JSC…]}, up to {@link #MAX_EXTRA_LINES}) and JOUST's own
+ *   acceptance records ({@code … ABI manifest …}, {@code error[JSC0002]}, up to {@link #MAX_OUTCOME_LINES});</li>
+ *   <li>the lines the caller {@code watch}es for (the selected contract's outcome records), the first watched refusal in
+ *   a slot of its own that nothing can displace, the others up to {@link #MAX_WATCHED_LINES}.</li>
+ * </ul>
+ * Lines are assembled <b>per output stream</b> (stdout, stderr…), so an unfinished line on one stream cannot absorb a
+ * line on another. A line longer than {@link #MAX_LINE} is judged by its first and last {@code MAX_LINE} characters. A
+ * last line with no newline is classified like any other when the output is read.
  */
 public final class JoustOutputCapture {
 
     static final int MAX_EXTRA_LINES = 256;
+    static final int MAX_OUTCOME_LINES = 4_096;
+    static final int MAX_WATCHED_LINES = 64;
     static final int MAX_LINE = 2_000;
 
     private final int cap;
+    private final Predicate<String> watch;
     private final StringBuilder head = new StringBuilder();
     private final StringBuilder extra = new StringBuilder();
-    /** Acceptance outcomes ({@code not accepted}, {@code nothing accepted}, {@code accepted the}…), kept apart (M2-CDX-6). */
+    private int extraLines;
     private final StringBuilder outcomes = new StringBuilder();
     private int outcomeLines;
-    private final StringBuilder partial = new StringBuilder();
-    private boolean discarding;
-    private int extraLines;
-
-    /** Lines the caller watches for (the selected contract's records), kept apart from everything else (M2-CDX-6). */
-    private final java.util.function.Predicate<String> watch;
     private final StringBuilder watched = new StringBuilder();
     private int watchedLines;
-    /** The first watched refusal, kept apart so no number of other records can displace it (M2-CDX-6). */
     private String firstRefusal;
-    static final int MAX_WATCHED_LINES = 64;
+    private final Map<Object, Line> streams = new HashMap<>();
+
+    /** One stream's line being assembled. */
+    private static final class Line {
+        final StringBuilder start = new StringBuilder();
+        final StringBuilder tail = new StringBuilder();
+        boolean longLine;
+
+        boolean isEmpty() {
+            return start.isEmpty() && tail.isEmpty();
+        }
+
+        String text() {
+            return longLine ? start + " … " + tail : start.toString();
+        }
+
+        void reset() {
+            start.setLength(0);
+            tail.setLength(0);
+            longLine = false;
+        }
+    }
 
     public JoustOutputCapture(int cap) {
         this(cap, null);
     }
 
-    public JoustOutputCapture(int cap, java.util.function.Predicate<String> watch) {
+    public JoustOutputCapture(int cap, Predicate<String> watch) {
         this.cap = cap;
         this.watch = watch;
     }
 
-    /** The end of an over-long line, kept bounded while the line goes on (its start is in {@link #partial}). */
-    private final StringBuilder longTail = new StringBuilder();
+    /** Output with no stream distinction. */
+    public void append(String text) {
+        append(text, "");
+    }
 
-    public synchronized void append(String text) {
+    /** Output from one stream ({@code stream} is any key: IntelliJ's output type, say). */
+    public synchronized void append(String text, Object stream) {
         if (text == null) return;
         int take = Math.min(text.length(), Math.max(0, cap - head.length()));
         head.append(text, 0, take);
-        // Every character also passes the line scanner, so a diagnostic that starts before the cap and ends after it is kept.
+        boolean pastCap = head.length() >= cap;
+        Line line = streams.computeIfAbsent(stream == null ? "" : stream, k -> new Line());
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c == '\n') {
-                // An over-long line is judged by its first and last MAX_LINE characters (memory stays bounded): a pinned
-                // "…; nothing accepted" refusal listing every contract is longer than a line can be kept whole (M2-CDX-6).
-                String line = discarding ? partial + " … " + longTail : partial.toString();
-                if (watch != null && watch.test(line)) {
-                    if (firstRefusal == null && line.contains("error[JSC0002]")) firstRefusal = line;
-                    else if (watchedLines < MAX_WATCHED_LINES) {
-                        watched.append(line).append('\n');
-                        watchedLines++;
-                    }
-                }
-                if (!discarding && head.length() >= cap) keep(line, i >= take);
-                partial.setLength(0);
-                longTail.setLength(0);
-                discarding = false;
-            } else if (!discarding) {
-                if (partial.length() >= MAX_LINE) {
-                    discarding = true;   // keep the start in partial; follow the end in longTail
-                    longTail.append(c);
-                } else {
-                    partial.append(c);
-                }
+                classify(line.text(), pastCap && !line.longLine, true);
+                line.reset();
+            } else if (!line.longLine && line.start.length() < MAX_LINE) {
+                line.start.append(c);
             } else {
-                longTail.append(c);
-                if (longTail.length() > 2 * MAX_LINE) longTail.delete(0, longTail.length() - MAX_LINE);
+                line.longLine = true;
+                line.tail.append(c);
+                if (line.tail.length() > 2 * MAX_LINE) line.tail.delete(0, line.tail.length() - MAX_LINE);
             }
         }
     }
 
-    static final int MAX_OUTCOME_LINES = 4_096;
+    /** Files one complete line where it belongs; {@code commit} false classifies into a copy (for a pending last line). */
+    private void classify(String line, boolean beyondHead, boolean commit) {
+        if (!commit) return;
+        if (watch != null && watch.test(line)) {
+            if (firstRefusal == null && line.contains("error[JSC0002]")) firstRefusal = line;
+            else if (watchedLines < MAX_WATCHED_LINES) {
+                watched.append(line).append('\n');
+                watchedLines++;
+            }
+        }
+        if (!beyondHead) return;
+        if (outcome(line)) {
+            if (outcomeLines < MAX_OUTCOME_LINES) {
+                outcomes.append(line).append('\n');
+                outcomeLines++;
+            }
+        } else if (extraLines < MAX_EXTRA_LINES && line.contains("error[JSC")) {
+            extra.append(line).append('\n');
+            extraLines++;
+        }
+    }
 
     /**
      * JOUST's own acceptance records only (M2-CDX-6): {@code … ABI manifest …} (accepted the changed, created the) and
@@ -86,26 +123,32 @@ public final class JoustOutputCapture {
         return line.contains("ABI manifest") || line.contains("error[JSC0002]");
     }
 
-    private void keep(String line, boolean beyondHead) {
-        if (!beyondHead) return;
-        if (outcome(line) && outcomeLines < MAX_OUTCOME_LINES) {
-            outcomes.append(line).append('\n');
-            outcomeLines++;
-            return;
-        }
-        if (extraLines >= MAX_EXTRA_LINES || !line.contains("error[JSC")) return;
-        extra.append(line).append('\n');
-        extraLines++;
-    }
-
     @Override
     public synchronized String toString() {
-        String tail = !discarding && head.length() >= cap && (partial.indexOf("error[JSC") >= 0 || outcome(partial.toString()))
-                ? partial + "\n" : "";
-        String pending = discarding ? partial + " … " + longTail : partial.toString();
-        String last = watch != null && !pending.isEmpty() && watchedLines < MAX_WATCHED_LINES && watch.test(pending) ? pending + "\n" : "";
-        String refusal = firstRefusal == null ? "" : firstRefusal + "\n";
-        return extra.isEmpty() && outcomes.isEmpty() && tail.isEmpty() && watched.isEmpty() && last.isEmpty() && refusal.isEmpty()
-                ? head.toString() : head + "\n" + extra + outcomes + tail + refusal + watched + last;
+        // A last line with no newline, on each stream, is classified exactly as a finished one would be, without
+        // consuming it: the first-refusal slot is honoured here too (M2-CDX-6).
+        String refusal = firstRefusal;
+        StringBuilder pendingWatched = new StringBuilder();
+        StringBuilder pendingOther = new StringBuilder();
+        int w = watchedLines;
+        boolean pastCap = head.length() >= cap;
+        for (Line line : streams.values()) {
+            if (line.isEmpty()) continue;
+            String text = line.text();
+            if (watch != null && watch.test(text)) {
+                if (refusal == null && text.contains("error[JSC0002]")) refusal = text;
+                else if (w < MAX_WATCHED_LINES) {
+                    pendingWatched.append(text).append('\n');
+                    w++;
+                }
+            } else if (pastCap && !line.longLine && (outcome(text) || text.contains("error[JSC"))) {
+                pendingOther.append(text).append('\n');
+            }
+        }
+        String r = refusal == null ? "" : refusal + "\n";
+        if (extra.isEmpty() && outcomes.isEmpty() && watched.isEmpty() && pendingWatched.isEmpty() && pendingOther.isEmpty() && r.isEmpty()) {
+            return head.toString();
+        }
+        return head + "\n" + extra + outcomes + pendingOther + r + watched + pendingWatched;
     }
 }

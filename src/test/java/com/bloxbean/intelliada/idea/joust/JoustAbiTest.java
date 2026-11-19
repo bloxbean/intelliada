@@ -1041,4 +1041,21 @@ public class JoustAbiTest {
         assertNotNull(JoustAbi.refusal(capture.toString(), "org/acme/Counter.jsc", "org.acme.Counter"));
         assertTrue("memory stays bounded", capture.toString().length() < com.bloxbean.intelliada.idea.joust.tasks.JoustNpmTasks.OUTPUT_CAP + 10_000);
     }
+
+    /** M2-CDX-6: a final refusal with no newline, after 64 acceptances, still wins; streams do not absorb each other's lines. */
+    @Test
+    public void aPendingRefusalAndInterleavedStreams() throws Exception {
+        java.util.function.Predicate<String> watch = line -> JoustAbi.refusal(line, "org/acme/Counter.jsc", "org.acme.Counter") != null
+                || JoustAbi.reportsAccepted(line, "org/acme/Counter.jsc", "Counter.abi.json", "src/main/jsc/org/acme/Counter.abi.json");
+        String refused = JoustM2Fixtures.text("acceptJscAbi-refused.log").lines().filter(l -> l.contains("not accepted")).findFirst().orElseThrow();
+        var atEof = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64, watch);
+        atEof.append("y".repeat(200) + "\n" + JoustM2Fixtures.text("acceptJscAbi-accepted.log").repeat(64) + refused);   // no final newline
+        assertNotNull(JoustAbi.refusal(atEof.toString(), "org/acme/Counter.jsc", "org.acme.Counter"));
+        var streams = new com.bloxbean.intelliada.idea.joust.tasks.JoustOutputCapture(64, watch);
+        streams.append("y".repeat(200) + "\n", "stdout");
+        streams.append("Building contracts... 42%", "stdout");   // an unfinished progress line
+        streams.append(refused + "\n", "stderr");
+        streams.append(" done\n", "stdout");
+        assertNotNull(JoustAbi.refusal(streams.toString(), "org/acme/Counter.jsc", "org.acme.Counter"));
+    }
 }

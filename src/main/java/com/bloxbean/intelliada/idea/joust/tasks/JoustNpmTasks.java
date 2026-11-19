@@ -69,6 +69,7 @@ public final class JoustNpmTasks {
         JoustTaskTracker.Run run = tracker.start(guard);
         if (run == null) return new JoustAbiReview.Result(false, "", true);
         Process proc = null;
+        Launch launch = null;
         try {
             List<String> cmd = command(project, root, args);
             // The CLI reads the files on disk: save the editors first, then check again, then start (M2-CDX-21).
@@ -78,17 +79,19 @@ public final class JoustNpmTasks {
                     .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE);
             OSProcessHandler handler = new OSProcessHandler(cl);   // the process runs from here
             proc = handler.getProcess();
-            Launch launch = new Launch(handler);
+            launch = new Launch(handler);
+            launch.sample();
             boolean ended = false;
             try {
                 // A cancellation (possibly on the EDT) only queues the kill on a pooled thread; the kill itself start-notifies
                 // through the one owner and waits for the end there (M2-CDX-3).
-                run.attach(() -> com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService().execute(() -> kill(launch)));
+                Launch owner = launch;
+                run.attach(() -> com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService().execute(() -> kill(owner)));
                 JoustOutputCapture out = new JoustOutputCapture(OUTPUT_CAP, watch);
                 handler.addProcessListener(new ProcessListener() {
                     @Override
                     public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                        out.append(event.getText());
+                        out.append(event.getText(), outputType.toString());   // per stream (M2-CDX-6)
                     }
                 });
                 var opener = consoleOpener;
@@ -124,8 +127,12 @@ public final class JoustNpmTasks {
         } finally {
             // Release follows the process itself (M2-CDX-3): now if it has exited (or never started), else when it does,
             // whatever the cleanup above did or threw; until then a later cancellation still reaches it.
-            if (proc == null || !proc.isAlive()) tracker.done(run);
-            else proc.onExit().thenRun(() -> tracker.done(run));
+            if (proc == null || treeGone(launch)) {
+                tracker.done(run);
+            } else {
+                Launch l = launch;
+                releaseWhenTreeGone(l, () -> tracker.done(run));
+            }
         }
     }
 
@@ -187,13 +194,41 @@ public final class JoustNpmTasks {
         consoleOpener = opener;
     }
 
-    /** The one owner of a launched handler's start notification (M2-CDX-3): {@code startNotify()} runs exactly once. */
+    /**
+     * The one owner of a launched handler's start notification (M2-CDX-3): {@code startNotify()} runs exactly once. It
+     * also records the process's descendants while it runs (M2-CDX-3, round 11): {@code joust test} starts a Node test
+     * runner of its own, and a later enumeration may be refused, so the PIDs seen are kept and ended by PID.
+     */
     static final class Launch {
         final OSProcessHandler handler;
         private boolean started;
+        final java.util.Set<Long> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        private java.util.concurrent.ScheduledFuture<?> sampler;
 
         Launch(OSProcessHandler handler) {
             this.handler = handler;
+        }
+
+        /** Records the descendants every 250 ms while the process lives. */
+        synchronized void sample() {
+            if (sampler != null) return;
+            Process p = handler.getProcess();
+            sampler = com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(() -> {
+                if (!p.isAlive()) return;
+                for (ProcessHandle d : descendants(p)) seen.add(d.pid());
+            }, 0, 250, java.util.concurrent.TimeUnit.MILLISECONDS);
+            p.onExit().thenRun(() -> {
+                synchronized (Launch.this) {
+                    if (sampler != null) sampler.cancel(false);
+                }
+            });
+        }
+
+        /** The recorded descendants still alive. */
+        List<ProcessHandle> liveSeen() {
+            List<ProcessHandle> out = new ArrayList<>();
+            for (long pid : seen) ProcessHandle.of(pid).filter(ProcessHandle::isAlive).ifPresent(out::add);
+            return out;
         }
 
         synchronized void ensureStarted() {
@@ -203,10 +238,54 @@ public final class JoustNpmTasks {
         }
     }
 
+    /** For tests: when true, enumerating descendants is refused, as some sandboxes do. */
+    static volatile boolean enumerationDeniedForTests;
+
+    /** The process's descendants, or none when the system refuses to list them. */
+    static List<ProcessHandle> descendants(Process p) {
+        try {
+            if (enumerationDeniedForTests) throw new UnsupportedOperationException("Operation not permitted (sysctl failed)");
+            return p.descendants().toList();
+        } catch (RuntimeException refused) {
+            return List.of();
+        }
+    }
+
     /**
-     * Ends the process and its children, off the EDT: start-notified once (destruction waits for it), destroyed, awaited,
-     * then forced; returns only when the process is gone or, after the bounded waits, as far as the OS lets it go.
+     * Ends {@code p} and its whole tree by every means available: the descendants it lists now, the ones recorded while
+     * it ran (by PID, no enumeration needed), and IntelliJ's own tree kill (which walks the tree with {@code ps}); then
+     * the process itself.
      */
+    static void destroyTree(Launch launch, Process p) {
+        for (ProcessHandle d : descendants(p)) d.destroyForcibly();
+        for (ProcessHandle d : launch.liveSeen()) d.destroyForcibly();
+        try {
+            com.intellij.execution.process.OSProcessUtil.killProcessTree(p);
+        } catch (RuntimeException | Error unavailable) {
+            // the other means above still apply
+        }
+        p.destroyForcibly();
+    }
+
+    /** True when the process and every descendant recorded for it have exited. */
+    static boolean treeGone(Launch launch) {
+        return !launch.handler.getProcess().isAlive() && launch.liveSeen().isEmpty();
+    }
+
+
+    /** Runs {@code release} once the process and its recorded descendants have all exited. */
+    static void releaseWhenTreeGone(Launch launch, Runnable release) {
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean();
+        var poll = new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>>();
+        poll.set(com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(() -> {
+            if (treeGone(launch) && done.compareAndSet(false, true)) {
+                release.run();
+                var f = poll.get();
+                if (f != null) f.cancel(false);
+            }
+        }, 0, 200, java.util.concurrent.TimeUnit.MILLISECONDS));
+    }
+
     /** Returns true when the process itself was seen to exit (a detached handler is no proof, M2-CDX-3). */
     static boolean kill(Launch launch) {
         Runnable hook = killHookForTests;
@@ -214,19 +293,16 @@ public final class JoustNpmTasks {
         OSProcessHandler handler = launch.handler;
         Process p = handler.getProcess();
         launch.ensureStarted();
+        // The whole tree first (a joust test runner is a child of the CLI), then the handler's own destruction.
+        destroyTree(launch, p);
         handler.destroyProcess();
-        if (handler.waitFor(10_000) && !p.isAlive()) return true;
         boolean interrupted = false;
         try {
-            for (int attempt = 0; attempt < 6 && p.isAlive(); attempt++) {
-                try {
-                    p.descendants().forEach(ProcessHandle::destroyForcibly);
-                } catch (RuntimeException notPermitted) {
-                    // enumerating descendants may be refused (sandboxes): the parent is still ended directly
-                }
-                p.destroyForcibly();
+            for (int attempt = 0; attempt < 6 && !treeGone(launch); attempt++) {
+                destroyTree(launch, p);
                 try {
                     p.onExit().get(10, java.util.concurrent.TimeUnit.SECONDS);   // destroyForcibly returns before the exit
+                    for (ProcessHandle d : launch.liveSeen()) d.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS);
                 } catch (InterruptedException e) {
                     interrupted = true;   // keep waiting: releasing a live process is not an option
                 } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
@@ -236,7 +312,7 @@ public final class JoustNpmTasks {
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }
-        return !p.isAlive();
+        return treeGone(launch);
     }
 
     /** A Run console in the IDE; tests without one read the captured output only. */

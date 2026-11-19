@@ -32,6 +32,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         try {
             JoustNpmTasks.setConsoleOpenerForTests(null);
             JoustNpmTasks.killHookForTests = null;
+            JoustNpmTasks.enumerationDeniedForTests = false;
             JoustToolsState.getInstance().loadState(saved);
             TrustedProjects.setProjectTrusted(getProject(), true);
         } finally {
@@ -88,6 +89,7 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
             Thread.sleep(50);
         }
+        assertTrue("finished within the deadline (M2-CDX-31)", result.isDone());
         var r = result.get();   // a runner exception fails the test
         assertFalse("reported as a failure, not a cancellation", r.cancelled() || r.ok());
         long pid = Long.parseLong(Files.readString(pidFile).trim());
@@ -136,5 +138,58 @@ public class JoustNpmLifecyclePlatformTest extends BasePlatformTestCase {
         end = System.currentTimeMillis() + 10_000;
         while (tracker.runningCount() != 0 && System.currentTimeMillis() < end) Thread.sleep(20);
         assertEquals("released on its exit", 0, tracker.runningCount());
+    }
+
+    /**
+     * M2-CDX-3: joust test runs a Node test runner as a child of the CLI. Losing trust ends both, also when listing
+     * descendants is refused; the run is released only after both have exited.
+     */
+    public void testANestedTestRunnerIsEndedWithItsParent() throws Exception {
+        String node = JoustTestTools.env("JOUST_NODE", getName());
+        if (node == null) return;
+        for (boolean denied : new boolean[]{false, true}) {
+            JoustNpmTasks.enumerationDeniedForTests = denied;
+            var d = new JoustToolsState.Data();
+            d.nodePath = node;
+            JoustToolsState.getInstance().loadState(d);
+            JoustToolsState.getInstance().setValidatedNode(JoustToolValidator.identityOf(Path.of(node).toRealPath()), "test");
+            Path base = Files.createDirectories(Path.of(getProject().getBasePath())).toRealPath();
+            Path web = Files.createDirectories(base.resolve("web-nested-" + denied));
+            Files.writeString(web.resolve("joust.config.json"), "{}");
+            Path bin = Files.createDirectories(web.resolve("node_modules/@julclang/joust/bin"));
+            Files.writeString(bin.getParent().resolve("package.json"), "{\"name\":\"@julclang/joust\"}");
+            // Like joust test: the CLI starts a Node child (the test runner) and waits for it.
+            Files.writeString(bin.resolve("joust.js"), "const { spawn } = require('child_process');\n"
+                    + "const c = spawn(process.execPath, ['-e', \"require('fs').writeFileSync('child', String(process.pid)); setTimeout(() => {}, 120000)\"],"
+                    + " { stdio: 'ignore' });\n"
+                    + "require('fs').writeFileSync('pid', String(process.pid));\n"
+                    + "c.on('exit', () => process.exit(0));\n");
+            TrustedProjects.setProjectTrusted(getProject(), true);
+            var root = JoustProjectLayout.scan(base, com.bloxbean.intelliada.idea.joust.core.JoustPaths.Flavor.current()).npmRoots().stream()
+                    .filter(r -> r.dir().equals(web)).findFirst().orElseThrow();
+            JoustRunGuard guard = JoustRunGuard.capture(getProject());
+            var result = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustNpmTasks.run(guard, root, List.of("test"), "test"));
+            Path pidFile = web.resolve("pid");
+            Path childFile = web.resolve("child");
+            long end = System.currentTimeMillis() + 20_000;
+            while ((!Files.exists(pidFile) || !Files.exists(childFile)) && System.currentTimeMillis() < end) {
+                PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+                Thread.sleep(50);
+            }
+            Thread.sleep(600);   // let the descendants be recorded
+            long parent = Long.parseLong(Files.readString(pidFile).trim());
+            long child = Long.parseLong(Files.readString(childFile).trim());
+            assertTrue(alive(parent) && alive(child));
+            TrustedProjects.setProjectTrusted(getProject(), false);
+            end = System.currentTimeMillis() + 30_000;
+            while ((!result.isDone() || JoustTaskTracker.getInstance(getProject()).runningCount() != 0) && System.currentTimeMillis() < end) {
+                PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+                Thread.sleep(50);
+            }
+            assertTrue(result.isDone());
+            assertFalse("denied=" + denied + ": the CLI is gone", alive(parent));
+            assertFalse("denied=" + denied + ": the test runner is gone", alive(child));
+            assertEquals("released after both exited", 0, JoustTaskTracker.getInstance(getProject()).runningCount());
+        }
     }
 }
