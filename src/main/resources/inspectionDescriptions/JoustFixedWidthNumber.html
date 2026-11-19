@@ -1,0 +1,19 @@
+<html>
+<body>
+Reports fixed-width numbers inside a class annotated <code>@StateContract</code>, mirroring JOUST's processor lint
+(<code>SubsetLint</code>):
+<ul>
+  <li>the types <code>int</code>, <code>long</code>, <code>short</code>, <code>char</code>, <code>float</code> and
+      <code>double</code> where they are written (<code>byte</code> is allowed, since <code>byte[]</code> is a bytestring);</li>
+  <li>their boxes (<code>Integer</code>, <code>Long</code>, <code>Short</code>, <code>Byte</code>, <code>Character</code>,
+      <code>Float</code>, <code>Double</code>);</li>
+  <li>narrowing calls such as <code>intValue()</code>, <code>longValueExact()</code> or <code>doubleValue()</code>;</li>
+  <li>arithmetic (binary, unary or compound) whose type is fixed-width, <code>byte</code> included;</li>
+  <li>variables, including <code>var</code> and lambda parameters, whose inferred type is fixed-width.</li>
+</ul>
+<p>JuLC compiles this arithmetic as unbounded integers and <code>intValue()</code> as the identity, while the JVM wraps at
+32 or 64 bits, so the two runs of the same method could disagree. Compute in <code>BigInteger</code>.</p>
+<!-- tooltip end -->
+<p>Advice only: JOUST's build stays the authority (IntelliAda ADR-004 D10).</p>
+</body>
+</html>

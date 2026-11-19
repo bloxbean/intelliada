@@ -1,0 +1,15 @@
+<html>
+<body>
+Reports <code>IntervalLib.finiteUpperBound</code> and <code>IntervalLib.finiteLowerBound</code> compared without a
+<code>Finite</code> check, inside a class annotated <code>@StateContract</code>.
+<p>Both return -1 for an infinite bound, so comparing the result without first checking that the bound is
+<code>IntervalBoundType.Finite</code> can accept an unbounded validity interval.</p>
+<p>This is a heuristic. A call is reported when its value is compared (the receiver or argument of
+<code>compareTo</code>/<code>equals</code>, or an operand of a relational or equality operator, directly or through a local
+variable it is stored in) and the enclosing method or initializer never names
+<code>org.julclang.ledger.IntervalBoundType.Finite</code> (for example in an <code>instanceof</code> or a
+<code>case</code> pattern).</p>
+<!-- tooltip end -->
+<p>Advice only: JOUST's build stays the authority (IntelliAda ADR-004 D10).</p>
+</body>
+</html>

@@ -200,6 +200,29 @@
                                 implementation="com.bloxbean.intelliada.idea.joust.lsp.JoustStatusBarWidgetFactory"/>
         <colorSettingsPage implementation="com.bloxbean.intelliada.idea.joust.highlight.JoustColorSettingsPage"/>
         <postStartupActivity implementation="com.bloxbean.intelliada.idea.joust.trust.JoustProjectOpenCheck"/>
+
+        <!-- JOUST M2: inspections for Java @StateContract contracts (ADR-004 D10); advice only, Java part -->
+        <localInspection language="JAVA" shortName="JoustByteArrayEquality" groupName="JOUST"
+                         displayName="byte[] compared by reference in a @StateContract" enabledByDefault="true" level="WARNING"
+                         implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustByteArrayEqualityInspection"/>
+        <localInspection language="JAVA" shortName="JoustArraysEquals" groupName="JOUST"
+                         displayName="Arrays.equals in a @StateContract (JuLC does not compile it)" enabledByDefault="true" level="WARNING"
+                         implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustArraysEqualsInspection"/>
+        <localInspection language="JAVA" shortName="JoustFixedWidthNumber" groupName="JOUST"
+                         displayName="Fixed-width number in a @StateContract" enabledByDefault="true" level="WARNING"
+                         implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustFixedWidthNumberInspection"/>
+        <localInspection language="JAVA" shortName="JoustThrow" groupName="JOUST"
+                         displayName="'throw' in a @StateContract" enabledByDefault="true" level="WARNING"
+                         implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustThrowInspection"/>
+        <localInspection language="JAVA" shortName="JoustMerkleMapInternals" groupName="JOUST"
+                         displayName="MerkleMap internals or a hand-made MerkleMap/MapEntry in a @StateContract" enabledByDefault="true" level="ERROR"
+                         implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustMerkleMapInternalsInspection"/>
+        <localInspection language="JAVA" shortName="JoustJulcMapGetOrDefault" groupName="JOUST"
+                         displayName="JulcMap.getOrDefault in a @StateContract" enabledByDefault="true" level="WEAK WARNING"
+                         implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustJulcMapGetOrDefaultInspection"/>
+        <localInspection language="JAVA" shortName="JoustUncheckedFiniteBound" groupName="JOUST"
+                         displayName="IntervalLib.finite*Bound compared without a Finite check" enabledByDefault="true" level="WEAK WARNING"
+                         implementationClass="com.bloxbean.intelliada.idea.joust.inspections.JoustUncheckedFiniteBoundInspection"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">

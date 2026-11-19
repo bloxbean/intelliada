@@ -1,0 +1,11 @@
+<html>
+<body>
+Reports <code>MerkleMap.reads()</code>, <code>writes()</code> and <code>root()</code>, and constructing a
+<code>MerkleMap</code> or a <code>MapEntry</code>, inside a class annotated <code>@StateContract</code>.
+<p>A <code>MerkleMap</code> is only a top-level state component. Its internals differ between the JVM run and the on-chain
+run, and a hand-made map carries reads nobody proved. Use <code>MerkleMaps.empty()</code> and the <code>MerkleMaps</code>
+helpers. JOUST's processor rejects these.</p>
+<!-- tooltip end -->
+<p>Advice only: JOUST's build stays the authority (IntelliAda ADR-004 D10).</p>
+</body>
+</html>
