@@ -1,0 +1,18 @@
+plugins {
+    id 'application'
+    // JOUST 0.1.0-pre2: the JOUST and JuLC processors, the on-chain sources, .jsc, test settings (ADR-0017).
+    // Upgrading JOUST is this version.
+    id 'org.julclang.joust' version '0.1.0-pre2'
+}
+
+repositories {
+    mavenCentral()
+    maven {     // BloxBean: JOUST and JuLC releases
+        url = uri('https://repo.bloxbean.org/maven/releases')
+        mavenContent { releasesOnly() }
+    }
+}
+
+application {
+    mainClass = 'org.acme.CounterMain'    // ./gradlew run: the counter on Yaci DevKit
+}

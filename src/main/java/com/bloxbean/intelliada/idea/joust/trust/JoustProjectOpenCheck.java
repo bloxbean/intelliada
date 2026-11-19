@@ -20,7 +20,8 @@ import java.util.List;
 /**
  * ADR-004 D4: when a project opens whose roots contain a configured tool path or its real target, the JOUST servers
  * stop (without being disabled: they start again once the conflict is gone) and the user is told. Nothing is executed:
- * the selected and real paths are checked against the new project's roots ({@link #conflict}).
+ * the selected and real paths are checked against the new project's roots ({@link #conflict}). The native {@code joust}
+ * of D9 gets the same check, and the user is told that the wizard will not run it.
  */
 public final class JoustProjectOpenCheck implements ProjectActivity {
 
@@ -33,6 +34,12 @@ public final class JoustProjectOpenCheck implements ProjectActivity {
     /** The check itself, run when a project opens. */
     public static void check(Project project) {
         JoustToolsState state = JoustToolsState.getInstance();
+        String cli = state.getState().joustCliPath;
+        if (cli != null && !cli.isBlank()) {
+            // ADR-004 D9: the native joust is held to D4's rule too; the wizard refuses it while this project is open.
+            String c = conflict(new String[][]{{"joust", cli}}, JoustForbiddenRoots.of(project), JoustPaths.Flavor.current());
+            if (c != null) JoustNotifications.show(project, "JOUST new-project wizard disabled", c, NotificationType.WARNING);
+        }
         if (!state.looksConfigured()) return;
         String problem = conflict(state.getState().nodePath, state.getState().joustLspPath, JoustForbiddenRoots.of(project),
                 JoustPaths.Flavor.current());

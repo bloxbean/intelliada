@@ -1,0 +1,14 @@
+Real JOUST 0.1.0-pre2 outputs, recorded for IntelliAda's M2 tests (ADR-004 D7, D8):
+- gradle-jsc/: a project from the native `joust new <dir> -t gradle -l jsc -p org.acme` (joust 0.1.0-pre2), after
+  adding a `note` field and accepting its ABI, with Counter.java and Counter.jscmap.json from `./gradlew generateJsc`
+  (JDK 25).
+- generateJsc-JSC0002.log: generateJsc's output for that change before it was accepted.
+- jscAbiDiff-out.json: `./gradlew jscAbiDiff --contract org.acme.Counter --out <file>` for that change (its `now`
+  manifest is gradle-jsc's Counter.abi.json).
+- npm-jsc/: a project from the native `joust new <dir> -t node -l jsc` (joust 0.1.0-pre2) without node_modules, with
+  build/joust/generated from `joust build` (npm @julclang/joust 0.1.0-pre2).
+- npm-build-JSC0002.log: `joust build` after adding a `note` state field (an ABI change).
+- npm-abi-diff-out.json: `joust abi diff Counter --out <file>` for that change.
+- acceptJscAbi-refused.log: Gradle acceptJscAbi refusing a bound acceptance whose baseline had already changed.
+Tests that run the real npm CLI copy the installed project named by JOUST_NPM_PROJECT (with node_modules).
+- acceptJscAbi-accepted.log: Gradle acceptJscAbi accepting the recorded change (the note JscMain prints on stderr).

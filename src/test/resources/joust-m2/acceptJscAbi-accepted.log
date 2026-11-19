@@ -1,0 +1,3 @@
+
+org/acme/Counter.jsc: note: accepted the changed ABI manifest Counter.abi.json (7bfe0cb6dabfb71e82dc10cfd9b550052ca5e9a7b5899b6e6b0375cd18287017 -> 118ae30491d47001e414f092606d6ab56240eff386b2db056266ae6555e71dd9): commit it beside the .jsc file
+jsc: lowered 1 file(s) into /private/tmp/claude-501/-Users-satya-work-bloxbean-intelliada/d4f5a8a9-ef58-4382-95b7-239e9073ec70/scratchpad/joust-fixture/gjsc/build/tmp/acceptJscAbi

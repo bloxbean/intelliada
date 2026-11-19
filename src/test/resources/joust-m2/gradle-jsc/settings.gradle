@@ -1,0 +1,15 @@
+// JOUST's Gradle plugin (org.julclang.joust) comes from the BloxBean Maven repository, and only from there.
+pluginManagement {
+    repositories {
+        exclusiveContent {
+            forRepositories(
+                maven { url = uri('https://repo.bloxbean.org/maven/releases') }
+            )
+            filter {
+                includeGroupByRegex 'org\\.julclang(\\..*)?'
+            }
+        }
+    }
+}
+
+rootProject.name = 'gjsc'

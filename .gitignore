@@ -127,3 +127,6 @@ gradle-app.setting
 
 # End of https://www.gitignore.io/api/java,gradle,intellij
 
+# Recorded test fixtures are data, not build output (ADR-004 M2, M2-DES-9)
+!src/test/resources/**/*.log
+!src/test/resources/**/build/

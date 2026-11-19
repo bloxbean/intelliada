@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.julc.annotator;
 
+import com.bloxbean.intelliada.idea.joust.inspections.JoustStateContracts;
 import com.bloxbean.intelliada.idea.julc.annotator.fix.ReplaceNullWithOptionalFix;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcCompilerBridge;
 import com.bloxbean.intelliada.idea.julc.annotator.validate.JulcDiagnostic;
@@ -27,7 +28,9 @@ import java.util.List;
  * Uses the real julc-compiler SubsetValidator loaded from the bundled shadow JAR
  * (julc-compiler-all.jar) via JulcCompilerBridge.
  *
- * Only activates for .java files in julc projects containing validator annotations.
+ * Only activates for .java files in julc projects containing validator annotations, and never for a file that
+ * references JOUST's {@code @StateContract}: the bundled julc is not the project's, and JOUST's processor and pinned
+ * JuLC are the authority there (ADR-004 D10, F4).
  */
 public class JulcExternalAnnotator extends ExternalAnnotator<JulcExternalAnnotator.Input, List<JulcDiagnostic>> {
 
@@ -46,6 +49,11 @@ public class JulcExternalAnnotator extends ExternalAnnotator<JulcExternalAnnotat
     @Override
     public @Nullable Input collectInformation(@NotNull PsiFile file) {
         if (file.getVirtualFile() == null || !"java".equalsIgnoreCase(file.getVirtualFile().getExtension())) {
+            return null;
+        }
+
+        // ADR-004 D10: an explicit guard, ahead of the julc-project and annotation filters (F4)
+        if (JoustStateContracts.referencesStateContract(file)) {
             return null;
         }
 

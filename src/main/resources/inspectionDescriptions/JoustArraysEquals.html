@@ -1,0 +1,10 @@
+<html>
+<body>
+Reports <code>Arrays.equals(byte[], byte[])</code> inside a class annotated <code>@StateContract</code>.
+<p>On the JVM it compares contents, but the JuLC version JOUST pins (0.1.0-pre21-rc1) does not compile it:
+"Unknown method: java.util.Arrays.equals" (JULC0024; written <code>java.util.Arrays.equals</code>, JULC0123).
+Use <code>ByteStringLib.equals(a, b)</code>; the quick fix rewrites the call.</p>
+<!-- tooltip end -->
+<p>Advice only: JOUST's build stays the authority (IntelliAda ADR-004 D10).</p>
+</body>
+</html>

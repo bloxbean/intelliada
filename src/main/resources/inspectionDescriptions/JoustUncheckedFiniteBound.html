@@ -1,0 +1,20 @@
+<html>
+<body>
+Reports <code>IntervalLib.finiteUpperBound</code> and <code>IntervalLib.finiteLowerBound</code> compared without a
+<code>Finite</code> check, inside a class annotated <code>@StateContract</code>.
+<p>Both return -1 for an infinite bound, so comparing the result without first checking that the bound is
+<code>IntervalBoundType.Finite</code> can accept an unbounded validity interval.</p>
+<p>This is a heuristic. A call is reported when its value is compared (the receiver or argument of
+<code>compareTo</code>/<code>equals</code>, or an operand of a relational or equality operator, directly or through a local
+variable it is stored in) and no compared use is guarded by a check of <em>that</em> bound: a test against
+<code>org.julclang.ledger.IntervalBoundType.Finite</code> (<code>instanceof</code>, a <code>case</code> pattern, a cast,
+or a record pattern) of <code>i.to().boundType()</code> for <code>finiteUpperBound(i)</code>, or of
+<code>i.from().boundType()</code> for <code>finiteLowerBound(i)</code>. A check guards a use when it comes first in an
+enclosing block (not inside a branch of an earlier statement), or sits in the condition of an enclosing <code>if</code>,
+loop or <code>?:</code>, in an earlier operand of <code>&amp;&amp;</code>/<code>||</code>, or in the <code>case</code>
+label of the <code>switch</code> arm (its body or <code>when</code> guard) that holds the use; other arms, including
+<code>default</code>, are not guarded by it. Checking the lower bound does not silence the upper one.</p>
+<!-- tooltip end -->
+<p>Advice only: JOUST's build stays the authority (IntelliAda ADR-004 D10).</p>
+</body>
+</html>

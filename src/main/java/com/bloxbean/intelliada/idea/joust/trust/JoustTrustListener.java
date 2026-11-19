@@ -18,6 +18,8 @@ public final class JoustTrustListener implements TrustedProjectsListener {
 
     @Override
     public void onProjectUntrusted(@NotNull Project project) {
+        // I20: active and queued JOUST tasks are cancelled and their late results discarded.
+        com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(project).cancelAll();
         JoustServerControl.restart(project, "the project is no longer trusted");
     }
 }
