@@ -84,6 +84,10 @@ public class JoustM2ProjectTest {
         var layout = JoustProjectLayout.scan(base(), flavor);
         Path java = g.resolve("build/generated/sources/jsc/java/main/org/acme/Counter.java").toRealPath();
         assertNull("an in-tree symlink to an outside .jsc", JoustGeneratedSources.jscFor(layout.gradleModules().get(0), java, 30));
+        // Restore the real source, so the next assertion fails only for the reason it names (M2-CDX-9).
+        Files.delete(jscDir.resolve("Counter.jsc"));
+        Files.writeString(jscDir.resolve("Counter.jsc"), "jsc 1\n");
+        assertNotNull(JoustGeneratedSources.jscFor(layout.gradleModules().get(0), java, 30));
         Path map = java.resolveSibling("Counter.jscmap.json");
         Files.writeString(map, Files.readString(map).replace("\"source\": \"Counter.jsc\"", "\"source\": \"../../../../etc/passwd\""));
         assertNull(JoustGeneratedSources.jscFor(layout.gradleModules().get(0), java, 30));
@@ -122,5 +126,55 @@ public class JoustM2ProjectTest {
         assertEquals("Counter", f.get(0).contract());
         assertEquals("org/acme/Counter.jsc", f.get(0).jscRel());
         assertEquals(1, JoustAbi.failures("error[JSC0003]: app/Vault.jsc:1:1: no ABI manifest Vault.abi.json beside this file").size());
+    }
+
+    /** M2-CDX-9: a contracts directory redirected out of its module (here, to another directory in the project) is not used. */
+    @Test
+    public void aRedirectedContractsRootIsNotUsed() throws Exception {
+        Path g = JoustM2Fixtures.gradleProject(Files.createDirectories(base().resolve("g")));
+        Path elsewhere = Files.createDirectories(base().resolve("elsewhere"));
+        Path jscRoot = g.resolve("src/main/jsc");
+        Files.move(jscRoot, elsewhere.resolve("jsc"));
+        Files.createSymbolicLink(jscRoot, elsewhere.resolve("jsc"));
+        var layout = JoustProjectLayout.scan(base(), flavor);
+        Path java = g.resolve("build/generated/sources/jsc/java/main/org/acme/Counter.java").toRealPath();
+        assertNull(JoustGeneratedSources.jscFor(layout.gradleModules().get(0), java, 30));
+        assertNull(JoustDiagnosticLinks.find("org/acme/Counter.jsc:1:1: error[JSC0502]: x", layout));
+        assertNotNull("the inventory is incomplete, not silently empty", JoustAbi.manifests(layout).incomplete());
+    }
+
+    /** M2-CDX-12: settings-only detection, the nearest owner across kinds, and npm first in one directory (project.js). */
+    @Test
+    public void ownersFollowJoustsOwnRule() throws Exception {
+        Path base = base();
+        // Settings-only: the build's root is a JOUST module, with the settings file's version.
+        Path s = Files.createDirectories(base.resolve("settingsonly"));
+        Files.writeString(s.resolve("settings.gradle"), "plugins { id 'org.julclang.joust' version '0.1.0-pre2' }\n");
+        Files.writeString(s.resolve("build.gradle"), "plugins { id 'java' }\n");
+        Files.createDirectories(s.resolve("src/main/jsc"));
+        // A Gradle module with an npm root nested inside it.
+        Path g = JoustM2Fixtures.gradleProject(Files.createDirectories(base.resolve("g")));
+        Path nested = Files.createDirectories(g.resolve("web"));
+        Files.writeString(nested.resolve("joust.config.json"), "{}");
+        Files.createDirectories(nested.resolve("contracts/app"));
+        Path nestedJsc = Files.writeString(nested.resolve("contracts/app/A.jsc"), "x");
+        // Both kinds in one directory: npm wins.
+        Path both = JoustM2Fixtures.gradleProject(Files.createDirectories(base.resolve("both")));
+        Files.writeString(both.resolve("joust.config.json"), "{\"contracts\":\"src/main/jsc\"}");
+        // A Gradle subproject without the plugin owns its files: no JOUST owner.
+        Path plain = Files.createDirectories(g.resolve("plain"));
+        Files.writeString(plain.resolve("build.gradle"), "plugins { id 'java' }\n");
+        Path plainFile = Files.writeString(plain.resolve("A.jsc"), "x");
+
+        var layout = JoustProjectLayout.scan(base, flavor);
+        var settingsModule = layout.gradleModules().stream().filter(m -> m.dir().equals(s)).findFirst().orElseThrow();
+        assertEquals("0.1.0-pre2", settingsModule.pluginVersion());
+        assertEquals(s, layout.owner(s.resolve("src/main/jsc")).gradle().dir());
+        assertEquals(nested, layout.owner(nestedJsc.toRealPath()).npm().dir());
+        assertEquals(g, layout.owner(g.resolve("src/main/jsc/org/acme/Counter.jsc").toRealPath()).gradle().dir());
+        var bothOwner = layout.owner(both.resolve("src/main/jsc/org/acme/Counter.jsc").toRealPath());
+        assertNotNull(bothOwner.npm());
+        assertNull(bothOwner.gradle());
+        assertNull(layout.owner(plainFile.toRealPath()));
     }
 }
