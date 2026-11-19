@@ -1,6 +1,7 @@
 # ADR-004: JOUST support in IntelliAda
 
-**Status:** Proposed (r6)
+**Status:** Accepted (r6), by the maintainer on 2026-11-19. Reviewed and approved at `fb953fd` by the design, security
+and Codex reviewers (PR #9).
 
 **Date:** 2026-11-18. Revised 2026-11-19.
 
@@ -644,7 +645,7 @@ for traceability. Questions r2 raised are listed below with the decisions taken 
 These are decisions taken on this ADR, with who took them.
 - **Maintainer:** answered by the maintainer.
 - **Delegated:** taken by the authoring agent, after consulting two independent advisor agents, while the maintainer asked
-  not to be consulted until the morning of 2026-11-20. They stand until the maintainer ratifies or reverses them.
+  not to be consulted until the morning of 2026-11-20. The maintainer ratified them by accepting this ADR on 2026-11-19.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -667,6 +668,7 @@ These are decisions taken on this ADR, with who took them.
 | L17 | ADR-005 signing defaults: validity at most 900 slots from the bound node's tip (2 h for exports); fee cap 3 ADA on every class (a setting with a 10 ADA ceiling); collateral at risk at most 5 ADA, counting the full input value when `total_collateral` is absent; a creation's locked lovelace allowed in the outflow; an escalation always shows the modal | delegated | 2026-11-19 | both advisors; JOUST `verify.js` and `StateRuntime` defaults |
 | L19 | Q8 amended: the project engine is gated on a JOUST-side digest pin (ADR-0021 amendment item f). M1 is advisory only. IntelliAda-side watching was rejected | delegated | 2026-11-19 | both advisors chose (a) independently; SEC-11, DES-12, CDX-1 |
 | L18 | Sequencing: no M1 implementation until the maintainer accepts ADR-004, even after three reviewer approvals. Only read-only preparation in the scratchpad (G1.1 checks, an M1 task list) | delegated | 2026-11-19 | both advisors; the maintainer's rule "design only until I accept the ADR" |
+| L20 | Accept ADR-004 (r6), ratifying L14, L16, L17, L18 and L19; implement the milestones, each as its own PR reviewed by the same three reviewers | maintainer | 2026-11-19 | "ADR004 is accepted. You can start implementation and complete all milestones and review with reviewers" |
 
 ## Revision history
 
