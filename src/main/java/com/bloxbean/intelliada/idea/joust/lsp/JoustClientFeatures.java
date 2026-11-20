@@ -304,6 +304,20 @@ public class JoustClientFeatures extends LSPClientFeatures {
         confine(params, JoustProjectFolders.confined(project));
     }
 
+    /** Calls a one-argument setter with null when this LSP4J has it (capabilities newer than the compile-time LSP4J). */
+    private static void clearIfPresent(Object target, String setter) {
+        for (java.lang.reflect.Method m : target.getClass().getMethods()) {
+            if (m.getName().equals(setter) && m.getParameterCount() == 1 && !m.getParameterTypes()[0].isPrimitive()) {
+                try {
+                    m.invoke(target, (Object) null);
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    // the server-side allow-list (E23) still drops the matching capability
+                }
+                return;
+            }
+        }
+    }
+
     /** Applies I25 and declares no applyEdit; public for tests. */
     public static void confine(InitializeParams params, List<WorkspaceFolder> folders) {
         params.setWorkspaceFolders(folders);
@@ -316,6 +330,21 @@ public class JoustClientFeatures extends LSPClientFeatures {
                 ws.setApplyEdit(false);
                 ws.setFileOperations(null);
                 if (ws.getWorkspaceEdit() != null) ws.getWorkspaceEdit().setFailureHandling(null);
+                // ADR-004 §12.2 E24: what IntelliAda does not offer the JOUST server, it does not advertise.
+                ws.setConfiguration(false);
+                ws.setDidChangeWatchedFiles(null);   // its registration is refused (D3a item 2)
+                ws.setDidChangeConfiguration(null);
+                ws.setInlineValue(null);
+                ws.setDiagnostics(null);
+                clearIfPresent(ws, "setTextDocumentContent");   // LSP4J 1.0 only
+            }
+            org.eclipse.lsp4j.TextDocumentClientCapabilities td = caps.getTextDocument();
+            if (td != null) {
+                if (td.getSynchronization() != null) td.getSynchronization().setWillSaveWaitUntil(false);
+                td.setDiagnostic(null);
+                td.setInlineValue(null);
+                td.setLinkedEditingRange(null);
+                clearIfPresent(td, "setInlineCompletion");   // LSP4J 1.0 only
             }
         }
     }

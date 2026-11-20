@@ -44,6 +44,8 @@ public final class JoustServerAccess {
 
     /** The JOUST server of the project, or {@code null} when it is not configured or does not start. */
     public static JoustLanguageServerApi server(Project project) {
+        // E22 (UP-CDX-2): asking LSP4IJ for the server may start it; on an unsupported LSP4IJ nothing is asked.
+        if (com.bloxbean.intelliada.idea.joust.lsp.JoustLsp4jCompat.problem() != null) return null;
         CompletableFuture<LanguageServerItem> f = LanguageServerManager.getInstance(project).getLanguageServer(JoustConstants.SERVER_ID);
         LanguageServerItem item = await(f);
         if (item == null) return null;

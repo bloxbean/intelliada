@@ -37,7 +37,12 @@ public final class ReadOnlyFeatureSet {
      * {@code JoustLsp4jCompat} keeps the server off when the installed LSP4IJ's setters differ from this list.
      */
     public enum Feature {
-        DIAGNOSTIC("setDiagnosticFeature", Treatment.LSP4IJ, "textDocument/diagnostic"),
+        /**
+         * Pushed diagnostics only. Pull diagnostics ({@code textDocument/diagnostic}, workspace diagnostics) are refused, as
+         * a registration and as a capability: LSP4IJ 0.30.1 resolves the URIs of a pull report's related documents and of
+         * a workspace report before checking them (ADR-004 §12.2 E23, UP-CDX-3, UP-DES-2). joust-lsp only pushes.
+         */
+        DIAGNOSTIC("setDiagnosticFeature", Treatment.LSP4IJ),
         DOCUMENT_HIGHLIGHT("setDocumentHighlightFeature", Treatment.LSP4IJ, "textDocument/documentHighlight"),
         DOCUMENT_SYMBOL("setDocumentSymbolFeature", Treatment.LSP4IJ, "textDocument/documentSymbol"),
         FOLDING_RANGE("setFoldingRangeFeature", Treatment.LSP4IJ, "textDocument/foldingRange"),
@@ -67,7 +72,11 @@ public final class ReadOnlyFeatureSet {
         // New since LSP4IJ 0.10.0 (ADR-004 §12.2 E21), all off:
         /** Breadcrumbs from document symbols: a new surface for server text, not needed read-only. */
         BREADCRUMBS("setBreadcrumbsFeature", Treatment.DISABLED),
-        /** Settings pushed to the server: IntelliAda sends none, and a change is ignored rather than sent or restarted on. */
+        /**
+         * Settings: a settings change in LSP4IJ is not forwarded ({@code IGNORE}), and {@code workspace/configuration} is
+         * answered null by {@code JoustLanguageClient} (E24). Editing the server's initialization options in LSP4IJ's own
+         * settings still restarts it, as for any server.
+         */
         CONFIGURATION("setConfigurationFeature", Treatment.DISABLED, "workspace/didChangeConfiguration"),
         /** LSP4IJ's client-side typing aids (quotes, terminators, braces): all off, as LSP4IJ's own defaults are. */
         EDITOR_BEHAVIOR("setEditorBehaviorFeature", Treatment.DISABLED),

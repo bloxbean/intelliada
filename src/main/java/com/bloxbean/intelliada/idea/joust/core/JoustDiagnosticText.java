@@ -26,7 +26,8 @@ public final class JoustDiagnosticText {
     }
 
     public static String message(Diagnostic d) {
-        return PlainText.clean(d == null ? "" : messageOf(d), MESSAGE_CAP);
+        // Literal (UP-SEC-4): plain surfaces such as Inspect Code's problem tooltip treat a leading <html as HTML.
+        return PlainText.literal(d == null ? "" : messageOf(d), MESSAGE_CAP);
     }
 
     /**

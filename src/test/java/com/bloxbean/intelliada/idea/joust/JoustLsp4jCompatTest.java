@@ -31,8 +31,11 @@ public class JoustLsp4jCompatTest {
         String why = check(s, "0.31.0");
         assertNotNull(why);
         assertTrue(why, why.contains("LSP4IJ 0.31.0 is not supported"));
-        assertTrue(why, why.contains("not reviewed: InlineEdit"));
-        assertTrue(why, why.contains("stays off"));
+        assertTrue(why, why.contains("not been reviewed"));
+        assertTrue(why, why.contains("not classified: InlineEdit"));
+        assertTrue(why, why.contains("language server is off"));
+        assertTrue("a newer LSP4IJ: install the supported one or update IntelliAda (UP-DES-7)", why.contains("install that version"));
+        assertTrue(check(new TreeSet<>(ReadOnlyFeatureSet.FEATURES.keySet()), "0.7.0").contains("Update LSP4IJ to 0.30.1"));
     }
 
     @Test
@@ -43,7 +46,33 @@ public class JoustLsp4jCompatTest {
         String why = check(s, "0.7.0");
         assertNotNull(why);
         assertTrue(why, why.contains("lacks SelectionRange, WorkspaceFolder"));
-        assertFalse(why, why.contains("not reviewed"));
+        assertFalse(why, why.contains("not classified"));
+    }
+
+    /** UP-CDX-8: a release that changes behaviour without a new feature setter is refused until it is reviewed. */
+    @Test
+    public void anUnreviewedReleaseWithTheSameFeaturesIsRefused() throws Exception {
+        for (String v : new String[]{"0.30.2", "0.31.0", "unreviewed", "(version unknown)", ""}) {
+            String why = check(new TreeSet<>(ReadOnlyFeatureSet.FEATURES.keySet()), v);
+            assertNotNull(v, why);
+            assertTrue(why, why.contains("not been reviewed"));
+        }
+    }
+
+    @Test
+    public void theInstalledVersionIsRead() {
+        assertEquals("0.30.1", JoustLsp4jCompat.result().version());
+    }
+
+    @Test
+    public void aTestOverrideIsReportedAndCleared() {
+        try {
+            JoustLsp4jCompat.setResultForTests(new JoustLsp4jCompat.Result("no", "9.9.9"));
+            assertEquals("no", JoustLsp4jCompat.problem());
+        } finally {
+            JoustLsp4jCompat.setResultForTests(null);
+        }
+        assertNull(JoustLsp4jCompat.problem());
     }
 
     @Test

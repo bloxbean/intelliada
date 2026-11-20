@@ -175,9 +175,11 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
 
         VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside);
         myFixture.openFileInEditor(vf);
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
         waitStatus(ServerStatus.started);
         Map<String, JSONObject> answers = waitForAnswers("register-formatting", "register-willRename", "applyEdit",
-                "showDocument-external", "showDocument-outside", "showDocument-symlink", "workspaceFolders");
+                "showDocument-external", "showDocument-outside", "showDocument-symlink", "workspaceFolders",
+                "configuration", "inlineValue-refresh", "diagnostic-refresh", "register-diagnostic", "register-textDocumentContent");
 
         // --- one process, at the JVM boundary (I1, M1-DES-4)
         Set<Long> started = new HashSet<>(descendants());
@@ -209,6 +211,20 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
             assertFalse(t, answers.get(t).getJSONObject("result").getBoolean("success"));
         }
         assertEquals("jsc 1\npackage app\ncontract Counter { state { count: Int } }\n", Files.readString(inside));
+        // LSP4IJ 0.30.1's handlers (ADR-004 §12.2 E24): no settings, inert refreshes, no pull or virtual-document registration.
+        assertEquals("configuration items are answered null (UP-CDX-6)", 2, answers.get("configuration").getJSONArray("result").length());
+        for (Object v : answers.get("configuration").getJSONArray("result")) assertEquals(JSONObject.NULL, v);
+        assertFalse(answers.get("inlineValue-refresh").has("error"));
+        assertFalse(answers.get("diagnostic-refresh").has("error"));
+        assertEquals(-32600, answers.get("register-diagnostic").getJSONObject("error").getInt("code"));
+        assertEquals(-32600, answers.get("register-textDocumentContent").getJSONObject("error").getInt("code"));
+        // What IntelliAda advertised at initialize (E24).
+        JSONObject cc = init.getJSONObject("capabilities");
+        assertFalse(cc.getJSONObject("workspace").optBoolean("configuration", false));
+        assertFalse(cc.getJSONObject("workspace").has("inlineValue"));
+        assertFalse(cc.getJSONObject("workspace").has("textDocumentContent"));
+        assertFalse(cc.getJSONObject("textDocument").getJSONObject("synchronization").optBoolean("willSaveWaitUntil", false));
+        assertFalse(cc.getJSONObject("textDocument").has("diagnostic"));
         assertFalse(java.util.Arrays.stream(FileEditorManager.getInstance(getProject()).getOpenFiles())
                 .anyMatch(f -> f.getName().equals("outside.jsc") || f.getName().equals("Link.jsc")));
 
@@ -221,6 +237,18 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         assertNull(caps.getCodeActionProvider());
         assertNull(caps.getExecuteCommandProvider());
         assertTrue(caps.getWorkspace() == null || caps.getWorkspace().getFileOperations() == null);
+        // The frame filter's allow-list (E23): no pull diagnostics, no workspace capabilities (folder changes, virtual
+        // documents), no inline or linked edits, no willSaveWaitUntil; the server's name is plain text (UP-CDX-1/3/4/5).
+        assertNull(caps.getDiagnosticProvider());
+        assertNull(caps.getWorkspace());
+        assertNull(caps.getInlineValueProvider());
+        assertNull(caps.getLinkedEditingRangeProvider());
+        assertTrue(caps.getTextDocumentSync().isRight());
+        assertFalse(Boolean.TRUE.equals(caps.getTextDocumentSync().getRight().getWillSaveWaitUntil()));
+        var serverInfo = item.getServerWrapper().getServerInfo();
+        assertNotNull(serverInfo);
+        assertFalse(serverInfo.getName(), serverInfo.getName().contains("<"));
+        assertFalse(String.valueOf(serverInfo.getVersion()), String.valueOf(serverInfo.getVersion()).contains("<"));
 
         // --- diagnostics and semantic tokens in the editor (D3a item 8, D2, M1-CDX-11/20)
         List<HighlightInfo> infos = waitForHighlights();
@@ -358,9 +386,10 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         Path second = Files.writeString(mod3.resolve("Second.jsc"), "jsc 1\npackage app\ncontract Second { state { n: Int } }\nfn x() {}\n");
         String tag = "workspaceFolders-" + (received("textDocument/didOpen").size() + 1);
         myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(second));
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
         Map<String, JSONObject> later = waitForAnswers(tag);
         assertEquals(Set.of(base.resolve("mod1"), base.resolve("libs/mod2"), mod3), folders(later.get(tag).getJSONArray("result")));
-        assertTrue("no didChangeWorkspaceFolders (pinned LSP4IJ)", received("workspace/didChangeWorkspaceFolders").isEmpty());
+        assertTrue("no didChangeWorkspaceFolders (I25, E21)", received("workspace/didChangeWorkspaceFolders").isEmpty());
 
         // --- the second folding answer (for Second.jsc) succeeds; its markup placeholder is literal text (M1-CDX-13)
         for (int i = 0; i < 40; i++) {
@@ -385,6 +414,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         Path third = Files.writeString(base.resolve("mod1/contracts/Third.jsc"), "jsc 1\n");
         String tag3 = "workspaceFolders-" + (received("textDocument/didOpen").size() + 1);
         myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(third));
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
         assertEquals(Set.of(base.resolve("mod1"), base.resolve("libs/mod2")), folders(waitForAnswers(tag3).get(tag3).getJSONArray("result")));
         assertTrue(received("workspace/didChangeWorkspaceFolders").isEmpty());
 
@@ -401,6 +431,32 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
             Thread.sleep(200);
         }
         assertTrue("diagnostics for a connected file outside the project", outsideDiag);
+        assertTrue("no folder was added for the outside file (I25, E21)", received("workspace/didChangeWorkspaceFolders").isEmpty());
+
+        // --- saving through the editor applies no server edit (UP-CDX-1): didSave arrives, willSaveWaitUntil never does
+        Path saved = Files.writeString(base.resolve("mod1/contracts/Saved.jsc"), "jsc 1\n");
+        VirtualFile savedVf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(saved);
+        myFixture.openFileInEditor(savedVf);
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
+        var savedDoc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(savedVf);
+        int savesBefore = received("textDocument/didSave").size();
+        ApplicationManager.getApplication().invokeAndWait(() -> {
+            com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(getProject(), () -> savedDoc.insertString(savedDoc.getTextLength(), "package app\n"));
+            com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveDocument(savedDoc);
+        });
+        long saveEnd = System.currentTimeMillis() + 30_000;
+        while (received("textDocument/didSave").size() == savesBefore && System.currentTimeMillis() < saveEnd) {
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(100);
+        }
+        assertTrue("the save reached the server", received("textDocument/didSave").size() > savesBefore);
+        assertTrue("no willSaveWaitUntil", received("textDocument/willSaveWaitUntil").isEmpty());
+        assertEquals("jsc 1\npackage app\n", savedDoc.getText());
+        assertEquals("jsc 1\npackage app\n", Files.readString(saved));
+        // ... and no pull diagnostics or virtual documents were ever requested (UP-CDX-3, UP-CDX-5).
+        assertTrue(received("textDocument/diagnostic").isEmpty());
+        assertTrue(received("workspace/diagnostic").isEmpty());
+        assertTrue(received("workspace/textDocumentContent").isEmpty());
 
         // --- every process the JVM started during the test (JFR, M1-CDX-10)
         List<String> commands = processStarts.commands();
@@ -411,7 +467,8 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         Thread.sleep(500);
         assertEquals("loopback requests", 0, fetched.get());
         assertEquals("the project's files are unchanged, apart from what this test added (I21)", before1,
-                listing(base).stream().filter(e -> !e.startsWith("mod3") && !e.startsWith("mod1/contracts/Third.jsc")).toList());
+                listing(base).stream().filter(e -> !e.startsWith("mod3") && !e.startsWith("mod1/contracts/Third.jsc")
+                        && !e.startsWith("mod1/contracts/Saved.jsc")).toList());
     }
 
     public void testRestartStopAndUserChoice() throws Exception {
@@ -421,6 +478,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         TrustedProjects.setProjectTrusted(getProject(), true);
         Set<Long> before = descendants();
         myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside));
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
         waitStatus(ServerStatus.started);
         long first = newDescendant(before);
 
@@ -495,6 +553,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         JoustToolsState.getInstance().getState().joustLspPath = "/nonexistent/<b>evil</b>/joust-lsp";
         Set<Long> before = descendants();
         myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside));
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
         PlatformTestUtil.waitWithEventsDispatching("a notification", () -> !notifications.isEmpty(), 30);
         Thread.sleep(1000);
         PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
@@ -518,6 +577,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         JoustTestFiles.executable(pkg.resolve("joust-lsp.js"), "#!/usr/bin/env node\nprocess.exit(3)\n");
         configure(node, pkg.resolve("joust-lsp.js").toString());
         myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(inside));
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
         PlatformTestUtil.waitWithEventsDispatching("a notification", () -> notifications.stream()
                 .anyMatch(n -> n.getContent().contains("exited early") || n.getContent().contains("did not start")), 60);
         Thread.sleep(1000);
@@ -628,7 +688,10 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
             PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
             Thread.sleep(100);
         }
-        fail("the client did not answer " + List.of(tags) + "; got " + got.keySet());
+        List<String> opened = new ArrayList<>();
+        for (JSONObject r : received("textDocument/didOpen")) opened.add(r.getJSONObject("params").getString("uri"));
+        fail("the client did not answer " + List.of(tags) + "; got " + got.keySet() + "; opened " + opened
+                + "; received " + events("received").stream().map(e -> e.optString("method")).toList());
         return got;
     }
 

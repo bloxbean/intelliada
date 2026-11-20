@@ -245,4 +245,51 @@ public class JoustSanitizingInputTest {
             // refused
         }
     }
+
+    /**
+     * ADR-004 §12.2 E23: the initialize result keeps only the read-only capabilities, loses {@code willSaveWaitUntil}
+     * (UP-CDX-1), pull diagnostics (UP-CDX-3), virtual documents (UP-CDX-5) and every other workspace capability, and its
+     * serverInfo becomes a plain title that cannot start an HTML tooltip (UP-CDX-4).
+     */
+    @Test
+    public void theInitializeResultIsCutToTheReadOnlySet() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"capabilities\":{"
+                + "\"textDocumentSync\":{\"openClose\":true,\"change\":2,\"willSave\":true,\"willSaveWaitUntil\":true,\"save\":{\"includeText\":false}},"
+                + "\"hoverProvider\":true,\"definitionProvider\":true,\"referencesProvider\":true,\"documentSymbolProvider\":true,"
+                + "\"foldingRangeProvider\":true,\"selectionRangeProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[],\"tokenModifiers\":[]},\"full\":true},"
+                + "\"diagnosticProvider\":{\"interFileDependencies\":true,\"workspaceDiagnostics\":true},"
+                + "\"workspace\":{\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true},\"textDocumentContent\":{\"schemes\":[\"joust-lib\"]},\"fileOperations\":{}},"
+                + "\"completionProvider\":{},\"inlineCompletionProvider\":true,\"linkedEditingRangeProvider\":true,\"inlineValueProvider\":true,"
+                + "\"codeActionProvider\":true,\"executeCommandProvider\":{\"commands\":[\"x\"]},\"renameProvider\":true,"
+                + "\"documentFormattingProvider\":true,\"notebookDocumentSync\":{},\"experimental\":{\"joust\":{}},\"futureProvider\":true},"
+                + "\"serverInfo\":{\"name\":\"<html><b>Sample</b>\",\"version\":\" <html><img src=http://127.0.0.1:9/v>\"}}}";
+        JSONObject r = through(frame(body)).get(0).getJSONObject("result");
+        JSONObject caps = r.getJSONObject("capabilities");
+        assertEquals(new java.util.TreeSet<>(List.of("textDocumentSync", "hoverProvider", "definitionProvider", "referencesProvider",
+                "documentSymbolProvider", "foldingRangeProvider", "selectionRangeProvider", "semanticTokensProvider")),
+                new java.util.TreeSet<>(caps.keySet()));
+        JSONObject sync = caps.getJSONObject("textDocumentSync");
+        assertFalse(sync.has("willSaveWaitUntil"));
+        assertTrue(sync.getBoolean("openClose"));
+        assertEquals(2, sync.getInt("change"));
+        JSONObject info = r.getJSONObject("serverInfo");
+        for (String k : new String[]{"name", "version"}) {
+            String v = info.getString(k);
+            assertFalse(k + ": " + v, v.contains("<") || v.contains(">"));
+            assertFalse(k, javax.swing.plaf.basic.BasicHTML.isHTMLString(v.strip()));
+        }
+        assertTrue(info.getString("name"), info.getString("name").endsWith("\u2039html\u203A\u2039b\u203ASample\u2039/b\u203A"));
+    }
+
+    @Test
+    public void aNumericSyncKindIsKeptAndABadServerInfoIsDropped() throws Exception {
+        JSONObject r = through(frame("{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"capabilities\":{\"textDocumentSync\":1},"
+                + "\"serverInfo\":{\"version\":\"<html>1\"}}}")).get(0).getJSONObject("result");
+        assertEquals(1, r.getJSONObject("capabilities").getInt("textDocumentSync"));
+        assertFalse(r.has("serverInfo"));
+        JSONObject r2 = through(frame("{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"capabilities\":{},"
+                + "\"serverInfo\":{\"name\":\"joust-lsp\",\"version\":7}}}")).get(0).getJSONObject("result");
+        assertEquals("joust-lsp", r2.getJSONObject("serverInfo").getString("name"));
+        assertFalse(r2.getJSONObject("serverInfo").has("version"));
+    }
 }

@@ -66,8 +66,9 @@ public final class JoustStatusBarWidgetFactory implements StatusBarWidgetFactory
         public @NotNull String getText() {
             VirtualFile f = getSelectedFile();
             if (f == null || !JoustConstants.isJscName(f.getName())) return "";
-            if (!JoustToolsState.getInstance().looksConfigured()) return "JOUST: not configured";
+            // E22 (UP-DES-6): the same order everywhere: an unsupported LSP4IJ first, then the configuration.
             if (JoustLsp4jCompat.problem() != null) return "JOUST: LSP4IJ " + JoustLsp4jCompat.result().version() + " unsupported";
+            if (!JoustToolsState.getInstance().looksConfigured()) return "JOUST: not configured";
             if (JoustServerControl.status(project()) != com.redhat.devtools.lsp4ij.ServerStatus.started) return "JOUST: not running";
             String uri = com.redhat.devtools.lsp4ij.LSPIJUtils.toUriAsString(f);
             JoustStatusCache cache = JoustStatusCache.getInstance(project());

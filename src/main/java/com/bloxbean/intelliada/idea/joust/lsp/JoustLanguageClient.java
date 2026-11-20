@@ -81,6 +81,46 @@ public class JoustLanguageClient extends LanguageClientImpl {
         super.publishDiagnostics(params);
     }
 
+    /**
+     * ADR-004 §12.2 E24 (UP-CDX-6): IntelliAda sends the JOUST server no settings. LSP4IJ's own handler would answer from
+     * the configuration a user may have stored for this server in LSP4IJ's settings; every item is answered null.
+     */
+    @Override
+    public CompletableFuture<List<Object>> configuration(org.eclipse.lsp4j.ConfigurationParams params) {
+        int n = params == null || params.getItems() == null ? 0 : Math.min(params.getItems().size(), 1_000);
+        List<Object> nulls = new java.util.ArrayList<>(n);
+        for (int i = 0; i < n; i++) nulls.add(null);
+        return CompletableFuture.completedFuture(nulls);
+    }
+
+    /**
+     * E24 (UP-CDX-7): inline values are outside R. LSP4IJ 0.30.1's handler rebuilds the views of every suspended debug
+     * session in the project, whoever's it is; for the JOUST server a refresh does nothing.
+     */
+    @Override
+    public CompletableFuture<Void> refreshInlineValues() {
+        return CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * ADR-004 §12.2 E25 (UP-SEC-6): in unit-test mode only, {@code $/progress} is not handed to LSP4IJ. LSP4IJ 0.30.1 runs
+     * a progress task through {@code ProgressManager.run}, which the headless test application runs synchronously on the
+     * single message-listener thread; the task then waits for the next progress message, which that thread can no longer
+     * read, and the connection stops. In the IDE the task runs in the background. Progress text is tested through
+     * {@code JoustClientFeatures.SafeProgressFeature} directly.
+     */
+    @Override
+    public void notifyProgress(org.eclipse.lsp4j.ProgressParams params) {
+        if (ApplicationManager.getApplication().isUnitTestMode()) return;
+        super.notifyProgress(params);
+    }
+
+    /** E24: pull diagnostics are outside R (the server's {@code diagnosticProvider} is dropped), so a refresh does nothing. */
+    @Override
+    public CompletableFuture<Void> refreshDiagnostics() {
+        return CompletableFuture.completedFuture(null);
+    }
+
     @Override
     public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
         ApplyWorkspaceEditResponse r = new ApplyWorkspaceEditResponse(false);

@@ -58,6 +58,40 @@ public class JoustReadOnlySetTest {
                 Set.of("com/redhat/devtools/lsp4ij/client/WorkspaceFolderNotificationManager.class"), builders);
     }
 
+    /**
+     * ADR-004 §12.2 E23 (UP-DES-4): every LSP4IJ class that applies a server's edits to a document, with the gate that keeps
+     * it from running for the JOUST server. LSP4IJ 0.30.1 added one without a new feature setter (DocumentContentSynchronizer,
+     * edits on save); this fails when an upgrade adds or moves one, so it is reviewed first.
+     */
+    @Test
+    public void everyLsp4ijEditApplierIsGated() throws Exception {
+        java.util.Map<String, String> gated = java.util.Map.of(
+                "client/LanguageClientImpl", "workspace/applyEdit: JoustLanguageClient answers applied=false",
+                "DocumentContentSynchronizer", "willSaveWaitUntil: dropped from the sync options (E23)",
+                "client/features/LSPCompletionProposal", "completion: feature disabled, capability dropped",
+                "commands/CommandExecutor", "commands: executeCommandProvider dropped; code actions and lenses disabled",
+                "features/codeAction/LSPLazyCodeActionIntentionAction", "code actions: feature disabled, capability dropped",
+                "features/color/LSPColorProvider", "colour presentations: feature disabled, capability dropped",
+                "features/files/AbstractLSPFileListener$1", "file operations: capability dropped, client capability cleared",
+                "features/formatting/LSPFormattingSupport", "formatting: feature disabled, capability dropped",
+                "features/formatting/LSPServerSideOnTypeFormattingHelper", "on-type formatting: feature disabled, capability dropped",
+                "features/rename/LSPRenameRefactoringDialog", "rename: feature disabled, capability dropped");
+        Set<String> appliers = new TreeSet<>();
+        String self = LSPClientFeatures.class.getResource("LSPClientFeatures.class").toString();
+        java.net.URL jar = new java.net.URL(self.substring(4, self.indexOf("!/")));
+        try (java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(jar.openStream())) {
+            for (java.util.zip.ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                String n = e.getName();
+                if (!n.startsWith("com/redhat/devtools/lsp4ij/") || !n.endsWith(".class") || n.endsWith("/LSPIJUtils.class")) continue;
+                String text = new String(z.readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1);
+                if (text.contains("com/redhat/devtools/lsp4ij/LSPIJUtils") && (text.contains("applyEdits") || text.contains("applyWorkspaceEdit"))) {
+                    appliers.add(n.substring("com/redhat/devtools/lsp4ij/".length(), n.length() - ".class".length()));
+                }
+            }
+        }
+        assertEquals("LSP4IJ classes that apply edits: gate each one before upgrading (I5)", new TreeSet<>(gated.keySet()), appliers);
+    }
+
     @Test
     public void editingFeaturesAreNotInR() {
         for (String f : new String[]{"setCompletionFeature", "setCodeActionFeature", "setFormattingFeature", "setOnTypeFormattingFeature",
@@ -72,11 +106,13 @@ public class JoustReadOnlySetTest {
                 "textDocument/rename", "textDocument/prepareRename", "textDocument/completion", "textDocument/codeAction",
                 "workspace/executeCommand", "workspace/didChangeWatchedFiles", "workspace/didChangeConfiguration",
                 "workspace/willRenameFiles", "workspace/didCreateFiles", "workspace/didChangeWorkspaceFolders", "textDocument/codeLens", "textDocument/documentLink",
-                "textDocument/inlayHint", "", "textDocument/hover2", null}) {
+                "textDocument/inlayHint", "textDocument/diagnostic", "workspace/diagnostic", "workspace/textDocumentContent",
+                "textDocument/inlineCompletion", "textDocument/inlineValue", "textDocument/linkedEditingRange",
+                "textDocument/willSaveWaitUntil", "", "textDocument/hover2", null}) {
             assertFalse(String.valueOf(refused), ReadOnlyFeatureSet.allowsRegistration(refused));
         }
         for (String ok : new String[]{"textDocument/hover", "textDocument/definition", "textDocument/references",
-                "textDocument/documentSymbol", "textDocument/foldingRange", "textDocument/semanticTokens", "textDocument/diagnostic"}) {
+                "textDocument/documentSymbol", "textDocument/foldingRange", "textDocument/semanticTokens"}) {
             assertTrue(ok, ReadOnlyFeatureSet.allowsRegistration(ok));
         }
     }

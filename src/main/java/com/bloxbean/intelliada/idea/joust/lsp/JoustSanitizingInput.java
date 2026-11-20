@@ -123,7 +123,11 @@ final class JoustSanitizingInput extends InputStream {
      *   <li>{@code error.message}: escaped and capped; {@code error.data} dropped (LSP4IJ shows errors as HTML);</li>
      *   <li>{@code window/logMessage}, {@code window/showMessage} and {@code window/showMessageRequest}
      *   {@code params.message}: cleaned and capped as literal text;</li>
-     *   <li>every {@code collapsedText} (folding placeholders): cleaned and capped as literal text.</li>
+     *   <li>every {@code collapsedText} (folding placeholders): cleaned and capped as literal text;</li>
+     *   <li>the {@code initialize} result (a {@code result} with a {@code capabilities} object): the capabilities cut to
+     *   {@link #SERVER_CAPABILITIES}, {@code willSaveWaitUntil} removed from the sync options, and {@code serverInfo}
+     *   made a plain title (ADR-004 §12.2 E23). This runs before LSP4J parses the frame, so it holds whatever LSP4J
+     *   version LSP4IJ brings and whatever objects LSP4IJ caches from the result.</li>
      * </ul>
      */
     static byte[] sanitize(byte[] body) {
@@ -179,6 +183,9 @@ final class JoustSanitizingInput extends InputStream {
             ((Map<String, Object>) pm).put("message", PlainText.literal(m, MESSAGE_CAP));
         }
         literalCollapsedText(o, 0);
+        if (o.get("result") instanceof Map<?, ?> rm && rm.get("capabilities") instanceof Map<?, ?>) {
+            readOnlyInitializeResult((Map<String, Object>) rm);
+        }
         try {
             return JoustStrictJson.writeUtf8(o, maxOut);
         } catch (JoustStrictJson.Refused e) {
@@ -187,6 +194,41 @@ final class JoustSanitizingInput extends InputStream {
     }
 
     static final int MESSAGE_CAP = 4_000;
+    static final int SERVER_INFO_CAP = 200;
+
+    /**
+     * ADR-004 §12.2 E23: the server capabilities IntelliAda lets LSP4IJ see, an allow-list of the read-only set R. A
+     * capability a later LSP or LSP4IJ adds is dropped until it is classified. Not listed, so dropped: every editing
+     * provider, pull diagnostics ({@code diagnosticProvider}: LSP4IJ 0.30.1 resolves a report's related-document URIs
+     * before checking them, M1-CDX-24), {@code workspace} (folder-change notifications, file operations, virtual
+     * documents), inline values and completion, linked editing, colour, code lens, links, hierarchies, notebooks and
+     * {@code experimental}. joust-lsp 0.1.0-pre2 advertises only allowed ones to IntelliAda.
+     */
+    static final java.util.Set<String> SERVER_CAPABILITIES = java.util.Set.of(
+            "positionEncoding", "textDocumentSync",
+            "hoverProvider", "definitionProvider", "declarationProvider", "typeDefinitionProvider", "implementationProvider",
+            "referencesProvider", "workspaceSymbolProvider",
+            "documentHighlightProvider", "documentSymbolProvider", "foldingRangeProvider", "selectionRangeProvider",
+            "semanticTokensProvider");
+
+    /** The sync options IntelliAda keeps: no {@code willSaveWaitUntil}, whose edits LSP4IJ 0.30.1 applies on save. */
+    static final java.util.Set<String> SYNC_OPTIONS = java.util.Set.of("openClose", "change", "willSave", "save");
+
+    @SuppressWarnings("unchecked")
+    private static void readOnlyInitializeResult(Map<String, Object> result) {
+        Map<String, Object> caps = (Map<String, Object>) result.get("capabilities");
+        caps.keySet().retainAll(SERVER_CAPABILITIES);
+        if (caps.get("textDocumentSync") instanceof Map<?, ?> sync) ((Map<String, Object>) sync).keySet().retainAll(SYNC_OPTIONS);
+        Object info = result.get("serverInfo");
+        if (info instanceof Map<?, ?> im && im.get("name") instanceof String name) {
+            Map<String, Object> clean = new LinkedHashMap<>();
+            clean.put("name", PlainText.title(name, SERVER_INFO_CAP));
+            if (im.get("version") instanceof String version) clean.put("version", PlainText.title(version, SERVER_INFO_CAP));
+            result.put("serverInfo", clean);
+        } else {
+            result.remove("serverInfo");
+        }
+    }
     static final int FOLD_CAP = 200;
 
     @SuppressWarnings("unchecked")
