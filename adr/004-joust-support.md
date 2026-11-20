@@ -217,7 +217,7 @@ Never on open, sync, indexing or a file event (T1).
 
   A module or `includeBuild` outside the project is then never discovered as a workspace root and never becomes an engine folder. A file outside the project that the user opens explicitly is still analysed, but only in advisory mode (`select.js:449-452`), which runs no project code (CDX-24).
 
-  LSP4IJ 0.10.0 sends no `didChangeWorkspaceFolders` at all: the jar does not reference the change-event classes. The third path is therefore guarded by design rather than by an existing hook, and every LSP4IJ upgrade (Q11) must re-check whether it sends them and that IntelliAda filters them (SEC-16b).
+  LSP4IJ 0.10.0 sends no `didChangeWorkspaceFolders` at all: the jar does not reference the change-event classes. The third path is therefore guarded by design rather than by an existing hook, and every LSP4IJ upgrade (Q11) must re-check whether it sends them and that IntelliAda filters them (SEC-16b). **LSP4IJ 0.30.1 does send them** (a folder for a file opened outside the initial folders); §12.2 E21 closes that path through its `LSPWorkspaceFolderFeature`.
 - **Enablement** (`LanguageServerEnablementSupport`, as for Aiken): the server is enabled only when D4's paths are set and valid. Otherwise opening a `.jsc` shows one notification with **Configure JOUST…** and starts nothing.
 - **Commands (M1),** all of which answer any client (F15) and write nothing:
   - **Restart analysis** (`joust/restartAnalysis`).
@@ -670,6 +670,7 @@ These are decisions taken on this ADR, with who took them.
 | L18 | Sequencing: no M1 implementation until the maintainer accepts ADR-004, even after three reviewer approvals. Only read-only preparation in the scratchpad (G1.1 checks, an M1 task list) | delegated | 2026-11-19 | both advisors; the maintainer's rule "design only until I accept the ADR" |
 | L20 | Accept ADR-004 (r6), ratifying L14, L16, L17, L18 and L19; implement the milestones, each as its own PR reviewed by the same three reviewers | maintainer | 2026-11-19 | "ADR004 is accepted. You can start implementation and complete all milestones and review with reviewers" |
 | L21 | Cancellation of npm runs acts **only by observed identity** (`ProcessHandle`s listed while the parent lives, then the parent), never by a bare PID (no `kill` command, SIGSTOP or PID-based tree kill). A child forked after the final listing, or one that left the tree, may survive: a documented residual (§12 E13, M2-CDX-3). OS-level containment (POSIX process group, Windows Job Object) is follow-up #24 | delegated (design and security advisors both recommended it) | 2026-11-19 | PR #22 round 15: PID-based signalling kept reopening M2-CDX-32; no identity-bound SIGSTOP exists in Java |
+| L22 | Q11's LSP4IJ upgrade is made now, to 0.30.1, in its own PR stacked on M2 and reviewed like a milestone. The JOUST server runs only on an LSP4IJ whose client features match the classified set exactly (§12.2 E22); every feature new since 0.10.0 is outside R (E21) | delegated, within L12 (Q11: a separate, test-gated upgrade) | 2026-11-20 | IDE testing: LSP4IJ 0.7.0 crashed and 0.30.1 broke diagnostics and added unclassified features |
 
 ## 12. Implementation refinements (M1, r7)
 
@@ -708,6 +709,22 @@ M2's review (PR #22) refined D7–D9 the same way.
 LSP4IJ 0.10.0's `EditorFeatureManager` clears the inlay-hint cache on a pooled thread when a server starts or stops,
 which IntelliJ 2026.1 reports as a soft threading assertion. It is a defect of the pinned dependency, tracked for the
 LSP4IJ upgrade (Q11).
+
+### 12.2 The LSP4IJ upgrade (Q11, r25)
+
+Testing M1 and M2 in an IDE showed that the Marketplace serves **LSP4IJ 0.30.1**, and that an older install (0.7.0)
+fails too. A plugin cannot declare a minimum or maximum version of a plugin it depends on, so the user gets whatever
+LSP4IJ they have. The upgrade Q11 planned (a separate change, gated by I5's and D3a's tests) is therefore made now, in
+its own PR stacked on M2. Facts above that cite LSP4IJ 0.10.0 describe the version reviewed then.
+
+| # | Refines | Refinement | Found by |
+|---|---|---|---|
+| E20 | D3a item 8, I15 | LSP4J 1.0 (bundled by LSP4IJ 0.30.1, LSP 3.18) types `Diagnostic.message` as `Either<String, MarkupContent>`. Code compiled against the `String` accessor fails with `NoSuchMethodError` on the first diagnostic. IntelliAda reads the message by name and shows either form as **literal text**; markup is never rendered | IDE testing (LSP4IJ 0.30.1) |
+| E21 | D3a items 1 and 2, I5, I25 | LSP4IJ 0.30.1 adds seven client features. All are **outside R**: breadcrumbs (a new surface for server text), configuration (changes ignored, never sent or restarted on), editor behaviour (LSP4IJ's typing aids, all off), inline completion and linked editing range (edits), inline value (no debugger), and workspace folders. The workspace-folder feature returns the confined folders initially, names no folder for an opened file and marks none notified, so LSP4IJ never sends `didChangeWorkspaceFolders`; the server's `workspaceFolders` capability is also stripped. The guard test now asserts that only `WorkspaceFolderNotificationManager` builds that notification | `everyLsp4ijFeatureIsClassified`, `lsp4ijSendsNoWorkspaceFolderChanges` (both failed on 0.30.1, as designed) |
+| E22 | D3, D3a item 1, I5 | **Run-time guard.** The JOUST server starts only when the installed LSP4IJ's `LSPClientFeatures.set…Feature` methods are exactly the classified ones. An older LSP4IJ (missing classes) or a newer one (an unreviewed feature, which would run with LSP4IJ's default) keeps the server off; `.jsc` keeps its TextMate highlighting, and the status bar and the JOUST actions name the installed version and the reason | IDE testing (LSP4IJ 0.7.0 crashed in `createClientFeatures`) |
+
+IntelliAda now builds against LSP4IJ 0.30.1 (since-build 242). The platform's own LSP4J precedes LSP4IJ's on the compile
+class path, so the JOUST sources are additionally compiled with LSP4J 1.0 first; they compile cleanly.
 
 ## Revision history
 
@@ -807,3 +824,4 @@ LSP4IJ upgrade (Q11).
 - **r22** (2026-11-19, after M2 review round 12): §12.1 E13 and E15 refined.
 - **r23** (2026-11-19, after M2 review round 14): §12.1 E13 refined.
 - **r24** (2026-11-19, after M2 review round 15): §11 L21 (cancellation by observed identity only); I20 and §12 E13 reworded accordingly.
+- **r25** (2026-11-20, from IDE testing of M1 and M2): §12.2 (the LSP4IJ 0.30.1 upgrade: E20–E22) and §11 L22; D3's I25 note updated for 0.30.1's workspace-folder notifications.
