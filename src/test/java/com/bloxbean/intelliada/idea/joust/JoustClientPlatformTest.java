@@ -299,6 +299,27 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
         assertNull(init.getCapabilities().getWorkspace().getWorkspaceEdit().getFailureHandling());
     }
 
+    /** I25 on LSP4IJ 0.30.1: the initial folders are the confined ones, and no file adds another (E21). */
+    public void testTheWorkspaceFolderFeatureAddsNoFolder() throws Exception {
+        LSPClientFeatures features = new JoustLanguageServerFactory().createClientFeatures();
+        var w = features.getWorkspaceFolderFeature();
+        assertEquals(com.bloxbean.intelliada.idea.joust.lsp.JoustProjectFolders.confined(getProject()), w.getInitialWorkspaceFolders(getProject()));
+        Path elsewhere = Files.createTempDirectory("joust-elsewhere");
+        Files.writeString(elsewhere.resolve("Other.jsc"), "jsc 1\n");
+        var vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByNioFile(elsewhere.resolve("Other.jsc"));
+        assertNotNull(vf);
+        assertNull(w.computeWorkspaceFolderToNotify(vf));
+        assertFalse(w.markFolderAsNotified(new WorkspaceFolder(elsewhere.toUri().toString(), "elsewhere")));
+        ServerCapabilities caps = new ServerCapabilities();
+        WorkspaceServerCapabilities wsCaps = new WorkspaceServerCapabilities();
+        WorkspaceFoldersOptions folders = new WorkspaceFoldersOptions();
+        folders.setSupported(true);
+        folders.setChangeNotifications(true);
+        wsCaps.setWorkspaceFolders(folders);
+        caps.setWorkspace(wsCaps);
+        assertNull(JoustClientFeatures.readOnly(caps).getWorkspace().getWorkspaceFolders());
+    }
+
     public void testFeatureObjectsFollowTheAllowList() throws Exception {
         LSPClientFeatures features = new JoustLanguageServerFactory().createClientFeatures();
         PsiFile file = myFixture.configureByText("Counter.jsc", "jsc 1\n");
@@ -344,6 +365,19 @@ public class JoustClientPlatformTest extends BasePlatformTestCase {
     }
 
     private static boolean isEnabled(Object feature, PsiFile file) throws Exception {
+        // The three LSP4IJ 0.30.1 features without isEnabled (ADR-004 §12.2 E21): "enabled" is whether they act at all.
+        if (feature instanceof com.redhat.devtools.lsp4ij.client.features.LSPConfigurationFeature c) {
+            return c.getOnConfigurationChanged() != com.redhat.devtools.lsp4ij.client.features.LSPConfigurationFeature.OnConfigurationChanged.IGNORE;
+        }
+        if (feature instanceof com.redhat.devtools.lsp4ij.client.features.EditorBehaviorFeature b) {
+            return b.isEnableStringLiteralImprovements(file) || b.isEnableStatementTerminatorImprovements(file)
+                    || b.isEnableEnterBetweenBracesFix(file) || b.isEnableTextMateNestedBracesImprovements(file)
+                    || b.isEnableSemanticTokensFileViewProvider(file);
+        }
+        if (feature instanceof com.redhat.devtools.lsp4ij.client.features.LSPWorkspaceFolderFeature w) {
+            return w.computeWorkspaceFolderToNotify(file.getVirtualFile()) != null
+                    || w.markFolderAsNotified(new WorkspaceFolder("file:///elsewhere", "elsewhere"));
+        }
         for (Method m : feature.getClass().getMethods()) {
             if (!m.getName().equals("isEnabled") || Modifier.isStatic(m.getModifiers())) continue;
             m.setAccessible(true);

@@ -32,8 +32,9 @@ public final class ReadOnlyFeatureSet {
     }
 
     /**
-     * Every {@code LSPClientFeatures.set…Feature} of LSP4IJ 0.10.0, with its treatment and LSP methods. A guard test fails
-     * on any setter not listed here, so a feature a future LSP4IJ adds is classified before it can be enabled.
+     * Every {@code LSPClientFeatures.set…Feature} of LSP4IJ 0.30.1, with its treatment and LSP methods. A guard test fails
+     * on any setter not listed here, so a feature a future LSP4IJ adds is classified before it can be enabled; at run time
+     * {@code JoustLsp4jCompat} keeps the server off when the installed LSP4IJ's setters differ from this list.
      */
     public enum Feature {
         DIAGNOSTIC("setDiagnosticFeature", Treatment.LSP4IJ, "textDocument/diagnostic"),
@@ -62,7 +63,22 @@ public final class ReadOnlyFeatureSet {
         INLAY_HINT("setInlayHintFeature", Treatment.DISABLED, "textDocument/inlayHint"),
         SIGNATURE_HELP("setSignatureHelpFeature", Treatment.DISABLED, "textDocument/signatureHelp"),
         CALL_HIERARCHY("setCallHierarchyFeature", Treatment.DISABLED, "textDocument/prepareCallHierarchy"),
-        TYPE_HIERARCHY("setTypeHierarchyFeature", Treatment.DISABLED, "textDocument/prepareTypeHierarchy");
+        TYPE_HIERARCHY("setTypeHierarchyFeature", Treatment.DISABLED, "textDocument/prepareTypeHierarchy"),
+        // New since LSP4IJ 0.10.0 (ADR-004 §12.2 E21), all off:
+        /** Breadcrumbs from document symbols: a new surface for server text, not needed read-only. */
+        BREADCRUMBS("setBreadcrumbsFeature", Treatment.DISABLED),
+        /** Settings pushed to the server: IntelliAda sends none, and a change is ignored rather than sent or restarted on. */
+        CONFIGURATION("setConfigurationFeature", Treatment.DISABLED, "workspace/didChangeConfiguration"),
+        /** LSP4IJ's client-side typing aids (quotes, terminators, braces): all off, as LSP4IJ's own defaults are. */
+        EDITOR_BEHAVIOR("setEditorBehaviorFeature", Treatment.DISABLED),
+        /** Inline (ghost-text) completion: an edit. */
+        INLINE_COMPLETION("setInlineCompletionFeature", Treatment.DISABLED, "textDocument/inlineCompletion"),
+        /** Debugger inline values: no JOUST debugger. */
+        INLINE_VALUE("setInlineValueFeature", Treatment.DISABLED, "textDocument/inlineValue"),
+        /** Linked editing (rename-as-you-type): an edit. */
+        LINKED_EDITING_RANGE("setLinkedEditingRangeFeature", Treatment.DISABLED, "textDocument/linkedEditingRange"),
+        /** Workspace folders added as files open: off, so the server only ever has I25's confined folders. */
+        WORKSPACE_FOLDER("setWorkspaceFolderFeature", Treatment.DISABLED, "workspace/didChangeWorkspaceFolders");
 
         public final String setter;
         public final Treatment treatment;

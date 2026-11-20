@@ -49,6 +49,12 @@ abstract class JoustCommandAction extends AnAction {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 JoustLanguageServerApi server = JoustServerAccess.server(project);
+                String unsupported = com.bloxbean.intelliada.idea.joust.lsp.JoustLsp4jCompat.problem();
+                if (server == null && unsupported != null) {
+                    com.bloxbean.intelliada.idea.joust.lsp.JoustNotifications.show(project, "JOUST language server unavailable",
+                            unsupported, com.intellij.notification.NotificationType.WARNING);
+                    return;
+                }
                 if (server == null) {
                     var n = com.bloxbean.intelliada.idea.joust.lsp.JoustNotifications.create("JOUST language server unavailable",
                             "The .jsc language server is not configured or did not start.",

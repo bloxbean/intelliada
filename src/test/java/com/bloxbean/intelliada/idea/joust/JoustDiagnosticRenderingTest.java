@@ -47,6 +47,25 @@ public class JoustDiagnosticRenderingTest {
         assertEquals("List<T> is bad <img src=http://127.0.0.1:9/x>", JoustDiagnosticText.message(hostile()));
     }
 
+    /**
+     * ADR-004 §12.2 E20: LSP4J 1.0 (LSP4IJ 0.30.1) types the message as {@code Either<String, MarkupContent>}. Markup is
+     * shown as its literal source, escaped in the tooltip. The setter is found by name so this compiles against either LSP4J.
+     */
+    @Test
+    public void aMarkupMessageIsShownAsItsLiteralSource() throws Exception {
+        Diagnostic d = hostile();
+        java.lang.reflect.Method setMarkup;
+        try {
+            setMarkup = Diagnostic.class.getMethod("setMessage", MarkupContent.class);
+        } catch (NoSuchMethodException e) {
+            return;   // an LSP4J before 1.0: messages are strings, covered above
+        }
+        setMarkup.invoke(d, new MarkupContent(MarkupKind.MARKDOWN, "**List<T>** [x](http://127.0.0.1:9/m)"));
+        assertEquals("**List<T>** [x](http://127.0.0.1:9/m)", JoustDiagnosticText.message(d));
+        String html = JoustDiagnosticText.tooltipHtml(d, JoustDiagnosticText::describe);
+        assertTrue(html, html.contains("**List&lt;T&gt;** [x](http://127.0.0.1:9/m)"));
+    }
+
     @Test
     public void documentationUrlIsOursAndOnlyForJscCodes() {
         Diagnostic d = hostile();

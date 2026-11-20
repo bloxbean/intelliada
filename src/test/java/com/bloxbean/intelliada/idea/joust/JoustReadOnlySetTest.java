@@ -31,27 +31,31 @@ public class JoustReadOnlySetTest {
     }
 
     /**
-     * I25's third path: LSP4IJ 0.10.0 never sends {@code workspace/didChangeWorkspaceFolders}, so IntelliAda has no hook
-     * to filter. This fails when an LSP4IJ upgrade starts sending it, so the filter is added before the upgrade (SEC-16b).
+     * I25's third path. LSP4IJ 0.30.1 sends {@code workspace/didChangeWorkspaceFolders} from one place: the wrapper asks
+     * {@code WorkspaceFolderNotificationManager}, which asks the client's {@code LSPWorkspaceFolderFeature} for a folder and
+     * then whether to mark it notified; IntelliAda's feature answers no to both (JoustClientPlatformTest). This fails when
+     * another LSP4IJ class starts building the notification, so that path is reviewed before an upgrade (SEC-16b).
      */
     @Test
-    public void lsp4ijSendsNoWorkspaceFolderChanges() throws Exception {
+    public void onlyTheFolderManagerBuildsWorkspaceFolderChanges() throws Exception {
         String self = LSPClientFeatures.class.getResource("LSPClientFeatures.class").toString();
         assertTrue(self, self.startsWith("jar:"));
         java.net.URL jar = new java.net.URL(self.substring(4, self.indexOf("!/")));
         int scanned = 0;
+        Set<String> builders = new TreeSet<>();
         try (java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(jar.openStream())) {
             for (java.util.zip.ZipEntry e; (e = z.getNextEntry()) != null; ) {
                 if (!e.getName().startsWith("com/redhat/devtools/lsp4ij/") || !e.getName().endsWith(".class")) continue;
                 scanned++;
                 String text = new String(z.readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1);
-                // 0.10.0 names the method only to handle (and ignore) a dynamic registration, which IntelliAda refuses
-                // anyway; it never builds the notification's parameters.
-                assertFalse(e.getName() + " sends didChangeWorkspaceFolders: filter it (I25) before upgrading",
-                        text.contains("DidChangeWorkspaceFoldersParams") || text.contains("WorkspaceFoldersChangeEvent"));
+                if (text.contains("DidChangeWorkspaceFoldersParams") || text.contains("WorkspaceFoldersChangeEvent")) {
+                    builders.add(e.getName());
+                }
             }
         }
         assertTrue("scanned LSP4IJ's classes", scanned > 100);
+        assertEquals("classes that build didChangeWorkspaceFolders: review each before upgrading (I25)",
+                Set.of("com/redhat/devtools/lsp4ij/client/WorkspaceFolderNotificationManager.class"), builders);
     }
 
     @Test

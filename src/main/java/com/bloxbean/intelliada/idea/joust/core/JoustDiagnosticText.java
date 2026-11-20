@@ -26,7 +26,7 @@ public final class JoustDiagnosticText {
     }
 
     public static String message(Diagnostic d) {
-        return PlainText.clean(d == null ? "" : d.getMessage(), MESSAGE_CAP);
+        return PlainText.clean(d == null ? "" : messageOf(d), MESSAGE_CAP);
     }
 
     /**
@@ -35,7 +35,7 @@ public final class JoustDiagnosticText {
      */
     public static String tooltipHtml(Diagnostic d, Function<Location, String> describeLocation) {
         StringBuilder sb = new StringBuilder("<html>");
-        sb.append(PlainText.fragment(d.getMessage(), MESSAGE_CAP));
+        sb.append(PlainText.fragment(messageOf(d), MESSAGE_CAP));
         StringBuilder meta = new StringBuilder();
         if (d.getSource() != null && !d.getSource().isEmpty()) meta.append(d.getSource());
         if (d.getCode() != null) {
@@ -63,6 +63,34 @@ public final class JoustDiagnosticText {
             }
         }
         return sb.append("</html>").toString();
+    }
+
+    /**
+     * The diagnostic's message as text, whichever LSP4J LSP4IJ brings (ADR-004 §12.2 E20): LSP4J 0.2x returns a
+     * {@code String}; LSP4J 1.0 (LSP 3.18) returns {@code Either<String, MarkupContent>}, whose markup is shown as its
+     * literal source, never rendered. The accessor is looked up by name because the two return types are not
+     * link-compatible: code compiled against one fails on the other with {@code NoSuchMethodError}.
+     */
+    public static String messageOf(Diagnostic d) {
+        Object m;
+        try {
+            m = MESSAGE.invoke(d);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return "";
+        }
+        if (m instanceof org.eclipse.lsp4j.jsonrpc.messages.Either<?, ?> e) m = e.isLeft() ? e.getLeft() : e.getRight();
+        if (m instanceof org.eclipse.lsp4j.MarkupContent mc) m = mc.getValue();
+        return m instanceof String s ? s : "";
+    }
+
+    private static final java.lang.reflect.Method MESSAGE;
+
+    static {
+        try {
+            MESSAGE = Diagnostic.class.getMethod("getMessage");
+        } catch (NoSuchMethodException e) {
+            throw new ExceptionInInitializerError(e);
+        }
     }
 
     /** A location as text: the URI and a one-based line and column. */
