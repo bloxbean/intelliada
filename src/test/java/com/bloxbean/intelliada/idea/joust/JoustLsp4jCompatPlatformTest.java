@@ -46,13 +46,25 @@ public class JoustLsp4jCompatPlatformTest extends BasePlatformTestCase {
         });
         JoustStreamConnectionProvider.setLaunchRecorderForTests(launches::add);
         com.bloxbean.intelliada.idea.joust.editor.JoustEditorListener.resetForTests(getProject());
+        // The tools look configured, so the guard alone keeps the server off (UP-DES-9); restored in tearDown.
+        var state = com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.getInstance();
+        saved = com.intellij.util.xmlb.XmlSerializerUtil.createCopy(state.getState());
+        var d = new com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.Data();
+        d.nodePath = "/opt/test/node";
+        d.joustLspPath = "/opt/test/joust-lsp.js";
+        state.loadState(d);
+        state.setValidatedNode(new com.bloxbean.intelliada.idea.joust.core.NodeIdentity("/opt/test/node", 1, 1, "00"), "22.0.0");
+        assertTrue(state.looksConfigured());
     }
+
+    private com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.Data saved;
 
     @Override
     protected void tearDown() throws Exception {
         try {
             JoustLsp4jCompat.setResultForTests(null);
             JoustStreamConnectionProvider.setLaunchRecorderForTests(null);
+            if (saved != null) com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.getInstance().loadState(saved);
         } finally {
             super.tearDown();
         }
@@ -62,8 +74,10 @@ public class JoustLsp4jCompatPlatformTest extends BasePlatformTestCase {
         JoustLsp4jCompat.setResultForTests(new JoustLsp4jCompat.Result(WHY, "9.9.9"));
     }
 
+    /** The control (UP-DES-9): with the tools configured and the supported LSP4IJ, the server is enabled. */
     public void testTheSupportedLsp4ijGetsJoustsFeatures() {
         assertNull(JoustLsp4jCompat.problem());
+        assertTrue(new JoustLanguageServerFactory().isEnabled(getProject()));
         assertTrue(new JoustLanguageServerFactory().createClientFeatures() instanceof JoustClientFeatures);
     }
 
@@ -86,7 +100,30 @@ public class JoustLsp4jCompatPlatformTest extends BasePlatformTestCase {
         assertTrue(notifications.stream().anyMatch(n -> n.getContent().contains("LSP4IJ 9.9.9 is not supported")));
     }
 
+    /**
+     * JoustServerAccess.server asks LSP4IJ for nothing on an unsupported LSP4IJ. LSP4IJ would not start a disabled server
+     * anyway, so the early return is defence in depth; its position is checked in the bytecode: the guard is consulted
+     * before LanguageServerManager (UP-DES-9).
+     */
     public void testAskingForTheServerStartsNothing() throws Exception {
+        java.util.List<String> calls = new java.util.ArrayList<>();
+        try (var in = JoustServerAccess.class.getResourceAsStream("JoustServerAccess.class")) {
+            new org.jetbrains.org.objectweb.asm.ClassReader(in.readAllBytes()).accept(new org.jetbrains.org.objectweb.asm.ClassVisitor(
+                    org.jetbrains.org.objectweb.asm.Opcodes.ASM9) {
+                @Override
+                public org.jetbrains.org.objectweb.asm.MethodVisitor visitMethod(int a, String name, String d, String s, String[] e) {
+                    if (!name.equals("server")) return null;
+                    return new org.jetbrains.org.objectweb.asm.MethodVisitor(org.jetbrains.org.objectweb.asm.Opcodes.ASM9) {
+                        @Override
+                        public void visitMethodInsn(int op, String owner, String n, String desc, boolean itf) {
+                            calls.add(owner.substring(owner.lastIndexOf('/') + 1) + "." + n);
+                        }
+                    };
+                }
+            }, 0);
+        }
+        int guard = calls.indexOf("JoustLsp4jCompat.problem"), lsp = calls.indexOf("LanguageServerManager.getInstance");
+        assertTrue(calls.toString(), guard >= 0 && lsp > guard);
         unsupported();
         myFixture.configureByText("Counter.jsc", "jsc 1\n");
         Object server = ApplicationManager.getApplication().executeOnPooledThread(() -> JoustServerAccess.server(getProject()))

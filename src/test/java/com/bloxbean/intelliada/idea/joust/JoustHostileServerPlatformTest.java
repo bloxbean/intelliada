@@ -170,11 +170,17 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         }
         configure(node, lspJs.toString());
         // A setting a user stored for this server in LSP4IJ's own settings: it must never reach the server (UP-CDX-6).
+        // The whole of LSP4IJ's global settings is copied first and restored after (UP-CDX-12): updateSettings mutates entries.
+        var global = com.redhat.devtools.lsp4ij.settings.GlobalLanguageServerSettings.getInstance();
+        org.jdom.Element settingsBefore = com.intellij.util.xmlb.XmlSerializer.serialize(global.getState());
+        Disposer.register(getTestRootDisposable(), () -> {
+            var copy = global.getState().getClass();
+            global.loadState(settingsBefore == null ? com.intellij.util.ReflectionUtil.newInstance(copy)
+                    : com.intellij.util.xmlb.XmlSerializer.deserialize(settingsBefore, copy));
+        });
         var stored = new com.redhat.devtools.lsp4ij.settings.LanguageServerSettings.LanguageServerDefinitionSettings();
         stored.setConfigurationContent("{\"joust\":{\"token\":\"STORED-SECRET\"}}");
-        com.redhat.devtools.lsp4ij.settings.GlobalLanguageServerSettings.getInstance().updateSettings(JoustConstants.SERVER_ID, stored);
-        Disposer.register(getTestRootDisposable(), () -> com.redhat.devtools.lsp4ij.settings.GlobalLanguageServerSettings.getInstance()
-                .updateSettings(JoustConstants.SERVER_ID, new com.redhat.devtools.lsp4ij.settings.LanguageServerSettings.LanguageServerDefinitionSettings()));
+        global.updateSettings(JoustConstants.SERVER_ID, stored);
         List<String> lookups = new CopyOnWriteArrayList<>();
         com.bloxbean.intelliada.idea.joust.lsp.JoustClientFeatures.setUriLookupRecorderForTests(lookups::add);
         Set<Long> before = descendants();

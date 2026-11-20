@@ -14,9 +14,16 @@ import java.util.concurrent.TimeUnit;
 /** ADR-004 §12.2 E24, E25: JoustLanguageClient's answers to LSP4IJ 0.30.1's server-to-client requests. */
 public class JoustClientHandlersPlatformTest extends BasePlatformTestCase {
 
+    /** A standalone client, disposed with the test so its settings listeners go too (UP-CDX-11). */
+    private JoustLanguageClient newClient() {
+        JoustLanguageClient c = new JoustLanguageClient(getProject());
+        com.intellij.openapi.util.Disposer.register(getTestRootDisposable(), c::dispose);
+        return c;
+    }
+
     /** UP-CDX-6: one null per requested item, at any count. */
     public void testConfigurationAnswersOneNullPerItem() throws Exception {
-        JoustLanguageClient client = new JoustLanguageClient(getProject());
+        JoustLanguageClient client = newClient();
         for (int n : new int[]{0, 1, 2, 1_000, 1_001, 5_000}) {
             List<ConfigurationItem> items = new ArrayList<>();
             for (int i = 0; i < n; i++) {
@@ -36,9 +43,15 @@ public class JoustClientHandlersPlatformTest extends BasePlatformTestCase {
      * method nor that provider, so a change that delegates to {@code super} fails here.
      */
     public void testAnInlineValueRefreshNeverReachesTheDebugger() throws Exception {
-        JoustLanguageClient client = new JoustLanguageClient(getProject());
+        JoustLanguageClient client = newClient();
         assertNull(client.refreshInlineValues().get(10, TimeUnit.SECONDS));
         assertNull(client.refreshDiagnostics().get(10, TimeUnit.SECONDS));
+        // UP-CDX-7: each guarded handler is JOUST's own, with LSP4IJ's signature, before its calls are read.
+        assertEquals(JoustLanguageClient.class, JoustLanguageClient.class.getMethod("refreshInlineValues").getDeclaringClass());
+        assertEquals(JoustLanguageClient.class, JoustLanguageClient.class.getMethod("refreshDiagnostics").getDeclaringClass());
+        assertEquals(JoustLanguageClient.class, JoustLanguageClient.class.getMethod("configuration", ConfigurationParams.class).getDeclaringClass());
+        assertEquals(JoustLanguageClient.class, JoustLanguageClient.class.getMethod("notifyProgress", org.eclipse.lsp4j.ProgressParams.class).getDeclaringClass());
+        assertEquals(JoustLanguageClient.class, JoustLanguageClient.class.getMethod("createProgress", WorkDoneProgressCreateParams.class).getDeclaringClass());
         for (String method : new String[]{"refreshInlineValues", "refreshDiagnostics", "configuration"}) {
             List<String> calls = callsIn(JoustLanguageClient.class, method);
             assertFalse(method + " calls " + calls, calls.stream().anyMatch(c -> c.startsWith("com/redhat/devtools/lsp4ij/")));
@@ -68,9 +81,32 @@ public class JoustClientHandlersPlatformTest extends BasePlatformTestCase {
         return calls;
     }
 
-    /** UP-CDX-10: in a headless application the progress token is answered without registering one. */
-    public void testAProgressTokenIsAnsweredWithoutRegistration() throws Exception {
-        JoustLanguageClient client = new JoustLanguageClient(getProject());
-        assertNull(client.createProgress(new WorkDoneProgressCreateParams(Either.forLeft("t"))).get(10, TimeUnit.SECONDS));
+    /**
+     * UP-CDX-10: in a headless application a progress token and a begin notification register nothing with LSP4IJ's
+     * progress manager, and a request after them is answered. With LSP4IJ's own handling the token would be registered
+     * and the begin would run its progress task on this thread until the next message, so the pooled call would time out.
+     */
+    public void testHeadlessProgressRegistersNothingAndNeverStalls() throws Exception {
+        assertTrue(com.intellij.openapi.application.ApplicationManager.getApplication().isHeadlessEnvironment());
+        JoustLanguageClient client = newClient();
+        var done = com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            assertNull(client.createProgress(new WorkDoneProgressCreateParams(Either.forLeft("t"))).get(10, TimeUnit.SECONDS));
+            org.eclipse.lsp4j.WorkDoneProgressBegin begin = new org.eclipse.lsp4j.WorkDoneProgressBegin();
+            begin.setTitle("indexing");
+            client.notifyProgress(new org.eclipse.lsp4j.ProgressParams(Either.forLeft("t"), Either.forLeft(begin)));
+            return client.configuration(new ConfigurationParams(List.of(new ConfigurationItem()))).get(10, TimeUnit.SECONDS);
+        });
+        assertEquals(1, done.get(30, TimeUnit.SECONDS).size());
+        assertTrue("no token reached LSP4IJ's progress manager", progressMap(client).isEmpty());
+    }
+
+    /** LSP4IJ's private progress registry, read for the test. */
+    private static java.util.Map<?, ?> progressMap(JoustLanguageClient client) throws Exception {
+        var pm = com.redhat.devtools.lsp4ij.client.LanguageClientImpl.class.getDeclaredField("progressManager");
+        pm.setAccessible(true);
+        Object manager = pm.get(client);
+        var map = manager.getClass().getDeclaredField("progressMap");
+        map.setAccessible(true);
+        return (java.util.Map<?, ?>) map.get(manager);
     }
 }
