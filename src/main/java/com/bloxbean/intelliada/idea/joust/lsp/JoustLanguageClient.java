@@ -81,6 +81,56 @@ public class JoustLanguageClient extends LanguageClientImpl {
         super.publishDiagnostics(params);
     }
 
+    /**
+     * ADR-004 §12.2 E24 (UP-CDX-6): IntelliAda sends the JOUST server no settings. LSP4IJ's own handler would answer from
+     * the configuration a user may have stored for this server in LSP4IJ's settings; every item is answered null.
+     */
+    @Override
+    public CompletableFuture<List<Object>> configuration(org.eclipse.lsp4j.ConfigurationParams params) {
+        int n = params == null || params.getItems() == null ? 0 : params.getItems().size();
+        return CompletableFuture.completedFuture(java.util.Collections.nCopies(n, null));   // one per item (UP-CDX-6)
+    }
+
+    /**
+     * E24 (UP-CDX-7): inline values are outside R. LSP4IJ 0.30.1's handler rebuilds the views of every suspended debug
+     * session in the project, whoever's it is; for the JOUST server a refresh does nothing.
+     */
+    @Override
+    public CompletableFuture<Void> refreshInlineValues() {
+        return CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * ADR-004 §12.2 E25 (UP-SEC-6, UP-CDX-10): in a headless application (tests, and headless runs such as command-line
+     * inspection), server progress is not handed to LSP4IJ. LSP4IJ 0.30.1 runs a progress task through
+     * {@code ProgressManager.run}, and {@code Task.isHeadless()} makes that synchronous on the single message-listener
+     * thread; the task then waits for the next progress message, which that thread can no longer read, and the
+     * connection stops. With a UI the task runs in the background. The token request is answered without registering a
+     * token, so none accumulate. Progress text is tested through {@code JoustClientFeatures.SafeProgressFeature}.
+     */
+    static boolean progressStallsListener() {
+        var app = ApplicationManager.getApplication();
+        return app.isUnitTestMode() || app.isHeadlessEnvironment();
+    }
+
+    @Override
+    public void notifyProgress(org.eclipse.lsp4j.ProgressParams params) {
+        if (progressStallsListener()) return;
+        super.notifyProgress(params);
+    }
+
+    @Override
+    public CompletableFuture<Void> createProgress(org.eclipse.lsp4j.WorkDoneProgressCreateParams params) {
+        if (progressStallsListener()) return CompletableFuture.completedFuture(null);
+        return super.createProgress(params);
+    }
+
+    /** E24: pull diagnostics are outside R (the server's {@code diagnosticProvider} is dropped), so a refresh does nothing. */
+    @Override
+    public CompletableFuture<Void> refreshDiagnostics() {
+        return CompletableFuture.completedFuture(null);
+    }
+
     @Override
     public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
         ApplyWorkspaceEditResponse r = new ApplyWorkspaceEditResponse(false);

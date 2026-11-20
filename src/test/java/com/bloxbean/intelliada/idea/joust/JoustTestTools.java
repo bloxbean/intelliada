@@ -51,4 +51,18 @@ public final class JoustTestTools {
     public static boolean windows() {
         return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
+
+    /**
+     * Runs the highlighting passes on the file's selected editor, as the daemon would in the IDE. LSP4IJ 0.30.1 connects
+     * a document (and starts its server) when a feature first asks for it, and a headless test has no running daemon.
+     */
+    static void highlight(com.intellij.openapi.project.Project project, com.intellij.openapi.vfs.VirtualFile vf) {
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeAndWait(() -> {
+            var editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).getSelectedTextEditor();
+            var psi = com.intellij.psi.PsiManager.getInstance(project).findFile(vf);
+            if (editor != null && psi != null) {
+                com.intellij.testFramework.fixtures.impl.CodeInsightTestFixtureImpl.instantiateAndRun(psi, editor, new int[0], false);
+            }
+        });
+    }
 }

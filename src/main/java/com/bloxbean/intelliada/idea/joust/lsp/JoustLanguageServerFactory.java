@@ -34,7 +34,9 @@ public final class JoustLanguageServerFactory implements LanguageServerFactory, 
 
     @Override
     public @NotNull LSPClientFeatures createClientFeatures() {
-        return new JoustClientFeatures();
+        // On an LSP4IJ whose features IntelliAda has not classified, JoustClientFeatures may not even link; the server is
+        // then disabled (isEnabled), so LSP4IJ's defaults here never meet a running server (ADR-004 §12.2 E22).
+        return JoustLsp4jCompat.problem() == null ? new JoustClientFeatures() : new LSPClientFeatures();
     }
 
     @Override
@@ -44,7 +46,8 @@ public final class JoustLanguageServerFactory implements LanguageServerFactory, 
 
     @Override
     public boolean isEnabled(@NotNull Project project) {
-        return !Boolean.TRUE.equals(project.getUserData(USER_DISABLED)) && JoustToolsState.getInstance().looksConfigured();
+        return !Boolean.TRUE.equals(project.getUserData(USER_DISABLED)) && JoustToolsState.getInstance().looksConfigured()
+                && JoustLsp4jCompat.problem() == null;
     }
 
     @Override

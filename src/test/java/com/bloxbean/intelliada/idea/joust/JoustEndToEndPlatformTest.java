@@ -77,6 +77,7 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
                     assertEquals("the loaded project's effective trust", trusted, com.intellij.ide.trustedProjects.TrustedProjects.isProjectTrusted(p));
                     VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(dir.resolve("contracts/app/Counter.jsc"));
                     ApplicationManager.getApplication().invokeAndWait(() -> FileEditorManager.getInstance(p).openFile(vf, true));
+                    JoustTestTools.highlight(p, vf);
                     PlatformTestUtil.waitWithEventsDispatching("started", () -> JoustServerControl.status(p) == ServerStatus.started, 60);
                     com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, LocalFileSystem.getInstance().refreshAndFindFileByNioFile(dir));
                     com.intellij.testFramework.IndexingTestUtil.waitUntilIndexesAreReady(p);
@@ -147,6 +148,7 @@ public class JoustEndToEndPlatformTest extends BasePlatformTestCase {
         VirtualFile vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(jsc);
         assertNotNull(vf);
         ApplicationManager.getApplication().invokeAndWait(() -> FileEditorManager.getInstance(getProject()).openFile(vf, true));
+        JoustTestTools.highlight(getProject(), vf);
         PlatformTestUtil.waitWithEventsDispatching("the JOUST server starts", () -> JoustServerControl.status(getProject()) == ServerStatus.started, 60);
         assertEquals("one launch: " + launches, 1, launches.size());
         java.util.Set<Long> started = descendants();

@@ -66,6 +66,8 @@ public final class JoustStatusBarWidgetFactory implements StatusBarWidgetFactory
         public @NotNull String getText() {
             VirtualFile f = getSelectedFile();
             if (f == null || !JoustConstants.isJscName(f.getName())) return "";
+            // E22 (UP-DES-6): the same order everywhere: an unsupported LSP4IJ first, then the configuration.
+            if (JoustLsp4jCompat.problem() != null) return "JOUST: LSP4IJ " + JoustLsp4jCompat.result().version() + " unsupported";
             if (!JoustToolsState.getInstance().looksConfigured()) return "JOUST: not configured";
             if (JoustServerControl.status(project()) != com.redhat.devtools.lsp4ij.ServerStatus.started) return "JOUST: not running";
             String uri = com.redhat.devtools.lsp4ij.LSPIJUtils.toUriAsString(f);
@@ -83,6 +85,8 @@ public final class JoustStatusBarWidgetFactory implements StatusBarWidgetFactory
 
         @Override
         public @Nullable String getTooltipText() {
+            String problem = JoustLsp4jCompat.problem();
+            if (problem != null) return com.bloxbean.intelliada.idea.joust.core.PlainText.literal(problem, 600);
             return "The .jsc language server runs in advisory mode: its own bundled compiler, no project code (ADR-004 D5)";
         }
 

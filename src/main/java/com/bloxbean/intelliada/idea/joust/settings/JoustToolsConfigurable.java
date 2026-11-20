@@ -208,7 +208,10 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         } else {
             cliStatus.setText(PlainText.html("Not configured: the JOUST new-project wizard needs it."));
         }
-        if (JoustToolsState.getInstance().looksConfigured()) {
+        String unsupported = com.bloxbean.intelliada.idea.joust.lsp.JoustLsp4jCompat.problem();
+        if (unsupported != null) {
+            status.setText(PlainText.html(unsupported));   // E22 (UP-DES-6): the tools may be valid, but nothing will start
+        } else if (JoustToolsState.getInstance().looksConfigured()) {
             status.setText(PlainText.html("Validated: Node " + nz(d.nodeVersion) + " at " + nz(d.nodeRealPath)
                     + "; @julclang/joust " + nz(d.joustVersion) + ". Mode: advisory (the server's bundled compiler)."));
         } else {

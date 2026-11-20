@@ -52,15 +52,20 @@ function onMessage(m) {
   log({ event: 'received', method: m.method, params: m.method === 'textDocument/didOpen' ? { uri: m.params.textDocument.uri } : m.params });
   switch (m.method) {
     case 'initialize':
-      send({ id: m.id, result: { serverInfo: { name: 'hostile-fake', version: '<b>1</b>' }, capabilities: {
-        textDocumentSync: 1, hoverProvider: true, foldingRangeProvider: true, selectionRangeProvider: true, documentHighlightProvider: true, definitionProvider: true, referencesProvider: true, documentSymbolProvider: true,
+      send({ id: m.id, result: { serverInfo: { name: '<html><b>hostile-fake</b>', version: '<b>1</b>' }, capabilities: {
+        // Full sync as before, but as options asking for willSaveWaitUntil, whose edits LSP4IJ 0.30.1 applies (UP-CDX-1).
+        textDocumentSync: { openClose: true, change: 1, willSaveWaitUntil: true, save: { includeText: false } }, hoverProvider: true, foldingRangeProvider: true, selectionRangeProvider: true, documentHighlightProvider: true, definitionProvider: true, referencesProvider: true, documentSymbolProvider: true,
         semanticTokensProvider: { legend: { tokenTypes: ['namespace', 'type', 'enum', 'enumMember', 'property', 'parameter', 'variable',
           'function', 'method', 'class', 'keyword'], tokenModifiers: ['declaration', 'readonly', 'defaultLibrary', 'timeValue'] }, full: true },
         // Everything below is refused or stripped by IntelliAda.
         completionProvider: { triggerCharacters: ['.'] }, renameProvider: true, documentFormattingProvider: true,
         documentRangeFormattingProvider: true, codeActionProvider: true, executeCommandProvider: { commands: ['evil'] },
         codeLensProvider: {}, documentLinkProvider: {},
-        workspace: { fileOperations: { willRename: { filters: [{ pattern: { glob: '**/*' } }] } } },
+        // LSP4IJ 0.30.1 paths (ADR-004 §12.2): pull diagnostics, virtual documents, folder changes, inline and linked edits.
+        diagnosticProvider: { interFileDependencies: true, workspaceDiagnostics: true },
+        inlineValueProvider: true, inlineCompletionProvider: {}, linkedEditingRangeProvider: true,
+        workspace: { fileOperations: { willRename: { filters: [{ pattern: { glob: '**/*' } }] } },
+          workspaceFolders: { supported: true, changeNotifications: true }, textDocumentContent: { schemes: ['joust-lib'] } },
       } } });
       break;
     case 'initialized':
@@ -71,6 +76,13 @@ function onMessage(m) {
       request('window/showDocument', { uri: targets.outside }, 'showDocument-outside');
       request('window/showDocument', { uri: targets.symlink }, 'showDocument-symlink');
       request('workspace/workspaceFolders', null, 'workspaceFolders');
+      request('workspace/configuration', { items: [{ section: '' }, { section: 'joust' }] }, 'configuration');
+      request('workspace/inlineValue/refresh', null, 'inlineValue-refresh');
+      request('workspace/diagnostic/refresh', null, 'diagnostic-refresh');
+      request('client/registerCapability', { registrations: [{ id: 'd', method: 'textDocument/diagnostic',
+        registerOptions: { interFileDependencies: true, workspaceDiagnostics: true } }] }, 'register-diagnostic');
+      request('client/registerCapability', { registrations: [{ id: 'c', method: 'workspace/textDocumentContent',
+        registerOptions: { schemes: ['joust-lib'] } }] }, 'register-textDocumentContent');
       notify('window/showMessage', { type: 1, message: 'boom ' + img('message') + ' <a href="file:///etc/passwd">open</a>' });
       request('window/workDoneProgress/create', { token: 'p1' }, 'progress-create');
       notify('$/progress', { token: 'p1', value: { kind: 'begin', title: '\u001b[31m<html><b>T</b>' + 'x'.repeat(5000), message: '<html>' + img('progress') } });
@@ -104,6 +116,13 @@ function onMessage(m) {
       send({ id: m.id, result: hostileLocations() });
       break;
     case 'textDocument/documentSymbol':
+      // Flat symbols for Flat.jsc, one located in a server-named virtual document (UP-CDX-5).
+      if (m.params.textDocument.uri.endsWith('/Flat.jsc')) {
+        send({ id: m.id, result: [
+          { name: 'FlatLocal', kind: 12, location: { uri: m.params.textDocument.uri, range: range(0, 0, 0, 3) } },
+          { name: 'FlatVirtual', kind: 12, location: { uri: 'joust-lib:/std/List.jsc', range: range(0, 0, 0, 1) } }] });
+        break;
+      }
       send({ id: m.id, result: [{ name: '\u001b[31m<html>Counter' + 'x'.repeat(5000), detail: '<b>d</b>' + img('symbol'), kind: 5,
         range: range(0, 0, 1, 0), selectionRange: range(0, 0, 0, 3) }] });
       break;
@@ -119,6 +138,17 @@ function onMessage(m) {
     case 'textDocument/selectionRange':
     case 'textDocument/documentHighlight':
       send({ id: m.id, error: { code: -32603, message: 'fold ' + img('error') + ' <a href="file:///etc/passwd">x</a>' + 'y'.repeat(5000), data: img('data') } });
+      break;
+    case 'textDocument/willSaveWaitUntil':
+      send({ id: m.id, result: [{ range: range(0, 0, 0, 0), newText: 'EVIL-SAVE ' }] });
+      break;
+    case 'textDocument/diagnostic':
+      send({ id: m.id, result: { kind: 'full', items: [], relatedDocuments: {
+        [targets.unopened]: { kind: 'full', items: [{ range: range(0, 0, 0, 1), message: 'RELATED' }] },
+        'file:////evil-server/share/r.jsc': { kind: 'full', items: [] } } } });
+      break;
+    case 'workspace/textDocumentContent':
+      send({ id: m.id, result: { text: 'VIRTUAL' } });
       break;
     case 'textDocument/semanticTokens/full':
       send({ id: m.id, result: { data: [0, 0, 3, 4, 0] } });

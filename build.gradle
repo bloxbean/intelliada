@@ -42,7 +42,9 @@ dependencies {
         bundledPlugin("org.jetbrains.plugins.textmate")
         // JOUST M2 (ADR-004 D9): the wizard links its Gradle build; an optional dependency (intelliada-gradle.xml)
         bundledPlugin("com.intellij.gradle")
-        plugin("com.redhat.devtools.lsp4ij:0.10.0")
+        // ADR-004 §12.2 (L22): built against LSP4IJ 0.30.1, the Marketplace release; JoustLsp4jCompat refuses any other
+        // feature set at run time, so the JOUST server stays off rather than run unclassified features
+        plugin("com.redhat.devtools.lsp4ij:0.30.1")
         // ADR-004 G1.3: the IntelliJ Platform test framework (BasePlatformTestCase)
         testFramework(TestFrameworkType.Platform.INSTANCE)
     }

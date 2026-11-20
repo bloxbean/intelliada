@@ -63,6 +63,8 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
 
     /** The only text IntelliAda hands to LSP4IJ when a start is refused. */
     static final String SAFE_FAILURE = "The JOUST tools are not valid. See the JOUST notification, or Settings | Tools | JOUST.";
+    /** The fixed text LSP4IJ shows when the installed LSP4IJ is not one IntelliAda supports (E22). */
+    static final String UNSUPPORTED_FAILURE = "This LSP4IJ version is not supported for JOUST. See the JOUST notification.";
 
     private final Project project;
 
@@ -77,6 +79,13 @@ public final class JoustStreamConnectionProvider extends ProcessStreamConnection
 
     @Override
     public void start() throws CannotStartProcessException {
+        // ADR-004 §12.2 E22 (UP-CDX-2): the refusal holds at the process boundary. LSP4IJ's restart and forced-start
+        // paths call start() without asking the factory whether the server is enabled.
+        String unsupported = JoustLsp4jCompat.problem();
+        if (unsupported != null) {
+            JoustNotifications.show(project, "JOUST language server not started", unsupported, NotificationType.WARNING);
+            throw new CannotStartProcessException(UNSUPPORTED_FAILURE);
+        }
         JoustLaunchPlanner.Plan plan = JoustLaunchPlanner.plan(JoustToolsState.getInstance().settings(),
                 JoustForbiddenRoots.ofOpenProjects(), storageDir(), JoustPaths.Flavor.current());
         if (!plan.ok()) {

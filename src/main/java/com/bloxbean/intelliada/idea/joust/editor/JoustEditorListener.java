@@ -19,11 +19,27 @@ import org.jetbrains.annotations.NotNull;
 public final class JoustEditorListener implements FileEditorManagerListener {
 
     private static final Key<Boolean> SHOWN = Key.create("intelliada.joust.configureShown");
+    private static final Key<Boolean> UNSUPPORTED_SHOWN = Key.create("intelliada.joust.unsupportedShown");
+
+    /** For tests, which share one project: forget that the notifications were shown. */
+    public static void resetForTests(Project project) {
+        project.putUserData(SHOWN, null);
+        project.putUserData(UNSUPPORTED_SHOWN, null);
+    }
 
     @Override
     public void fileOpened(@NotNull FileEditorManager source, @NotNull VirtualFile file) {
         if (!JoustServerAccess.isJsc(file)) return;
         Project project = source.getProject();
+        // ADR-004 §12.2 E22 (UP-DES-6): an unsupported LSP4IJ is said first, once per project session; it outranks the
+        // configuration, which cannot help.
+        String unsupported = com.bloxbean.intelliada.idea.joust.lsp.JoustLsp4jCompat.problem();
+        if (unsupported != null) {
+            if (Boolean.TRUE.equals(project.getUserData(UNSUPPORTED_SHOWN))) return;
+            project.putUserData(UNSUPPORTED_SHOWN, Boolean.TRUE);
+            JoustNotifications.show(project, "JOUST language server unavailable", unsupported, NotificationType.WARNING);
+            return;
+        }
         if (JoustToolsState.getInstance().looksConfigured() || Boolean.TRUE.equals(project.getUserData(SHOWN))) return;
         project.putUserData(SHOWN, Boolean.TRUE);
         var n = JoustNotifications.create("JOUST language server is not configured",

@@ -138,6 +138,65 @@ public class JoustClientFeatures extends LSPClientFeatures {
                 @Override public boolean isEnabled(PsiFile file) { return false; }
                 @Override public boolean isSupported(PsiFile file) { return false; }
             });
+            case BREADCRUMBS -> setBreadcrumbsFeature(new LSPBreadcrumbsFeature() {
+                @Override public boolean isEnabled(PsiFile file) { return false; }
+                @Override public boolean isSupported(PsiFile file) { return false; }
+            });
+            case CONFIGURATION -> {
+                LSPConfigurationFeature c = new LSPConfigurationFeature();
+                c.setOnConfigurationChanged(LSPConfigurationFeature.OnConfigurationChanged.IGNORE);
+                setConfigurationFeature(c);
+            }
+            case EDITOR_BEHAVIOR -> setEditorBehaviorFeature(new OffEditorBehaviorFeature(this));
+            case INLINE_COMPLETION -> setInlineCompletionFeature(new LSPInlineCompletionFeature() {
+                @Override public boolean isEnabled(PsiFile file) { return false; }
+                @Override public boolean isSupported(PsiFile file) { return false; }
+            });
+            case INLINE_VALUE -> setInlineValueFeature(new LSPInlineValueFeature() {
+                @Override public boolean isEnabled(PsiFile file) { return false; }
+                @Override public boolean isSupported(PsiFile file) { return false; }
+            });
+            case LINKED_EDITING_RANGE -> setLinkedEditingRangeFeature(new LSPLinkedEditingRangeFeature() {
+                @Override public boolean isEnabled(PsiFile file) { return false; }
+                @Override public boolean isSupported(PsiFile file) { return false; }
+            });
+            case WORKSPACE_FOLDER -> setWorkspaceFolderFeature(new ConfinedWorkspaceFolderFeature());
+        }
+    }
+
+    /** LSP4IJ's typing aids, every one off (they are off by default in 0.30.1; this keeps them off). */
+    static final class OffEditorBehaviorFeature extends EditorBehaviorFeature {
+        OffEditorBehaviorFeature(LSPClientFeatures features) {
+            super(features);
+        }
+
+        @Override public boolean isEnableStringLiteralImprovements(PsiFile file) { return false; }
+        @Override public boolean isEnableStatementTerminatorImprovements(PsiFile file) { return false; }
+        @Override public boolean isEnableEnterBetweenBracesFix(PsiFile file) { return false; }
+        @Override public boolean isEnableTextMateNestedBracesImprovements(PsiFile file) { return false; }
+        @Override public boolean isEnableSemanticTokensFileViewProvider(PsiFile file) { return false; }
+    }
+
+    /**
+     * I25 for LSP4IJ 0.30.1, which adds a workspace folder (and sends {@code workspace/didChangeWorkspaceFolders}) when a
+     * file outside the initial folders opens. LSP4IJ sends that notification only when this feature names a folder and
+     * then agrees to mark it notified, so it names none and agrees to nothing: the server only ever has the confined
+     * folders of {@link #initializeParams}.
+     */
+    static final class ConfinedWorkspaceFolderFeature extends LSPWorkspaceFolderFeature {
+        @Override
+        public List<WorkspaceFolder> getInitialWorkspaceFolders(Project project) {
+            return JoustProjectFolders.confined(project);
+        }
+
+        @Override
+        public WorkspaceFolder computeWorkspaceFolderToNotify(com.intellij.openapi.vfs.VirtualFile file) {
+            return null;
+        }
+
+        @Override
+        public boolean markFolderAsNotified(WorkspaceFolder folder) {
+            return false;
         }
     }
 
@@ -207,7 +266,10 @@ public class JoustClientFeatures extends LSPClientFeatures {
         caps.setInlayHintProvider((Either<Boolean, org.eclipse.lsp4j.InlayHintRegistrationOptions>) null);
         caps.setSignatureHelpProvider(null);
         caps.setLinkedEditingRangeProvider((Either<Boolean, org.eclipse.lsp4j.LinkedEditingRangeRegistrationOptions>) null);
-        if (caps.getWorkspace() != null) caps.getWorkspace().setFileOperations(null);
+        if (caps.getWorkspace() != null) {
+            caps.getWorkspace().setFileOperations(null);
+            caps.getWorkspace().setWorkspaceFolders(null);   // I25: no folder-change channel, whatever LSP4IJ does with it
+        }
         return caps;
     }
 
@@ -242,6 +304,20 @@ public class JoustClientFeatures extends LSPClientFeatures {
         confine(params, JoustProjectFolders.confined(project));
     }
 
+    /** Calls a one-argument setter with null when this LSP4J has it (capabilities newer than the compile-time LSP4J). */
+    private static void clearIfPresent(Object target, String setter) {
+        for (java.lang.reflect.Method m : target.getClass().getMethods()) {
+            if (m.getName().equals(setter) && m.getParameterCount() == 1 && !m.getParameterTypes()[0].isPrimitive()) {
+                try {
+                    m.invoke(target, (Object) null);
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    // the server-side allow-list (E23) still drops the matching capability
+                }
+                return;
+            }
+        }
+    }
+
     /** Applies I25 and declares no applyEdit; public for tests. */
     public static void confine(InitializeParams params, List<WorkspaceFolder> folders) {
         params.setWorkspaceFolders(folders);
@@ -254,6 +330,21 @@ public class JoustClientFeatures extends LSPClientFeatures {
                 ws.setApplyEdit(false);
                 ws.setFileOperations(null);
                 if (ws.getWorkspaceEdit() != null) ws.getWorkspaceEdit().setFailureHandling(null);
+                // ADR-004 §12.2 E24: what IntelliAda does not offer the JOUST server, it does not advertise.
+                ws.setConfiguration(false);
+                ws.setDidChangeWatchedFiles(null);   // its registration is refused (D3a item 2)
+                ws.setDidChangeConfiguration(null);
+                ws.setInlineValue(null);
+                ws.setDiagnostics(null);
+                clearIfPresent(ws, "setTextDocumentContent");   // LSP4J 1.0 only
+            }
+            org.eclipse.lsp4j.TextDocumentClientCapabilities td = caps.getTextDocument();
+            if (td != null) {
+                if (td.getSynchronization() != null) td.getSynchronization().setWillSaveWaitUntil(false);
+                td.setDiagnostic(null);
+                td.setInlineValue(null);
+                td.setLinkedEditingRange(null);
+                clearIfPresent(td, "setInlineCompletion");   // LSP4J 1.0 only
             }
         }
     }

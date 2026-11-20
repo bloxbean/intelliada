@@ -32,11 +32,17 @@ public final class ReadOnlyFeatureSet {
     }
 
     /**
-     * Every {@code LSPClientFeatures.set…Feature} of LSP4IJ 0.10.0, with its treatment and LSP methods. A guard test fails
-     * on any setter not listed here, so a feature a future LSP4IJ adds is classified before it can be enabled.
+     * Every {@code LSPClientFeatures.set…Feature} of LSP4IJ 0.30.1, with its treatment and LSP methods. A guard test fails
+     * on any setter not listed here, so a feature a future LSP4IJ adds is classified before it can be enabled; at run time
+     * {@code JoustLsp4jCompat} keeps the server off when the installed LSP4IJ's setters differ from this list.
      */
     public enum Feature {
-        DIAGNOSTIC("setDiagnosticFeature", Treatment.LSP4IJ, "textDocument/diagnostic"),
+        /**
+         * Pushed diagnostics only. Pull diagnostics ({@code textDocument/diagnostic}, workspace diagnostics) are refused, as
+         * a registration and as a capability: LSP4IJ 0.30.1 resolves the URIs of a pull report's related documents and of
+         * a workspace report before checking them (ADR-004 §12.2 E23, UP-CDX-3, UP-DES-2). joust-lsp only pushes.
+         */
+        DIAGNOSTIC("setDiagnosticFeature", Treatment.LSP4IJ),
         DOCUMENT_HIGHLIGHT("setDocumentHighlightFeature", Treatment.LSP4IJ, "textDocument/documentHighlight"),
         DOCUMENT_SYMBOL("setDocumentSymbolFeature", Treatment.LSP4IJ, "textDocument/documentSymbol"),
         FOLDING_RANGE("setFoldingRangeFeature", Treatment.LSP4IJ, "textDocument/foldingRange"),
@@ -62,7 +68,26 @@ public final class ReadOnlyFeatureSet {
         INLAY_HINT("setInlayHintFeature", Treatment.DISABLED, "textDocument/inlayHint"),
         SIGNATURE_HELP("setSignatureHelpFeature", Treatment.DISABLED, "textDocument/signatureHelp"),
         CALL_HIERARCHY("setCallHierarchyFeature", Treatment.DISABLED, "textDocument/prepareCallHierarchy"),
-        TYPE_HIERARCHY("setTypeHierarchyFeature", Treatment.DISABLED, "textDocument/prepareTypeHierarchy");
+        TYPE_HIERARCHY("setTypeHierarchyFeature", Treatment.DISABLED, "textDocument/prepareTypeHierarchy"),
+        // New since LSP4IJ 0.10.0 (ADR-004 §12.2 E21), all off:
+        /** Breadcrumbs from document symbols: a new surface for server text, not needed read-only. */
+        BREADCRUMBS("setBreadcrumbsFeature", Treatment.DISABLED),
+        /**
+         * Settings: a settings change in LSP4IJ is not forwarded ({@code IGNORE}), and {@code workspace/configuration} is
+         * answered null by {@code JoustLanguageClient} (E24). Editing the server's initialization options in LSP4IJ's own
+         * settings still restarts it, as for any server.
+         */
+        CONFIGURATION("setConfigurationFeature", Treatment.DISABLED, "workspace/didChangeConfiguration"),
+        /** LSP4IJ's client-side typing aids (quotes, terminators, braces): all off, as LSP4IJ's own defaults are. */
+        EDITOR_BEHAVIOR("setEditorBehaviorFeature", Treatment.DISABLED),
+        /** Inline (ghost-text) completion: an edit. */
+        INLINE_COMPLETION("setInlineCompletionFeature", Treatment.DISABLED, "textDocument/inlineCompletion"),
+        /** Debugger inline values: no JOUST debugger. */
+        INLINE_VALUE("setInlineValueFeature", Treatment.DISABLED, "textDocument/inlineValue"),
+        /** Linked editing (rename-as-you-type): an edit. */
+        LINKED_EDITING_RANGE("setLinkedEditingRangeFeature", Treatment.DISABLED, "textDocument/linkedEditingRange"),
+        /** Workspace folders added as files open: off, so the server only ever has I25's confined folders. */
+        WORKSPACE_FOLDER("setWorkspaceFolderFeature", Treatment.DISABLED, "workspace/didChangeWorkspaceFolders");
 
         public final String setter;
         public final Treatment treatment;
