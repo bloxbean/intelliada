@@ -183,8 +183,11 @@ final class JoustSanitizingInput extends InputStream {
             ((Map<String, Object>) pm).put("message", PlainText.literal(m, MESSAGE_CAP));
         }
         literalCollapsedText(o, 0);
-        if (o.get("result") instanceof Map<?, ?> rm && rm.get("capabilities") instanceof Map<?, ?>) {
-            readOnlyInitializeResult((Map<String, Object>) rm);
+        if (o.get("result") instanceof Map<?, ?> rm) {
+            // UP-CDX-4: serverInfo is cleaned whether or not the reply carries capabilities (LSP4IJ keeps the identity
+            // of a reply whose capabilities are missing or null).
+            if (rm.containsKey("serverInfo")) plainServerInfo((Map<String, Object>) rm);
+            if (rm.get("capabilities") instanceof Map<?, ?>) readOnlyInitializeResult((Map<String, Object>) rm);
         }
         try {
             return JoustStrictJson.writeUtf8(o, maxOut);
@@ -219,6 +222,10 @@ final class JoustSanitizingInput extends InputStream {
         Map<String, Object> caps = (Map<String, Object>) result.get("capabilities");
         caps.keySet().retainAll(SERVER_CAPABILITIES);
         if (caps.get("textDocumentSync") instanceof Map<?, ?> sync) ((Map<String, Object>) sync).keySet().retainAll(SYNC_OPTIONS);
+    }
+
+    /** {@code serverInfo} as a plain title, or removed when its name is not a string. */
+    private static void plainServerInfo(Map<String, Object> result) {
         Object info = result.get("serverInfo");
         if (info instanceof Map<?, ?> im && im.get("name") instanceof String name) {
             Map<String, Object> clean = new LinkedHashMap<>();

@@ -116,6 +116,13 @@ function onMessage(m) {
       send({ id: m.id, result: hostileLocations() });
       break;
     case 'textDocument/documentSymbol':
+      // Flat symbols for Flat.jsc, one located in a server-named virtual document (UP-CDX-5).
+      if (m.params.textDocument.uri.endsWith('/Flat.jsc')) {
+        send({ id: m.id, result: [
+          { name: 'FlatLocal', kind: 12, location: { uri: m.params.textDocument.uri, range: range(0, 0, 0, 3) } },
+          { name: 'FlatVirtual', kind: 12, location: { uri: 'joust-lib:/std/List.jsc', range: range(0, 0, 0, 1) } }] });
+        break;
+      }
       send({ id: m.id, result: [{ name: '\u001b[31m<html>Counter' + 'x'.repeat(5000), detail: '<b>d</b>' + img('symbol'), kind: 5,
         range: range(0, 0, 1, 0), selectionRange: range(0, 0, 0, 3) }] });
       break;

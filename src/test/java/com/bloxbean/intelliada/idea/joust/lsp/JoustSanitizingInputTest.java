@@ -292,4 +292,17 @@ public class JoustSanitizingInputTest {
         assertEquals("joust-lsp", r2.getJSONObject("serverInfo").getString("name"));
         assertFalse(r2.getJSONObject("serverInfo").has("version"));
     }
+
+    /** UP-CDX-4: serverInfo is cleaned when the reply has no capabilities, or null ones. */
+    @Test
+    public void serverInfoIsPlainWithoutCapabilities() throws Exception {
+        for (String caps : new String[]{"", "\"capabilities\":null,"}) {
+            JSONObject r = through(frame("{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{" + caps
+                    + "\"serverInfo\":{\"name\":\"<html><b>S</b>\",\"version\":\"<html>v\"}}}")).get(0).getJSONObject("result");
+            for (String k : new String[]{"name", "version"}) {
+                String v = r.getJSONObject("serverInfo").getString(k);
+                assertFalse(caps + k + ": " + v, v.contains("<") || javax.swing.plaf.basic.BasicHTML.isHTMLString(v.strip()));
+            }
+        }
+    }
 }

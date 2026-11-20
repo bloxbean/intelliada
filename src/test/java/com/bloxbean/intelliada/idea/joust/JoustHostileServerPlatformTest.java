@@ -13,6 +13,7 @@ import com.intellij.codeInsight.daemon.impl.HighlightInfo;
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler;
 import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.notification.Notification;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.notification.Notifications;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ReadAction;
@@ -168,6 +169,12 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
             return;
         }
         configure(node, lspJs.toString());
+        // A setting a user stored for this server in LSP4IJ's own settings: it must never reach the server (UP-CDX-6).
+        var stored = new com.redhat.devtools.lsp4ij.settings.LanguageServerSettings.LanguageServerDefinitionSettings();
+        stored.setConfigurationContent("{\"joust\":{\"token\":\"STORED-SECRET\"}}");
+        com.redhat.devtools.lsp4ij.settings.GlobalLanguageServerSettings.getInstance().updateSettings(JoustConstants.SERVER_ID, stored);
+        Disposer.register(getTestRootDisposable(), () -> com.redhat.devtools.lsp4ij.settings.GlobalLanguageServerSettings.getInstance()
+                .updateSettings(JoustConstants.SERVER_ID, new com.redhat.devtools.lsp4ij.settings.LanguageServerSettings.LanguageServerDefinitionSettings()));
         List<String> lookups = new CopyOnWriteArrayList<>();
         com.bloxbean.intelliada.idea.joust.lsp.JoustClientFeatures.setUriLookupRecorderForTests(lookups::add);
         Set<Long> before = descendants();
@@ -214,6 +221,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         // LSP4IJ 0.30.1's handlers (ADR-004 §12.2 E24): no settings, inert refreshes, no pull or virtual-document registration.
         assertEquals("configuration items are answered null (UP-CDX-6)", 2, answers.get("configuration").getJSONArray("result").length());
         for (Object v : answers.get("configuration").getJSONArray("result")) assertEquals(JSONObject.NULL, v);
+        assertFalse(answers.get("configuration").toString().contains("STORED-SECRET"));
         assertFalse(answers.get("inlineValue-refresh").has("error"));
         assertFalse(answers.get("diagnostic-refresh").has("error"));
         assertEquals(-32600, answers.get("register-diagnostic").getJSONObject("error").getInt("code"));
@@ -453,6 +461,24 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         assertTrue("no willSaveWaitUntil", received("textDocument/willSaveWaitUntil").isEmpty());
         assertEquals("jsc 1\npackage app\n", savedDoc.getText());
         assertEquals("jsc 1\npackage app\n", Files.readString(saved));
+        // --- a flat symbol located in a server-named virtual document: Structure view shows the file's own symbol and
+        // asks the server for no document (UP-CDX-5)
+        Path flat = Files.writeString(base.resolve("mod1/contracts/Flat.jsc"), "jsc 1\n");
+        myFixture.openFileInEditor(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(flat));
+        myFixture.doHighlighting();   // LSP4IJ 0.30.1 connects a document when a feature first asks for it
+        List<String> shownSymbols = new ArrayList<>();
+        long flatEnd = System.currentTimeMillis() + 30_000;
+        while (shownSymbols.stream().noneMatch(t -> t.contains("FlatLocal")) && System.currentTimeMillis() < flatEnd) {
+            shownSymbols.clear();
+            myFixture.testStructureView(view -> {
+                com.intellij.ide.util.treeView.smartTree.TreeElement root = view.getTreeModel().getRoot();
+                for (var child : root.getChildren()) shownSymbols.add(String.valueOf(child.getPresentation().getPresentableText()));
+            });
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(200);
+        }
+        assertTrue("the flat symbol appears: " + shownSymbols + "; requests " + received("textDocument/documentSymbol").size(),
+                shownSymbols.stream().anyMatch(t -> t.contains("FlatLocal")));
         // ... and no pull diagnostics or virtual documents were ever requested (UP-CDX-3, UP-CDX-5).
         assertTrue(received("textDocument/diagnostic").isEmpty());
         assertTrue(received("workspace/diagnostic").isEmpty());
@@ -468,7 +494,7 @@ public class JoustHostileServerPlatformTest extends BasePlatformTestCase {
         assertEquals("loopback requests", 0, fetched.get());
         assertEquals("the project's files are unchanged, apart from what this test added (I21)", before1,
                 listing(base).stream().filter(e -> !e.startsWith("mod3") && !e.startsWith("mod1/contracts/Third.jsc")
-                        && !e.startsWith("mod1/contracts/Saved.jsc")).toList());
+                        && !e.startsWith("mod1/contracts/Saved.jsc") && !e.startsWith("mod1/contracts/Flat.jsc")).toList());
     }
 
     public void testRestartStopAndUserChoice() throws Exception {
