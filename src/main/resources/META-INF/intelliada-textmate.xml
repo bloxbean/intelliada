@@ -1,0 +1,6 @@
+<idea-plugin>
+    <!-- ADR-004 D2: JOUST's .jsc TextMate grammar, loaded only with IntelliJ's TextMate plugin -->
+    <extensions defaultExtensionNs="com.intellij">
+        <textmate.bundleProvider implementation="com.bloxbean.intelliada.idea.joust.textmate.JoustTextMateBundleProvider"/>
+    </extensions>
+</idea-plugin>

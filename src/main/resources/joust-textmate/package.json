@@ -1,0 +1,20 @@
+{
+  "name": "intelliada-joust-jsc",
+  "contributes": {
+    "languages": [
+      {
+        "id": "jsc",
+        "aliases": [".jsc", "jsc", "JOUST"],
+        "extensions": [".jsc"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "jsc",
+        "scopeName": "source.jsc",
+        "path": "./syntaxes/jsc.tmLanguage.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,421 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "jsc",
+  "displayName": ".jsc",
+  "scopeName": "source.jsc",
+  "fileTypes": [
+    "jsc"
+  ],
+  "comment": "JOUST's contract language, .jsc (ADR-0018). The tree-sitter grammar (tree-sitter-jsc/) is the structural one; this grammar colours tokens for Shiki and VS Code.",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#header"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#code"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.jsc",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.jsc",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "header": {
+      "patterns": [
+        {
+          "match": "\\A\\s*(jsc)\\s+([0-9]+)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.other.directive.version.jsc"
+            },
+            "2": {
+              "name": "constant.numeric.version.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(package|library)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.package.jsc"
+            },
+            "2": {
+              "name": "entity.name.namespace.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(import)\\b(?:\\s+(contract)\\b)?",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.jsc"
+            },
+            "2": {
+              "name": "keyword.control.import.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(from|to)\\b",
+          "name": "keyword.control.from.jsc"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(type|enum|contract|event)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.jsc"
+            },
+            "2": {
+              "name": "entity.name.type.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(fn|action|destroy|view|invariant)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.jsc"
+            },
+            "2": {
+              "name": "entity.name.function.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(withdraw|certify|vote|propose)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.jsc"
+            },
+            "2": {
+              "name": "entity.name.function.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(owned)\\s+(init|action|destroy)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\.\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.jsc"
+            },
+            "2": {
+              "name": "storage.type.function.jsc"
+            },
+            "3": {
+              "name": "entity.name.type.jsc"
+            },
+            "4": {
+              "name": "entity.name.function.jsc"
+            }
+          }
+        },
+        {
+          "comment": "M3b (#112 design F2): keyed and by are words only after owned T, so they are named only there",
+          "match": "\\b(owned)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+(keyed)\\s+(by)\\b",
+          "captures": {
+            "1": {
+              "name": "storage.type.jsc"
+            },
+            "2": {
+              "name": "entity.name.type.jsc"
+            },
+            "3": {
+              "name": "storage.modifier.jsc"
+            },
+            "4": {
+              "name": "storage.modifier.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(owned)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.jsc"
+            },
+            "2": {
+              "name": "entity.name.type.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(init)\\s+(migrate)\\b",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.jsc"
+            },
+            "2": {
+              "name": "storage.modifier.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(init)\\b(?=\\s*\\()",
+          "name": "storage.type.function.jsc"
+        },
+        {
+          "match": "\\b(state|params)\\b(?=\\s*\\{|\\s+[A-Za-z_][A-Za-z0-9_]*\\s*:)",
+          "name": "storage.type.state.jsc"
+        }
+      ]
+    },
+    "code": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#calls"
+        },
+        {
+          "include": "#builtins"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#operators"
+        },
+        {
+          "include": "#punctuation"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.jsc",
+          "begin": "\"",
+          "end": "\"|$",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.jsc"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.jsc"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.jsc",
+              "match": "\\\\[\"\\\\n]"
+            },
+            {
+              "name": "invalid.illegal.escape.jsc",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.bytes.jsc",
+          "match": "#[0-9A-Fa-f]*"
+        },
+        {
+          "match": "\\b([0-9][0-9_]*)(?:\\s+(ada)\\b)?",
+          "captures": {
+            "1": {
+              "name": "constant.numeric.decimal.jsc"
+            },
+            "2": {
+              "name": "keyword.other.unit.ada.jsc"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.jsc",
+          "match": "\\b(if|else|match)\\b"
+        },
+        {
+          "name": "keyword.control.loop.jsc",
+          "match": "\\b(for|of)\\b"
+        },
+        {
+          "name": "keyword.control.flow.jsc",
+          "match": "\\b(return)\\b"
+        },
+        {
+          "name": "storage.type.jsc",
+          "match": "\\b(const)\\b"
+        },
+        {
+          "name": "keyword.other.effect.jsc",
+          "match": "\\b(require|pay|send|mint|burn|accept|emit|deposit)\\b"
+        },
+        {
+          "name": "storage.modifier.jsc",
+          "match": "\\b(payable|open|only|batched|quorum|authorized|receives|reads|admits|shared|into|retire|migrates)\\b"
+        },
+        {
+          "name": "storage.modifier.jsc",
+          "match": "\\b(after|before)\\b(?!\\s*\\()"
+        },
+        {
+          "name": "constant.language.boolean.jsc",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.option.jsc",
+          "match": "\\b(None)\\b"
+        },
+        {
+          "name": "keyword.other.unit.ada.jsc",
+          "match": "\\b(ada)\\b"
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "match": "\\b(Some)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "support.function.builtin.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(min|max|abs|utf8|asKey|asHash|range|after|before|isEmpty|keyCred|scriptCred|wallet|script)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "support.function.builtin.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b(sha2_256|sha3_256|blake2b_256|blake2b_224|verifyEd25519|length|concat|slice|take|drop|byteAt|toInt|toHex|div|mod|pow|expMod|sign|andBytes|orBytes|xorBytes|complement|readBit|shift|rotate|countSetBits|findFirstSetBit|last|nth|indexOf|elapsedSince|elapsedSinceAtMost|windowStart|windowEnd|withoutLovelace|scale|paymentKey|paymentScript|isRegistration|delegatesOnlyTo|isDRepLifecycle)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "support.function.std.jsc"
+            }
+          }
+        },
+        {
+          "match": "(?<=\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.member.jsc"
+            }
+          }
+        },
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.call.jsc"
+            }
+          }
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "variable.language.jsc",
+          "match": "\\b(caller|received|balance|validFrom|validTo|state|params|funds)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.jsc",
+          "match": "\\b(Int|Bool|Bytes|Key|Hash|List|Option|Map|BigMap|Value|Address|Credential|Instance)\\b"
+        },
+        {
+          "name": "entity.name.type.jsc",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.jsc",
+          "match": "=>"
+        },
+        {
+          "name": "keyword.operator.spread.jsc",
+          "match": "\\.\\.\\."
+        },
+        {
+          "name": "keyword.operator.coalesce.jsc",
+          "match": "\\?\\?"
+        },
+        {
+          "name": "keyword.operator.comparison.jsc",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.jsc",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.assignment.jsc",
+          "match": "\\+=|-=|="
+        },
+        {
+          "name": "keyword.operator.arithmetic.jsc",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.ternary.jsc",
+          "match": "[?:]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.comma.jsc",
+          "match": ","
+        },
+        {
+          "name": "punctuation.terminator.statement.jsc",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.accessor.jsc",
+          "match": "\\."
+        }
+      ]
+    }
+  }
+}
