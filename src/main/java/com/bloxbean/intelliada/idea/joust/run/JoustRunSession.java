@@ -30,28 +30,57 @@ public final class JoustRunSession {
     static final Duration CALL_TIMEOUT = Duration.ofSeconds(90);
     static final long BYTES_PER_CALL = 32L * 1024 * 1024;
 
-    /** A bound node: the configuration, its positive identity, and its Blockfrost-shaped API. */
-    public record Binding(RemoteNode node, NetworkIdentity.Identity identity, BlockfrostApi api) {
+    /**
+     * A bound node: the configuration's id and the values bound from it, copied at Start (the stored configuration is
+     * edited in place, so it is never compared with itself; M31B-CDX-15), its positive identity, and its API.
+     */
+    public record Binding(RemoteNode node, Bound bound, NetworkIdentity.Identity identity, BlockfrostApi api) {
+        public Binding(RemoteNode node, NetworkIdentity.Identity identity, BlockfrostApi api) {
+            this(node, Bound.of(node), identity, api);
+        }
+
         /**
          * The binding's identity for host reuse (M31B-CDX-1): the node configuration, its endpoint, and the chain it
          * reached. Another configuration, endpoint or chain never shares a host.
          */
         public String key() {
-            return node.getId() + "|" + api.base() + "|" + identity.chainKey();
+            return bound.id() + "|" + api.base() + "|" + identity.chainKey();
         }
+    }
+
+    /** The configuration values a binding depends on, as they were when it was made. */
+    public record Bound(String id, @Nullable String endpoint, @Nullable String magic, @Nullable NodeType type) {
+        static Bound of(RemoteNode n) {
+            return new Bound(n.getId(), n.getApiEndpoint(), n.getProtocolMagic(), n.getNodeType());
+        }
+    }
+
+    /** Why a stored configuration no longer serves a binding, or null while it does. */
+    static @Nullable String configChange(Bound bound, java.util.List<RemoteNode> stored) {
+        RemoteNode now = stored.stream().filter(n -> java.util.Objects.equals(n.getId(), bound.id())).findFirst().orElse(null);
+        if (now == null) return "the node configuration was removed";   // M31B-SEC-7
+        return Bound.of(now).equals(bound) ? null : "the node configuration changed";
     }
 
     private final Binding binding;
     private final JoustHostService.Running running;
-    /** The {@code now} floor per host session (I28), shared by every panel session that uses one host (M31B-DES-6). */
-    private static final java.util.Map<com.bloxbean.intelliada.idea.joust.host.HostSession, AtomicLong> FLOORS =
-            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    /**
+     * The clock of one host session: its {@code now} floor (I28) and the lock under which {@code now} is taken and the
+     * call sent, shared by every panel session on that host (M31B-DES-6, M31B-CDX-18).
+     */
+    static final class Clock {
+        final AtomicLong floor = new AtomicLong(-1);
+    }
+
+    private static final java.util.Map<HostSession, Clock> CLOCKS = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private final Clock clock;
     private final AtomicLong lastNow;
 
     JoustRunSession(Binding binding, JoustHostService.Running running) {
         this.binding = binding;
         this.running = running;
-        this.lastNow = FLOORS.computeIfAbsent(running.session(), k -> new AtomicLong(-1));
+        this.clock = CLOCKS.computeIfAbsent(running.session(), k -> new Clock());
+        this.lastNow = clock.floor;
     }
 
     public Binding binding() {
@@ -126,7 +155,7 @@ public final class JoustRunSession {
 
     /** The reverse-read answerer for a binding. */
     public static HostSession.Reads reads(Binding b) {
-        return new ChainReads(b.api(), b.identity().networkId(), BYTES_PER_CALL);
+        return new ChainReads(b.api().copy(), b.identity().networkId(), BYTES_PER_CALL);
     }
 
     /** {@code max(previous now, the bound node's tip slot)}: never decreasing within the session (I28). */
@@ -141,7 +170,9 @@ public final class JoustRunSession {
         return floor.accumulateAndGet(tipSlot, Math::max);
     }
 
-    private final Object dispatch = new Object();
+    Clock clockForTests() {
+        return clock;
+    }
 
     /**
      * One call: the binding is re-checked (the node configuration and the chain it reached; a change stops the host,
@@ -149,8 +180,8 @@ public final class JoustRunSession {
      * their {@code now} was taken (M31B-CDX-6).
      */
     private JsonNode call(String method, ObjectNode params, boolean withNow) throws Exception {
-        checkBinding();
-        synchronized (dispatch) {
+        synchronized (clock) {
+            checkBinding();   // under the lock, so no call is sent after a change was seen (M31B-CDX-15)
             if (withNow) {
                 ObjectNode p = HostJson.object().put("now", now());
                 p.setAll(params);
@@ -162,22 +193,34 @@ public final class JoustRunSession {
 
     /** Refuses (and stops the host) when the node configuration or the chain behind it changed since binding. */
     void checkBinding() throws Exception {
-        RemoteNode now = com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance().getRemoteNodes().stream()
-                .filter(n -> java.util.Objects.equals(n.getId(), binding.node().getId())).findFirst().orElse(null);
-        boolean configChanged = now != null && (!java.util.Objects.equals(now.getApiEndpoint(), binding.node().getApiEndpoint())
-                || !java.util.Objects.equals(now.getProtocolMagic(), binding.node().getProtocolMagic())
-                || now.getNodeType() != binding.node().getNodeType());
-        String why = configChanged ? "the node configuration changed" : null;
+        String why = configChange(binding.bound(),
+                com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance().getRemoteNodes());
         if (why == null && binding.identity().networkClass() == NetworkIdentity.NetworkClass.DEVNET) {
-            JsonNode b1 = binding.api().get("/blocks/1");
-            String h = b1 == null ? null : b1.path("hash").textValue();
-            if (h == null || !binding.identity().chainKey().endsWith("-" + h)) why = "the devnet behind the node was recreated";
+            JsonNode b1;
+            try {
+                b1 = binding.api().get("/blocks/1");
+            } catch (BlockfrostApi.Failed e) {
+                throw new NetworkIdentity.Refused("block 1 of the node could not be read (" + e.getMessage() + "); the call was not sent");
+            }
+            why = blockOne(binding.identity(), b1);
         }
         if (why != null) {
             running.session().close();
             running.started().stop();
             throw new NetworkIdentity.Refused(why + "; the host was stopped. Start it again to bind the new network");
         }
+    }
+
+    /**
+     * Block 1's verdict for a devnet binding: null while it is the bound chain's, "recreated" for a valid different hash
+     * (D14). Anything else (absent, no or a malformed hash) withholds the call without stopping the host (M31B-CDX-26).
+     */
+    static @Nullable String blockOne(NetworkIdentity.Identity id, @Nullable JsonNode b1) throws NetworkIdentity.Refused {
+        String h = b1 == null ? null : b1.path("hash").textValue();
+        if (h == null || !h.matches("[0-9a-f]{64}")) {
+            throw new NetworkIdentity.Refused("block 1 of the node is unavailable; the call was not sent");
+        }
+        return id.chainKey().endsWith("-" + h) ? null : "the devnet behind the node was recreated";
     }
 
     public JsonNode describe(String contract) throws Exception {
@@ -202,7 +245,7 @@ public final class JoustRunSession {
     }
 
     /** A later page of an {@code instances} or {@code objects} listing (protocol: listing, after, limit; M31B-CDX-10). */
-    public JsonNode nextPage(String method, String listing, int after, int limit) throws Exception {
+    public JsonNode nextPage(String method, String listing, long after, int limit) throws Exception {
         return call(method, HostJson.object().put("listing", listing).put("after", after).put("limit", limit), false);
     }
 
