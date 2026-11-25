@@ -137,7 +137,8 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         if (fixture == null) return;
         TrustedProjects.setProjectTrusted(getProject(), true);
         JoustHostService.confirmForTests = (project, dir, spec, version) -> true;
-        JoustHostService svc = JoustHostService.getInstance(getProject());
+        // A service of its own: disposing the project's shared service would end it for the other tests.
+        JoustHostService svc = new JoustHostService(getProject());
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
         JoustHostService.Running r = com.intellij.testFramework.PlatformTestUtil.waitForFuture(
                 com.intellij.openapi.application.ApplicationManager.getApplication()
@@ -172,6 +173,15 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         assertEquals("stopped", o);
         assertEquals("no host process was started", before, HostLauncher.STARTS.get());
         assertNull(svc.running(Path.of(fixture)));
+        // The module is free again: a new start succeeds (M31A-CDX-41).
+        JoustHostService.confirmForTests = (project, dir, spec, version) -> true;
+        JoustRunGuard g2 = JoustRunGuard.capture(getProject());
+        JoustHostService.Running again = com.intellij.testFramework.PlatformTestUtil.waitForFuture(
+                com.intellij.openapi.application.ApplicationManager.getApplication()
+                        .executeOnPooledThread(() -> svc.launch(g2, Path.of(fixture), init(), "node-a", NO_READS, e -> { })), 120_000);
+        assertTrue(again.process().isAlive());
+        svc.stop(Path.of(fixture));
+        assertTrue(again.process().waitFor(20, TimeUnit.SECONDS));
     }
 
     public void testADeclinedConfirmationStartsNothing() throws Exception {

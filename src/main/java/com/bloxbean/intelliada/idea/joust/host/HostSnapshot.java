@@ -203,7 +203,10 @@ public final class HostSnapshot {
         Object before = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
         java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir);
         Object after = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
-        if (before == null || !before.equals(after)) {
+        // Where the platform has no file key (Windows' JBR returns null), the identity check is unavailable and the
+        // per-component no-link checks stand alone; a concurrent swap by same-user code is outside ADR-005's threat
+        // boundary (L33) (M31A-CDX-40).
+        if (before != null && !before.equals(after)) {
             ds.close();
             throw new HostSpec.Invalid("a class-path directory changed while it was opened");
         }
