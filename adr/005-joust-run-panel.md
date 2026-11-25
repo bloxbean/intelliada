@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r13). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r14). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -823,11 +823,29 @@ invariant.
   to create or import mainnet accounts and the tab offers devnet and testnet only; mainnet entries already in the store
   are kept and named, not hidden. (M32-SEC-5, M32-DES-2, M32-DES-9.)
 
+- **E8a. Migration copies and hides; the legacy store is never written (L39, superseding E8's "move").** Round 2 of
+  M3.2 showed that removing the legacy copy is not safe: IntelliJ's native credential store serves a read from a
+  postponed write, so a read-back does not prove durability; a crash between the legacy delete and the component save
+  loses the mapping; a retry could delete the only phrase; one phrase can be both a testnet and a mainnet legacy account;
+  and the legacy backend can lose its encryption key when a rewrite fails. So: migration copies a legacy testnet account
+  whose address is exactly its phrase's first address, and is refused when any other legacy entry holding a phrase holds
+  the same key; the entry's id is derived from the key, so a retry reuses it and rewrites a lost phrase from the legacy
+  copy; the legacy store is never written. Every legacy listing (`AccountService.getAccounts`, behind every chooser and the
+  account list) hides an account whose payment key the JOUST store holds, read from a lock-free set of public
+  fingerprints, so the key is selectable under one class only. The legacy copy stays in the old store until the user or
+  #10 removes it; the dialog says the old store protects it less well. **Durability:** a new testnet or mainnet entry is
+  *unconfirmed* until a later IDE session reads its phrase back, and the user is offered a backup at creation. **Class
+  binding:** the class is stored with the secret (the credential's user name), and an entry whose metadata class differs
+  is never served. **One step across stores:** the ownership check and the write take one monitor for both stores; an
+  unreadable legacy store refuses rather than counting as one without the key. (M32-CDX-12..19, M32-SEC-9..12,
+  M32-DES-12..16.)
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
 | L37 | Pin the checker closure by a checked-in SHA-256 lock; strict build by default; command-line-only overrides for a checker-less or SNAPSHOT-kit build (E7) | delegated | 2026-11-26 | two advisors (maintainer, supply chain); D13 |
 | L38 | I12's legacy-chooser exception until #10; migration is a move; no mainnet accounts until M5 (E8) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 1 |
+| L39 | Migration copies and hides (never writes the legacy store); unconfirmed until a later session; class bound to the secret (E8a) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 2 |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -989,3 +1007,4 @@ Security and design approved round 8.
 - **r11** (2026-11-26): §12 E1 states its no-revert assumption; E1a (forward-only chain points). From M3.1b round 2.
 - **r12** (2026-11-26): §12 E1a continuations; E7 and L37 (the checker lock, delegated). From M3.1b round 4 and M3.3a.
 - **r13** (2026-11-26): §12 E8 and L38 (delegated). From M3.2 round 1.
+- **r14** (2026-11-26): §12 E8a and L39 (delegated). From M3.2 round 2.
