@@ -128,11 +128,29 @@ dependencies {
     joustLint 'org.julclang:julc-state-api:0.1.0-pre2'
 }
 
+// ADR-005 L29: the dev-host tests use JOUST's protocol-1 client conformance kit (the scripted FakeHost, the recorded
+// sessions, the reference checker and its vectors) from the JOUST build under test, published to the local Maven
+// repository until a JOUST release contains it. Java 25 class files, run in a forked JDK 25 like joustLint. Resolved
+// leniently: without the kit the tests skip (JOUST-SKIPPED), and fail under JOUST_REQUIRE_TOOLS=1.
+def joustTestVersion = project.findProperty('joustTestVersion') ?: '0.1.0-pre3-01bad1f-SNAPSHOT'
+configurations {
+    joustConformance {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+dependencies {
+    joustConformance "org.julclang:julc-state-host:${joustTestVersion}"
+    joustConformance "org.julclang:julc-state-host:${joustTestVersion}:conformance"
+}
+def joustConformanceFiles = configurations.joustConformance.incoming.artifactView { lenient = true }.files
+
 def joustLintLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
 
 test {
     failOnNoDiscoveredTests = false
     inputs.files(configurations.joustLint).withPropertyName('joustLintClasspath')
+    inputs.files(joustConformanceFiles).withPropertyName('joustConformanceClasspath')
     jvmArgumentProviders.add({
         String java = project.findProperty('joustLintJava')
         if (java == null) {
@@ -142,7 +160,8 @@ test {
                 java = ''   // JoustSubsetLintDifferentialTest fails and says how to supply a JDK 25
             }
         }
-        ["-Djoust.lint.classpath=${configurations.joustLint.asPath}", "-Djoust.lint.java=${java}"]
+        ["-Djoust.lint.classpath=${configurations.joustLint.asPath}", "-Djoust.lint.java=${java}",
+         "-Djoust.conformance.classpath=${joustConformanceFiles.asPath}", "-Djoust.conformance.version=${joustTestVersion}"]
     } as CommandLineArgumentProvider)
     // ADR-004 milestone verification: with JOUST_REQUIRE_TOOLS=1 a JOUST test whose tools are missing fails instead of
     // skipping (M1-CDX-25).
