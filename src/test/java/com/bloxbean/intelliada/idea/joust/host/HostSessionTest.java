@@ -68,6 +68,24 @@ public class HostSessionTest {
         throw new IllegalStateException("no reads expected");
     };
 
+    /** M31B-CDX-36: a panel that adopts a running host observes its end, before or after it happens. */
+    @Test
+    public void endListenersHearTheEndOnceWhenEverTheyRegister() throws Exception {
+        peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
+        List<String> early = new CopyOnWriteArrayList<>(), late = new CopyOnWriteArrayList<>();
+        peer.session.onEnded(early::add);
+        peer.hostWrites.close();   // the host exits
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (peer.session.ended() == null && System.nanoTime() < end) Thread.sleep(10);
+        while (early.isEmpty() && System.nanoTime() < end) Thread.sleep(10);
+        assertEquals(1, early.size());
+        assertEquals(peer.ends, early);
+        peer.session.onEnded(late::add);   // registered after the end: told at once
+        assertEquals(early, late);
+        Thread.sleep(100);
+        assertEquals("never twice", 1, early.size());
+    }
+
     @Test
     public void aCallGetsItsResultAndReadsAreAnsweredDuringIt() throws Exception {
         peer = new Peer((id, p) -> HostJson.object().put("echo", p.path("kind").textValue()), HostFrames.STALL_NANOS);
