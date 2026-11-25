@@ -12,6 +12,7 @@ import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -42,11 +43,20 @@ public class JoustRunDevKitPlatformTest extends BasePlatformTestCase {
         node.setNodeType(NodeType.LocalYaciDevKit);
         node.setApiEndpoint(store);
         node.setProtocolMagic("42");
+        com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance().addRemoteNode(node);   // a stored configuration
+        // I14 through the launch path (M31B-CDX-27): a project network whose start command would leave a sentinel.
+        Path config = Path.of(fixture, "joust.config.json");
+        Path sentinel = java.nio.file.Files.createTempDirectory("joust-i14").resolve("started");
+        boolean wroteConfig = !java.nio.file.Files.exists(config);
+        if (wroteConfig) {
+            java.nio.file.Files.writeString(config, "{\"network\":\"x\",\"networks\":{\"x\":{\"kind\":\"devkit\","
+                    + "\"url\":\"http://127.0.0.1:1/api/v1\",\"start\":\"touch " + sentinel + "\"}}}");
+        }
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
         JoustRunSession s = PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread(() -> {
             JoustRunSession.Binding b = JoustRunSession.bind(node);
             JoustHostService.Running r = JoustHostService.getInstance(getProject()).launch(guard, Path.of(fixture),
-                    JoustRunSession.initParams(b.identity()), node.getId(), JoustRunSession.reads(b), e -> { });
+                    JoustRunSession.initParams(b.identity()), b.key(), JoustRunSession.reads(b), e -> { });
             return new JoustRunSession(b, r);
         }), 120_000);
         try {
@@ -62,7 +72,20 @@ public class JoustRunDevKitPlatformTest extends BasePlatformTestCase {
             long n1 = PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread(s::now), 30_000);
             long n2 = PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread(s::now), 30_000);
             assertTrue("now never decreases (I28)", n2 >= n1);
+            // Two panel sessions on one host share its clock: calls interleaved from both reach the host with a
+            // non-decreasing now, or the host would answer bad/nowDecreased (M31B-CDX-18).
+            JoustRunSession s2 = new JoustRunSession(s.binding(), s.running());
+            assertSame(s.clockForTests(), s2.clockForTests());
+            List<java.util.concurrent.Future<JsonNode>> calls2 = new java.util.ArrayList<>();
+            for (int i = 0; i < 12; i++) {
+                JoustRunSession w = i % 2 == 0 ? s : s2;
+                calls2.add(ApplicationManager.getApplication().executeOnPooledThread(() -> w.deployment(contract)));
+            }
+            for (var f : calls2) assertTrue(PlatformTestUtil.waitForFuture(f, 120_000).has("addresses"));
+            assertFalse("the project's start command never ran (I14)", java.nio.file.Files.exists(sentinel));
         } finally {
+            if (wroteConfig) java.nio.file.Files.deleteIfExists(config);
+            com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance().removeRemoteNode(node);
             JoustHostService.getInstance(getProject()).stop(Path.of(fixture));
             assertTrue(s.running().process().waitFor(20, TimeUnit.SECONDS));
         }

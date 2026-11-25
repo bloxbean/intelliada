@@ -79,25 +79,25 @@ public final class JoustRunPanel implements Disposable {
         root.add(top, BorderLayout.NORTH);
 
         JPanel actions = new JPanel(new GridLayout(0, 1, 0, JBUI.scale(2)));
-        actions.add(button("Calls", c -> session().describe(c)));
-        actions.add(button("Deployment", c -> session().deployment(c)));
-        actions.add(button("Prerequisites", c -> session().prerequisites(c)));
-        actions.add(button("Instances", c -> listInstances(c, false)));
-        actions.add(button("More instances", c -> listInstances(c, true)));
-        actions.add(button("State of instance", c -> session().view(c, selectedInstance(), null, null)));
-        actions.add(button("Objects of instance", c -> session().objects(c, selectedInstance(), 100)));
-        actions.add(button("Named view…", c -> {
+        actions.add(button("Calls", (s, c) -> s.describe(c)));
+        actions.add(button("Deployment", (s, c) -> s.deployment(c)));
+        actions.add(button("Prerequisites", (s, c) -> s.prerequisites(c)));
+        actions.add(button("Instances", (s, c) -> listInstances(s, c)));
+        actions.add(button("State of instance", (s, c) -> s.view(c, selectedInstance(), null, null)));
+        actions.add(button("Objects of instance", (s, c) -> listObjects(s, c, selectedInstance())));
+        actions.add(button("Next page", (s, c) -> nextPage(s, c)));
+        actions.add(button("Named view…", (s, c) -> {
             String[] in = ask("View name", "Arguments (JSON object in the description's encoding)", "{}");
             if (in == null) return null;
             JsonNode args = HostJson.parse(in[1].getBytes(java.nio.charset.StandardCharsets.UTF_8));
             if (!args.isObject()) throw new IllegalArgumentException("the arguments must be a JSON object");
-            return session().view(c, selectedInstance(), in[0], (com.fasterxml.jackson.databind.node.ObjectNode) args);
+            return s.view(c, selectedInstance(), in[0], (com.fasterxml.jackson.databind.node.ObjectNode) args);
         }));
-        actions.add(button("Decode datum…", c -> {
+        actions.add(button("Decode datum…", (s, c) -> {
             String[] in = ask("Datum (hex CBOR)", null, null);
             if (in == null) return null;
             if (!in[0].matches("(?:[0-9a-fA-F]{2}){1,65536}")) throw new IllegalArgumentException("not hex CBOR");
-            return session().decode(c, in[0].toLowerCase());
+            return s.decode(c, in[0].toLowerCase());
         }));
         JButton refresh = new JButton("Refresh modules and networks");
         refresh.addActionListener(e -> refreshChoices());
@@ -122,18 +122,24 @@ public final class JoustRunPanel implements Disposable {
         modules.addActionListener(e -> listDescriptions());
         contractList.addListSelectionListener(e -> {
             instances.clear();
-            nextListing = null;
+            pager = null;
+        });
+        instanceList.addListSelectionListener(e -> {
+            if (pager != null && pager.method().equals("objects")) pager = null;
         });
         refreshChoices();
         updateButtons();
     }
 
-    private volatile String nextListing;
-    private volatile int nextAfter;
+    /** The continuation of the last listing; read and written on the EDT only (M31B-CDX-19). */
+    private JoustRunPager pager;
     private volatile boolean launching;
+    private volatile JoustRunLaunch launch;
+    /** The selected instance, captured on the EDT when an action starts. */
+    private volatile String actionInstance;
 
     private String selectedInstance() {
-        String inst = instanceList.getSelectedValue();
+        String inst = actionInstance;
         if (inst == null) throw new IllegalStateException("select an instance (Instances first)");
         return inst;
     }
@@ -177,15 +183,26 @@ public final class JoustRunPanel implements Disposable {
     /** Refills the choices: the project layout is computed off the EDT when not cached yet (M31B-CDX-7). */
     void refreshChoices() {
         if (session != null || launching) return;
-        JoustProjectLayout layout = JoustProjectService.getInstance(project).cachedLayout();
-        if (layout == null) {
-            ApplicationManager.getApplication().executeOnPooledThread(() -> {
-                JoustProjectService.getInstance(project).layout();
-                ui(this::refreshChoices);
-            });
+        JoustProjectLayout cached = JoustProjectService.getInstance(project).cachedLayout();
+        if (cached != null) {
+            applyChoices(cached);
+            return;
         }
+        details.setText("Scanning the project…");
+        // One scan, applied once: a project with no readable base shows an empty state, and is scanned again only on an
+        // explicit Refresh (M31B-CDX-25).
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            JoustProjectLayout scanned = JoustProjectService.getInstance(project).layout();
+            ui(() -> {
+                if (session == null && !launching) applyChoices(scanned);
+            });
+        });
+    }
+
+    private void applyChoices(@Nullable JoustProjectLayout layout) {
         modules.removeAllItems();
         if (layout != null) for (JoustProjectLayout.GradleModule m : layout.gradleModules()) modules.addItem(new ModuleItem(m.dir()));
+        if (layout == null) details.setText("The project could not be read: no JOUST modules to list.");
         nodes.removeAllItems();
         // Only the networks this milestone serves (M31B-CDX-7).
         for (RemoteNode n : RemoteNodeState.getInstance().getRemoteNodes()) {
@@ -239,26 +256,44 @@ public final class JoustRunPanel implements Disposable {
         }
         JoustRunGuard guard = JoustRunGuard.capture(project);   // bound now, while trusted
         status.setText("Starting…");
+        JoustRunLaunch l = new JoustRunLaunch();
+        launch = l;
         launching = true;
         updateButtons();   // the selections are frozen for the whole launch (M31B-CDX-8)
         new Task.Backgroundable(project, "JOUST: starting the dev host", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
+                JoustHostService service = JoustHostService.getInstance(project);
+                JoustRunSession s = null;
+                String failure = null;
                 try {
-                    JoustRunSession.Binding b = JoustRunSession.bind(n.node());
-                    JoustHostService.Running r = JoustHostService.getInstance(project).start(guard, m.dir(),
-                            JoustRunSession.initParams(b.identity()), b.key(),
-                            JoustRunSession.reads(b), why -> ui(() -> ended(why)));
-                    JoustRunSession s = new JoustRunSession(b, r);
-                    ui(() -> started(s));
+                    // Stop at any point cancels this launch: before the host starts it is never started, and a host
+                    // that started meanwhile is stopped (M31B-CDX-17).
+                    s = l.run(x -> JoustRunSession.bind(n.node()),
+                            b -> new JoustRunSession(b, service.start(guard, m.dir(), JoustRunSession.initParams(b.identity()),
+                                    b.key(), JoustRunSession.reads(b), why -> ui(() -> ended(why)))),
+                            started -> service.stop(started.running().moduleDir()),
+                            indicator::isCanceled);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    failure = "Stopped before the host started.";
                 } catch (Exception e) {
+                    String m2 = JoustRunLaunch.message(e);
+                    failure = m2 != null ? m2 : "The host did not start: " + PlainText.literal(String.valueOf(e.getMessage()), 2000);
+                } finally {
+                    // Every terminal path restores the controls.
+                    JoustRunSession ok = s;
+                    String why = ok == null && failure == null ? "The host did not start." : failure;
                     ui(() -> {
+                        if (launch == l) launch = null;
                         launching = false;
-                        status.setText("Not running");
-                        details.setText("The host did not start: " + PlainText.literal(String.valueOf(e.getMessage()), 2000));
-                        updateButtons();
+                        if (ok != null) {
+                            started(ok);
+                        } else {
+                            status.setText("Not running");
+                            details.setText(why);
+                            updateButtons();
+                        }
                     });
                 }
             }
@@ -293,10 +328,12 @@ public final class JoustRunPanel implements Disposable {
 
     private void stopHost() {
         JoustRunSession s = session;
+        JoustRunLaunch l = launch;
         ModuleItem m = (ModuleItem) modules.getSelectedItem();
-        Path dir = s != null ? s.running().moduleDir() : launching && m != null ? m.dir() : null;
+        if (l != null) l.cancel();   // binding, or a start in progress: recorded before anything else (M31B-CDX-17)
+        Path dir = s != null ? s.running().moduleDir() : l != null && m != null ? m.dir() : null;
         if (dir == null) return;
-        // Stop also reaches a launch in progress: the service refuses it before or as its process starts.
+        // The service refuses a start whose slot is being stopped, or stops the process it just created.
         ApplicationManager.getApplication().executeOnPooledThread(() -> JoustHostService.getInstance(project).stop(dir));
     }
 
@@ -311,22 +348,25 @@ public final class JoustRunPanel implements Disposable {
     // ---- calls --------------------------------------------------------------------------------------------------
 
     private interface ContractCall {
-        JsonNode apply(String contract) throws Exception;
+        @Nullable JsonNode apply(JoustRunSession session, String contract) throws Exception;
     }
 
     private JButton button(String label, ContractCall call) {
         JButton b = new JButton(label);
         b.addActionListener(e -> {
+            // The session, contract and instance are captured here, on the EDT (M31B-CDX-19).
             String c = contractList.getSelectedValue();
-            if (c == null || session == null) {
-                details.setText(session == null ? "Start the host first." : "Select a contract.");
+            JoustRunSession s = session;
+            if (c == null || s == null) {
+                details.setText(s == null ? "Start the host first." : "Select a contract.");
                 return;
             }
+            actionInstance = instanceList.getSelectedValue();
             details.setText(label + "…");
             ApplicationManager.getApplication().executeOnPooledThread(() -> {
                 String text;
                 try {
-                    JsonNode result = call.apply(c);
+                    JsonNode result = call.apply(s, c);
                     if (result == null) {
                         ui(() -> details.setText(""));
                         return;
@@ -344,26 +384,62 @@ public final class JoustRunPanel implements Disposable {
         return b;
     }
 
-    /** The first page, or with {@code more} the next page of the last listing (protocol continuation; M31B-CDX-10). */
-    private JsonNode listInstances(String contract, boolean more) throws Exception {
-        JsonNode r;
-        if (more) {
-            if (nextListing == null) throw new IllegalStateException("no further page: list the instances first");
-            r = session().nextPage("instances", nextListing, nextAfter, 100);
-        } else {
-            r = session().instances(contract, 100);
-            ui(instances::clear);
-        }
-        JsonNode next = r.path("next");
-        nextListing = next.isIntegralNumber() ? r.path("listing").textValue() : null;
-        nextAfter = next.isIntegralNumber() ? next.intValue() : 0;
+    /** The first page of a contract's instances; the list and the continuation are replaced together on the EDT. */
+    private JsonNode listInstances(JoustRunSession s, String contract) throws Exception {
+        JsonNode r = s.instances(contract, 100);
+        JoustRunPager next = JoustRunPager.next(r, s, "instances", contract, null);
+        List<String> refs = instanceRefs(r);
+        ui(() -> {
+            if (session != s || !contract.equals(contractList.getSelectedValue())) return;   // a stale listing (M31B-CDX-19)
+            instances.clear();
+            refs.forEach(instances::addElement);
+            pager = next;
+        });
+        return r;
+    }
+
+    /** The first page of an instance's objects, with its own continuation (M31B-CDX-20). */
+    private JsonNode listObjects(JoustRunSession s, String contract, String instance) throws Exception {
+        JsonNode r = s.objects(contract, instance, 100);
+        JoustRunPager next = JoustRunPager.next(r, s, "objects", contract, instance);
+        ui(() -> {
+            if (session == s && contract.equals(contractList.getSelectedValue()) && instance.equals(instanceList.getSelectedValue())) {
+                pager = next;
+            }
+        });
+        return r;
+    }
+
+    /** The next page of the last listing, while it still belongs to the selection; instances are appended. */
+    private JsonNode nextPage(JoustRunSession s, String contract) throws Exception {
+        JoustRunPager p = onEdt(() -> pager);
+        String inst = actionInstance;
+        if (p == null || !p.belongsTo(s, contract, inst)) throw new IllegalStateException("no further page for this selection");
+        JsonNode r = s.nextPage(p.method(), p.listing(), p.after(), 100);
+        JoustRunPager next = JoustRunPager.next(r, s, p.method(), contract, p.instance());
+        List<String> refs = p.method().equals("instances") ? instanceRefs(r) : List.of();
+        ui(() -> {
+            if (pager != p || session != s || !contract.equals(contractList.getSelectedValue())) return;
+            refs.stream().filter(x -> !instances.contains(x)).forEach(instances::addElement);
+            pager = next;
+        });
+        return r;
+    }
+
+    private static List<String> instanceRefs(JsonNode r) {
         List<String> refs = new ArrayList<>();
         for (JsonNode it : r.path("items")) {
             String inst = it.path("instance").textValue();
             if (inst != null && inst.matches("[0-9a-f]{64}") && !refs.contains(inst)) refs.add(inst);
         }
-        ui(() -> refs.stream().filter(x -> !instances.contains(x)).forEach(instances::addElement));
-        return r;
+        return refs;
+    }
+
+    private static <T> T onEdt(java.util.function.Supplier<T> f) {
+        Object[] out = {null};
+        ApplicationManager.getApplication().invokeAndWait(() -> out[0] = f.get());
+        @SuppressWarnings("unchecked") T t = (T) out[0];
+        return t;
     }
 
     /** A host error by kind and code (D16), with any message-map sites. */

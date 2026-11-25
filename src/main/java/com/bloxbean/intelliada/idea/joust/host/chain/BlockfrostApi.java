@@ -43,7 +43,7 @@ public final class BlockfrostApi {
     private final @Nullable String projectId;
     private final HttpClient http;
     private final Duration timeout;
-    private volatile long bytesRead;
+    private final java.util.concurrent.atomic.AtomicLong bytesRead = new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * @param baseUrl   the API root, e.g. {@code http://localhost:8080/api/v1} or {@code https://cardano-preprod.blockfrost.io/api/v0}
@@ -69,9 +69,17 @@ public final class BlockfrostApi {
         return base;
     }
 
-    /** Bytes of response bodies read so far (for a call's byte budget). */
+    /** Bytes of response bodies read so far through this instance (for a call's byte budget). */
     public long bytesRead() {
-        return bytesRead;
+        return bytesRead.get();
+    }
+
+    /**
+     * Another client for the same endpoint and credentials with its own byte count: the host's reads are charged only
+     * for their own requests, never the panel's (M31B-DES-12).
+     */
+    public BlockfrostApi copy() {
+        return new BlockfrostApi(base.toString(), projectId, timeout);
     }
 
     /** GET {@code path} within this API's default timeout; null on 404. */
@@ -104,6 +112,12 @@ public final class BlockfrostApi {
             throw new Failed("the provider did not answer " + kindOf(path) + " in time");
         } catch (ExecutionException e) {
             throw new Failed("the provider could not be reached (" + e.getCause().getClass().getSimpleName() + ")");
+        } catch (InterruptedException e) {
+            // The waiting thread was interrupted (a host shutdown): abandon the exchange, and close a body that may
+            // still arrive, before propagating (M31B-CDX-24).
+            f.cancel(true);
+            f.thenAccept(late -> closeQuietly(late.body()));
+            throw e;
         }
         InputStream in = r.body();
         CompletableFuture<byte[]> body = CompletableFuture.supplyAsync(() -> {
@@ -117,16 +131,18 @@ public final class BlockfrostApi {
         try {
             b = body.get(Math.max(1, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
-            try {
-                in.close();
-            } catch (IOException ignored) {
-                // aborting a stalled body
-            }
+            closeQuietly(in);
+            body.cancel(true);
             throw new Failed("the provider's answer to " + kindOf(path) + " did not arrive in time");
         } catch (ExecutionException e) {
+            closeQuietly(in);
             throw new Failed("the provider's answer was cut off");
+        } catch (InterruptedException e) {
+            closeQuietly(in);   // ends the body read on the I/O thread (M31B-CDX-24)
+            body.cancel(true);
+            throw e;
         }
-        bytesRead += b.length;
+        bytesRead.addAndGet(b.length);
         int status = r.statusCode();
         if (status == 404) return null;
         if (status < 200 || status > 299) throw new Failed("the provider answered HTTP " + status + " for " + kindOf(path));
@@ -135,6 +151,14 @@ public final class BlockfrostApi {
             return HostJson.MAPPER.readTree(b);
         } catch (IOException e) {
             throw new Failed("the provider's answer is not JSON");
+        }
+    }
+
+    private static void closeQuietly(InputStream in) {
+        try {
+            in.close();
+        } catch (IOException ignored) {
+            // aborting a body
         }
     }
 

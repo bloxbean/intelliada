@@ -54,7 +54,8 @@ public final class ChainReads implements HostSession.Reads {
 
     /** The current forward call (the reverse id's generation), its budget use, and its pending chunks by cursor. */
     private String call = "";
-    private ObjectNode callLastTip;
+    /** The last chain point handed to the host in this call: later points must not go back from it (M31B-CDX-22). */
+    private ObjectNode lastSent;
     private long callProviderBytes0;
     private long callAnswerBytes;
     private final Map<String, Pending> pending = new HashMap<>();
@@ -80,7 +81,7 @@ public final class ChainReads implements HostSession.Reads {
         String generation = id.substring(0, Math.max(0, id.indexOf('.')));
         if (!generation.equals(call)) {
             call = generation;
-            callLastTip = null;
+            lastSent = null;
             callProviderBytes0 = api.bytesRead();
             callAnswerBytes = 0;
             pending.clear();
@@ -96,14 +97,30 @@ public final class ChainReads implements HostSession.Reads {
         return Math.max(0, bytesPerCall - (api.bytesRead() - callProviderBytes0) - callAnswerBytes);
     }
 
-    /** Charges the serialized response; an answer over the call's budget becomes {@code failed}. */
+    /**
+     * Charges the serialized response against what the call has left (provider bytes and answers together); an answer
+     * over it becomes {@code failed}, which is charged in turn (M31B-CDX-16). Records the chain point handed out.
+     */
     private ObjectNode charge(ObjectNode answer) {
         long n = HostJson.write(answer).length + ENVELOPE_BYTES;
-        if (callAnswerBytes + n > bytesPerCall) {
-            return failed(answer.has("tip") ? (ObjectNode) answer.get("tip") : null, "the answer exceeds this call's read budget");
+        if (n > remaining()) {
+            answer = failed(answer.has("tip") ? (ObjectNode) answer.get("tip") : lastSent, "the answer exceeds this call's read budget");
+            n = HostJson.write(answer).length + ENVELOPE_BYTES;
         }
         callAnswerBytes += n;
+        if (answer.get("tip") instanceof ObjectNode t) lastSent = t;
         return answer;
+    }
+
+    /**
+     * Whether a chain point may follow the last one handed out in this call: higher, or the same block. A lower or
+     * conflicting point would read as a moved chain to the host (M31B-CDX-22).
+     */
+    private boolean usable(ObjectNode tip) {
+        if (lastSent == null) return true;
+        long h = tip.path("height").longValue(), h0 = lastSent.path("height").longValue();
+        if (h != h0) return h > h0 && tip.path("slot").longValue() >= lastSent.path("slot").longValue();
+        return tip.equals(lastSent);
     }
 
     private ObjectNode continuation(String kind, JsonNode q) {
@@ -121,28 +138,33 @@ public final class ChainReads implements HostSession.Reads {
         validate(kind, q);
         long deadline = System.nanoTime() + READ_DEADLINE_NANOS;
         if (kind.equals("tip")) {
-            // A tip is its own chain point: one read, no bracket.
-            try {
-                ObjectNode t = tip(deadline);
-                callLastTip = t;
-                return with(t, "value", t.deepCopy());
-            } catch (BlockfrostApi.Failed e) {
-                if (callLastTip == null) throw e;
-                return failed(callLastTip, e.getMessage());
+            // A tip is its own chain point: one read, no bracket; a point behind the last one sent is read again.
+            for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+                try {
+                    ObjectNode t = tip(deadline);
+                    if (usable(t)) return with(t, "value", t.deepCopy());
+                } catch (BlockfrostApi.Failed e) {
+                    if (lastSent == null) throw e;
+                    return failed(lastSent, e.getMessage());
+                }
             }
+            if (lastSent == null) throw new BlockfrostApi.Failed("the provider's tip went back");
+            return failed(lastSent, "the provider's tip went back from this call's last chain point");
         }
         ObjectNode before = null;
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+            ObjectNode opened;
             try {
-                before = tip(deadline);
-                callLastTip = before;
+                opened = tip(deadline);
             } catch (BlockfrostApi.Failed e) {
-                // A provider failure is a node failure for the host (D16), with the last chain point this call saw;
-                // only with none at all is the read unanswerable (the call is then cancelled; M31B-DES-8).
-                ObjectNode known = before != null ? before : callLastTip;
+                // A provider failure is a node failure for the host (D16), with the last usable chain point; only with
+                // none at all is the read unanswerable (the call is then cancelled; M31B-DES-8).
+                ObjectNode known = lastSent != null ? lastSent : before;
                 if (known == null) throw e;
                 return failed(known, e.getMessage());
             }
+            if (!usable(opened)) continue;   // behind this call's last point: read again (M31B-CDX-22)
+            before = opened;
             Answer a;
             try {
                 a = answer(kind, q, before, deadline);
@@ -155,6 +177,7 @@ public final class ChainReads implements HostSession.Reads {
             } catch (BlockfrostApi.Failed e) {
                 return failed(before, e.getMessage());    // the opening chain point is known (M31B-CDX-5)
             }
+            if (!usable(after)) continue;
             if (after.equals(before)) {
                 // Chunks (and their cursors) only once the bracket is stable (M31B-CDX-11).
                 return a.items == null ? a.single : chunk(kind, selector(kind, q), before, a.items, false);
@@ -169,11 +192,12 @@ public final class ChainReads implements HostSession.Reads {
                 return failed(after, e.getMessage());
             }
             if (sameAnswer(a, again)) {
-                callLastTip = after;
                 return again.items == null ? again.single : chunk(kind, selector(kind, q), after, again.items, false);
             }
         }
-        return failed(before, "the chain kept moving: no stable chain point for this read");
+        ObjectNode at = lastSent != null ? lastSent : before;
+        if (at == null) throw new BlockfrostApi.Failed("the provider's tip went back");
+        return failed(at, "the chain kept moving: no stable chain point for this read");
     }
 
     /** The same content, whatever chain point each was labelled with. */
@@ -221,9 +245,13 @@ public final class ChainReads implements HostSession.Reads {
                 if (!t.path("outputs").isArray()) throw new ReadFailed("the provider's transaction outputs are malformed");
                 int index = Integer.parseInt(ref[1]);
                 for (JsonNode o : t.path("outputs")) {
+                    // Every row must carry a valid index, so a malformed one is never skipped into absence (M31B-CDX-21).
+                    long i = nat(o.get("output_index"), 65535, "output index");
+                    JsonNode col = o.get("collateral");
+                    if (col != null && !col.isNull() && !col.isBoolean()) throw new ReadFailed("the provider's collateral flag is malformed");
                     // A collateral return exists only when a script failed; Blockfrost lists it flagged (M31B-CDX-12).
-                    if (o.path("collateral").asBoolean(false)) continue;
-                    if (o.path("output_index").asInt(-1) == index) return Answer.of(with(tip, "value", snapshot(o, ref[0])));
+                    if (col != null && col.booleanValue()) continue;
+                    if (i == index) return Answer.of(with(tip, "value", snapshot(o, ref[0])));
                 }
                 return Answer.of(absent(tip));
             }
@@ -250,7 +278,7 @@ public final class ChainReads implements HostSession.Reads {
                 String cred = q.path("credential").textValue();
                 boolean unknown = false;
                 for (boolean script : new boolean[]{true, false}) {
-                    JsonNode a = api.get("/accounts/" + StakeAddresses.reward(cred, script, networkId), deadline);
+                    JsonNode a = api.get("/accounts/" + StakeAddresses.reward(cred, script, networkId), deadline, remaining());
                     if (a == null) continue;
                     if (!a.isObject()) throw new ReadFailed("the provider's account is malformed");
                     JsonNode active = a.get("active");
@@ -278,18 +306,19 @@ public final class ChainReads implements HostSession.Reads {
                 if (!list.isArray()) throw new ReadFailed("the provider's redeemers are malformed");
                 if (list.isEmpty()) {
                     // Yaci Store answers [] for an unknown transaction too: [] is for a known one only (M31B-CDX-13).
-                    if (api.get("/txs/" + tx, deadline) == null) return Answer.of(absent(tip));
+                    if (api.get("/txs/" + tx, deadline, remaining()) == null) return Answer.of(absent(tip));
                 }
                 ArrayNode out = F.arrayNode();
                 for (JsonNode r : list) {
                     String purpose = r.path("purpose").asText("");
                     if (purpose.equals("withdrawal")) purpose = "reward";
                     String sh = r.path("script_hash").textValue(), dh = r.path("redeemer_data_hash").textValue();
-                    if (!purpose.matches("spend|mint|cert|reward|voting|proposing") || !r.path("tx_index").canConvertToInt()
+                    if (!purpose.matches("spend|mint|cert|reward|voting|proposing")
                             || sh == null || !HASH28.matcher(sh).matches() || dh == null || !HASH32.matcher(dh).matches()) {
                         throw new ReadFailed("the provider's redeemer is malformed");
                     }
-                    out.add(F.objectNode().put("purpose", purpose).put("index", r.path("tx_index").asInt())
+                    long index = nat(r.get("tx_index"), 65535, "redeemer index");
+                    out.add(F.objectNode().put("purpose", purpose).put("index", index)
                             .put("scriptHash", sh).put("dataHash", dh));
                 }
                 return Answer.of(with(tip, "value", out));
@@ -330,6 +359,23 @@ public final class ChainReads implements HostSession.Reads {
      */
     private ObjectNode chunk(String kind, String selector, ObjectNode tip, List<JsonNode> items, boolean continuation) {
         int base = HostJson.write(with(tip, "value", F.arrayNode())).length + ENVELOPE_BYTES + 64;   // envelope and a cursor
+        if (!continuation) {
+            // The whole list must be deliverable before any chunk or cursor is published (M31B-CDX-23): each item fits a
+            // chunk, and all chunks fit what the call has left.
+            long total = 0;
+            int chunkFill = base, chunks = 1;
+            for (JsonNode it : items) {
+                int n = HostJson.write(it).length + 1;
+                if (base + n > CHUNK_BYTES) return failed(tip, "a single answer item is larger than a chunk");
+                if (chunkFill + n > CHUNK_BYTES) {
+                    chunks++;
+                    chunkFill = base;
+                }
+                chunkFill += n;
+                total += n;
+            }
+            if (total + (long) chunks * base > remaining()) return failed(tip, "the answer exceeds this call's read budget");
+        }
         ArrayNode value = F.arrayNode();
         int bytes = base, i;
         for (i = 0; i < items.size(); i++) {
@@ -362,11 +408,11 @@ public final class ChainReads implements HostSession.Reads {
     /** A Blockfrost UTxO in the protocol's snapshot encoding (ADR-0015 D6), exactly the seven fields. */
     static ObjectNode snapshot(JsonNode u, @Nullable String txHash) throws ReadFailed {
         String h = txHash != null ? txHash : u.path("tx_hash").textValue();
-        if (h == null || !HASH32.matcher(h).matches() || !u.path("output_index").canConvertToInt() || !u.path("address").isTextual()
-                || !u.path("amount").isArray()) {
+        if (h == null || !HASH32.matcher(h).matches() || !u.path("address").isTextual() || !u.path("amount").isArray()) {
             throw new ReadFailed("the provider's UTxO is malformed");
         }
-        ObjectNode o = F.objectNode().put("tx_hash", h).put("output_index", u.path("output_index").asInt())
+        long index = nat(u.get("output_index"), 65535, "output index");
+        ObjectNode o = F.objectNode().put("tx_hash", h).put("output_index", index)
                 .put("address", u.path("address").textValue());
         ArrayNode amount = o.putArray("amount");
         for (JsonNode a : u.path("amount")) {
@@ -386,13 +432,24 @@ public final class ChainReads implements HostSession.Reads {
     }
 
     private ObjectNode tip(long deadline) throws Exception {
-        JsonNode b = api.get("/blocks/latest", deadline);
-        if (b == null || !b.path("slot").canConvertToLong() || !b.path("height").canConvertToLong() || !b.path("hash").isTextual()
-                || !HASH32.matcher(b.path("hash").textValue()).matches()) {
+        JsonNode b = api.get("/blocks/latest", deadline, remaining());
+        if (b == null || !b.path("hash").isTextual() || !HASH32.matcher(b.path("hash").textValue()).matches()) {
             throw new BlockfrostApi.Failed("the provider has no readable tip");
         }
-        return F.objectNode().put("slot", b.path("slot").asLong()).put("hash", b.path("hash").textValue())
-                .put("height", b.path("height").asLong());
+        try {
+            return F.objectNode().put("slot", nat(b.get("slot"), Long.MAX_VALUE, "slot")).put("hash", b.path("hash").textValue())
+                    .put("height", nat(b.get("height"), Long.MAX_VALUE, "height"));
+        } catch (ReadFailed e) {
+            throw new BlockfrostApi.Failed("the provider's tip is malformed");
+        }
+    }
+
+    /** A JSON integer in {@code [0, max]}: never a fraction, a string or a negative (M31B-CDX-21). */
+    static long nat(@Nullable JsonNode n, long max, String what) throws ReadFailed {
+        if (n == null || !n.isIntegralNumber() || !n.canConvertToLong() || n.longValue() < 0 || n.longValue() > max) {
+            throw new ReadFailed("the provider's " + what + " is malformed");
+        }
+        return n.longValue();
     }
 
     private static ObjectNode with(ObjectNode tip, String field, JsonNode value) {
