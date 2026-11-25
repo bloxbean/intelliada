@@ -82,12 +82,26 @@ public final class JoustRunPanel implements Disposable {
         actions.add(button("Calls", c -> session().describe(c)));
         actions.add(button("Deployment", c -> session().deployment(c)));
         actions.add(button("Prerequisites", c -> session().prerequisites(c)));
-        actions.add(button("Instances", this::listInstances));
-        actions.add(button("State of instance", c -> {
-            String inst = instanceList.getSelectedValue();
-            if (inst == null) throw new IllegalStateException("select an instance (Instances first)");
-            return session().view(c, inst, null);
+        actions.add(button("Instances", c -> listInstances(c, false)));
+        actions.add(button("More instances", c -> listInstances(c, true)));
+        actions.add(button("State of instance", c -> session().view(c, selectedInstance(), null, null)));
+        actions.add(button("Objects of instance", c -> session().objects(c, selectedInstance(), 100)));
+        actions.add(button("Named view…", c -> {
+            String[] in = ask("View name", "Arguments (JSON object in the description's encoding)", "{}");
+            if (in == null) return null;
+            JsonNode args = HostJson.parse(in[1].getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            if (!args.isObject()) throw new IllegalArgumentException("the arguments must be a JSON object");
+            return session().view(c, selectedInstance(), in[0], (com.fasterxml.jackson.databind.node.ObjectNode) args);
         }));
+        actions.add(button("Decode datum…", c -> {
+            String[] in = ask("Datum (hex CBOR)", null, null);
+            if (in == null) return null;
+            if (!in[0].matches("(?:[0-9a-fA-F]{2}){1,65536}")) throw new IllegalArgumentException("not hex CBOR");
+            return session().decode(c, in[0].toLowerCase());
+        }));
+        JButton refresh = new JButton("Refresh modules and networks");
+        refresh.addActionListener(e -> refreshChoices());
+        actions.add(refresh);
         JPanel left = new JPanel(new BorderLayout());
         left.add(new JBScrollPane(contractList), BorderLayout.CENTER);
         JPanel leftSouth = new JPanel(new BorderLayout());
@@ -106,8 +120,38 @@ public final class JoustRunPanel implements Disposable {
         start.addActionListener(e -> startHost());
         stop.addActionListener(e -> stopHost());
         modules.addActionListener(e -> listDescriptions());
+        contractList.addListSelectionListener(e -> {
+            instances.clear();
+            nextListing = null;
+        });
         refreshChoices();
         updateButtons();
+    }
+
+    private volatile String nextListing;
+    private volatile int nextAfter;
+    private volatile boolean launching;
+
+    private String selectedInstance() {
+        String inst = instanceList.getSelectedValue();
+        if (inst == null) throw new IllegalStateException("select an instance (Instances first)");
+        return inst;
+    }
+
+    /** Asks for one or two values on the EDT; null when cancelled. */
+    private static @Nullable String[] ask(String first, @Nullable String second, @Nullable String secondDefault) throws Exception {
+        String[][] out = {null};
+        ApplicationManager.getApplication().invokeAndWait(() -> {
+            String a = com.intellij.openapi.ui.Messages.showInputDialog(first, "JOUST Run", null);
+            if (a == null || a.isBlank()) return;
+            String b = null;
+            if (second != null) {
+                b = com.intellij.openapi.ui.Messages.showInputDialog(second, "JOUST Run", null, secondDefault, null);
+                if (b == null) return;
+            }
+            out[0] = new String[]{a.strip(), b};
+        });
+        return out[0];
     }
 
     public JComponent component() {
@@ -130,12 +174,27 @@ public final class JoustRunPanel implements Disposable {
         }
     }
 
+    /** Refills the choices: the project layout is computed off the EDT when not cached yet (M31B-CDX-7). */
     void refreshChoices() {
-        modules.removeAllItems();
+        if (session != null || launching) return;
         JoustProjectLayout layout = JoustProjectService.getInstance(project).cachedLayout();
+        if (layout == null) {
+            ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                JoustProjectService.getInstance(project).layout();
+                ui(this::refreshChoices);
+            });
+        }
+        modules.removeAllItems();
         if (layout != null) for (JoustProjectLayout.GradleModule m : layout.gradleModules()) modules.addItem(new ModuleItem(m.dir()));
         nodes.removeAllItems();
-        for (RemoteNode n : RemoteNodeState.getInstance().getRemoteNodes()) nodes.addItem(new NodeItem(n));
+        // Only the networks this milestone serves (M31B-CDX-7).
+        for (RemoteNode n : RemoteNodeState.getInstance().getRemoteNodes()) {
+            var t = n.getNodeType();
+            if (t == com.bloxbean.intelliada.idea.core.util.NodeType.YaciDevKit
+                    || t == com.bloxbean.intelliada.idea.core.util.NodeType.LocalYaciDevKit) {
+                nodes.addItem(new NodeItem(n));
+            }
+        }
         listDescriptions();
     }
 
@@ -180,22 +239,23 @@ public final class JoustRunPanel implements Disposable {
         }
         JoustRunGuard guard = JoustRunGuard.capture(project);   // bound now, while trusted
         status.setText("Starting…");
-        start.setEnabled(false);
+        launching = true;
+        updateButtons();   // the selections are frozen for the whole launch (M31B-CDX-8)
         new Task.Backgroundable(project, "JOUST: starting the dev host", true) {
             @Override
             public void run(@NotNull ProgressIndicator indicator) {
                 try {
                     JoustRunSession.Binding b = JoustRunSession.bind(n.node());
                     JoustHostService.Running r = JoustHostService.getInstance(project).start(guard, m.dir(),
-                            JoustRunSession.initParams(b.identity()), String.valueOf(n.node().getId()),
+                            JoustRunSession.initParams(b.identity()), b.key(),
                             JoustRunSession.reads(b), why -> ui(() -> ended(why)));
                     JoustRunSession s = new JoustRunSession(b, r);
-                    r.stderr().listen(text -> ui(() -> appendConsole(text)));
                     ui(() -> started(s));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } catch (Exception e) {
                     ui(() -> {
+                        launching = false;
                         status.setText("Not running");
                         details.setText("The host did not start: " + PlainText.literal(String.valueOf(e.getMessage()), 2000));
                         updateButtons();
@@ -206,8 +266,11 @@ public final class JoustRunPanel implements Disposable {
     }
 
     private void started(JoustRunSession s) {
+        launching = false;
         session = s;
         appendConsole(s.running().stderr().text());
+        // Registered after the snapshot of the text so far, so early lines are not shown twice (M31B-DES-9).
+        s.running().stderr().listen(text -> ui(() -> appendConsole(text)));
         contracts.clear();
         for (JsonNode c : s.running().initialize().path("contracts")) {
             String name = c.path("name").textValue();
@@ -230,17 +293,19 @@ public final class JoustRunPanel implements Disposable {
 
     private void stopHost() {
         JoustRunSession s = session;
-        if (s == null) return;
-        Path dir = s.running().moduleDir();
+        ModuleItem m = (ModuleItem) modules.getSelectedItem();
+        Path dir = s != null ? s.running().moduleDir() : launching && m != null ? m.dir() : null;
+        if (dir == null) return;
+        // Stop also reaches a launch in progress: the service refuses it before or as its process starts.
         ApplicationManager.getApplication().executeOnPooledThread(() -> JoustHostService.getInstance(project).stop(dir));
     }
 
     private void updateButtons() {
-        boolean running = session != null;
-        start.setEnabled(!running);
-        stop.setEnabled(running);
-        modules.setEnabled(!running);
-        nodes.setEnabled(!running);
+        boolean busy = session != null || launching;
+        start.setEnabled(!busy);
+        stop.setEnabled(busy);
+        modules.setEnabled(!busy);
+        nodes.setEnabled(!busy);
     }
 
     // ---- calls --------------------------------------------------------------------------------------------------
@@ -261,7 +326,12 @@ public final class JoustRunPanel implements Disposable {
             ApplicationManager.getApplication().executeOnPooledThread(() -> {
                 String text;
                 try {
-                    text = HostJson.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(call.apply(c));
+                    JsonNode result = call.apply(c);
+                    if (result == null) {
+                        ui(() -> details.setText(""));
+                        return;
+                    }
+                    text = HostJson.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(result);
                 } catch (HostError he) {
                     text = describe(he);
                 } catch (Exception ex) {
@@ -274,17 +344,25 @@ public final class JoustRunPanel implements Disposable {
         return b;
     }
 
-    private JsonNode listInstances(String contract) throws Exception {
-        JsonNode r = session().instances(contract, 100);
+    /** The first page, or with {@code more} the next page of the last listing (protocol continuation; M31B-CDX-10). */
+    private JsonNode listInstances(String contract, boolean more) throws Exception {
+        JsonNode r;
+        if (more) {
+            if (nextListing == null) throw new IllegalStateException("no further page: list the instances first");
+            r = session().nextPage("instances", nextListing, nextAfter, 100);
+        } else {
+            r = session().instances(contract, 100);
+            ui(instances::clear);
+        }
+        JsonNode next = r.path("next");
+        nextListing = next.isIntegralNumber() ? r.path("listing").textValue() : null;
+        nextAfter = next.isIntegralNumber() ? next.intValue() : 0;
         List<String> refs = new ArrayList<>();
         for (JsonNode it : r.path("items")) {
             String inst = it.path("instance").textValue();
             if (inst != null && inst.matches("[0-9a-f]{64}") && !refs.contains(inst)) refs.add(inst);
         }
-        ui(() -> {
-            instances.clear();
-            refs.forEach(instances::addElement);
-        });
+        ui(() -> refs.stream().filter(x -> !instances.contains(x)).forEach(instances::addElement));
         return r;
     }
 
