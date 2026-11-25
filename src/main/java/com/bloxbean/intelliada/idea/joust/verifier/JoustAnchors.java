@@ -190,6 +190,7 @@ public final class JoustAnchors {
      */
     private static Resolved resolve(HostSnapshot snapshot, String classPath, String simple, boolean verifier, int javaFeature)
             throws Refused {
+        if (!snapshot.ambiguities().isEmpty()) throw new Refused(snapshot.ambiguities().get(0));
         int entry = snapshot.firstWithClass(classPath, javaFeature);
         if (entry < 0) throw new Refused("the class " + classPath.replace('/', '.').replace(".class", "") + " is not in the build");
         // The class in exactly one launch entry: a dependency shipping the validator's class with a blueprint of its
@@ -199,12 +200,11 @@ public final class JoustAnchors {
             throw new Refused("the class " + classPath.replace('/', '.').replace(".class", "") + " is in " + holders.size()
                     + " class-path entries; it must be in exactly one");
         }
-        // In a directory, names its file system may treat alike count as one name: over-reporting only refuses.
-        boolean dir = snapshot.isDirectory(entry);
-        String tail = dir ? HostSnapshot.loose(simple + ".class") : simple + ".class";
-        long sameName = snapshot.classesAt(entry).stream().map(c -> dir ? HostSnapshot.loose(c) : c)
-                .filter(c -> c.equals(tail) || c.endsWith("/" + tail)).count();
-        if (sameName != 1) throw new Refused("the class-path entry holding " + simple + " holds " + sameName + " classes of that name");
+        // Physical entries of that file name, counted as the runtime counts them when it pairs the class with its blueprint:
+        // a base and a versioned copy in a jar are two; one file reached through another spelling is one (M33A-CDX-61, -62).
+        long sameName = snapshot.physicalNamed(entry, simple + ".class");
+        // The runtime refuses more than one; none means the file is spelled otherwise and served under the name.
+        if (sameName > 1) throw new Refused("the class-path entry holding " + simple + " holds " + sameName + " classes of that name");
         String blueprint = "META-INF/plutus/" + simple + ".plutus.json";
         List<HostSnapshot.Anchor> copies = snapshot.anchorsNamed(blueprint);   // any casing in a directory (M33A-CDX-36)
         List<HostSnapshot.Anchor> owned = copies.stream().filter(a -> a.ordinal() == entry).toList();

@@ -73,6 +73,30 @@ public final class HostSnapshot {
      */
     private final Map<Integer, java.util.Set<String>> packagesServed;
 
+    /**
+     * Per entry, how many physical entries carry each class-file name ({@code Foo.class}), counted as the runtime counts
+     * them when it pairs a validator with its blueprint: every jar entry (base, versioned, repeated) and every directory
+     * file or folder of that name (M33A-CDX-61, -CDX-62).
+     */
+    private final Map<Integer, Map<String, Integer>> fileNames;
+    /** Why classes in this launch set cannot be resolved as every JDK would: no anchors then (M33A-DES-26). */
+    private final List<String> ambiguities;
+
+    /** The reasons the class resolution is ambiguous across JDKs; empty when it is not. */
+    public List<String> ambiguities() {
+        return ambiguities;
+    }
+
+    /** How many physical entries of {@code ordinal} carry the file name {@code simpleFile}, as the runtime counts them. */
+    public int physicalNamed(int ordinal, String simpleFile) {
+        return fileNames.getOrDefault(ordinal, Map.of()).getOrDefault(simpleFile, 0);
+    }
+
+    private static void countName(Map<Integer, Map<String, Integer>> names, int ordinal, String path) {
+        String seg = path.substring(path.lastIndexOf('/') + 1);
+        if (seg.endsWith(".class")) names.computeIfAbsent(ordinal, k -> new java.util.HashMap<>()).merge(seg, 1, Integer::sum);
+    }
+
     /** The package roots of JOUST's reviewed jars: no other entry may serve classes in them (D12). */
     public static final List<String> PROTECTED_PACKAGES = List.of("org/julclang/state/api/", "org/julclang/state/runtime/",
             "org/julclang/state/serve/", "org/julclang/state/host/", "org/julclang/state/verifier/");
@@ -115,7 +139,8 @@ public final class HostSnapshot {
 
     private HostSnapshot(Path root, List<Path> classPath, String digest, List<Anchor> anchors, Map<Integer, java.util.Set<String>> classes,
                          Map<Integer, Map<String, java.util.Set<Integer>>> versioned, java.util.Set<Integer> multiRelease,
-                         java.util.Set<Integer> directories, Map<Integer, java.util.Set<String>> packagesServed) {
+                         java.util.Set<Integer> directories, Map<Integer, java.util.Set<String>> packagesServed,
+                         Map<Integer, Map<String, Integer>> fileNames, List<String> ambiguities) {
         this.root = root;
         this.classPath = classPath;
         this.digest = digest;
@@ -125,6 +150,8 @@ public final class HostSnapshot {
         this.multiRelease = multiRelease;
         this.directories = directories;
         this.packagesServed = packagesServed;
+        this.fileNames = fileNames;
+        this.ambiguities = ambiguities;
     }
 
     /**
@@ -262,7 +289,7 @@ public final class HostSnapshot {
             ok = true;
             // The resolutions were made in the copy before it moved; the moved directory serves the same names.
             return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes, s.versioned, s.multiRelease, s.directories,
-                    s.packagesServed);
+                    s.packagesServed, s.fileNames, s.ambiguities);
         } finally {
             if (!ok) delete(root);
         }
@@ -279,6 +306,8 @@ public final class HostSnapshot {
         long[] total = {0, 0};
         long[] classCount = {0};
         Map<Integer, Path> dirPaths = new LinkedHashMap<>();
+        Map<Integer, Map<String, Integer>> fileNames = new LinkedHashMap<>();
+        List<String> ambiguities = new ArrayList<>();
         for (HostSpec.Entry e : spec.launch()) {
             int o = e.ordinal();
             if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
@@ -287,7 +316,7 @@ public final class HostSnapshot {
                 String h = copyFile(e.path(), dst, total);
                 if (!h.equals(e.sha256())) throw new HostSpec.Invalid("a class-path jar changed since joustHostSpec ran (ordinal " + o + ")");
                 lines.append(h).append(' ').append(o).append(" jar \n");
-                if (jarAnchors(dst, o, anchors, total, classes, versioned, classCount)) multiRelease.add(o);
+                if (jarAnchors(dst, o, anchors, total, classes, versioned, classCount, fileNames, ambiguities)) multiRelease.add(o);
                 cp.add(dst);
             } else {
                 // The declared root must be a real directory (not a link), even when it lists no files (M31A-CDX-12).
@@ -300,6 +329,13 @@ public final class HostSnapshot {
                 createPrivateDir(dir);
                 List<String> rels = new ArrayList<>(e.files().keySet());
                 rels.sort(HostSnapshot::compareUtf8);
+                java.util.Set<String> folders = new java.util.HashSet<>();
+                for (String rel : rels) {
+                    countName(fileNames, o, rel);
+                    for (int k = rel.indexOf('/'); k > 0; k = rel.indexOf('/', k + 1)) {
+                        if (folders.add(rel.substring(0, k))) countName(fileNames, o, rel.substring(0, k));
+                    }
+                }
                 // Where the platform offers it, every component is opened relative to the directory handle already
                 // checked, never by a fresh path lookup, so no component can be swapped for a link (M31A-CDX-24).
                 try (java.nio.file.DirectoryStream<Path> ds = openRoot(e.path())) {
@@ -327,7 +363,7 @@ public final class HostSnapshot {
         classes.forEach((k, v) -> frozen.put(k, Collections.unmodifiableSet(v)));
         return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors), Collections.unmodifiableMap(frozen),
                 Collections.unmodifiableMap(versioned), java.util.Set.copyOf(multiRelease), java.util.Set.copyOf(directories),
-                Collections.unmodifiableMap(packagesServed));
+                Collections.unmodifiableMap(packagesServed), Collections.unmodifiableMap(fileNames), List.copyOf(ambiguities));
     }
 
     /**
@@ -365,10 +401,26 @@ public final class HostSnapshot {
         resolveAnchors(dirs, blueprints, anchors, total);
         for (var d : dirs.entrySet()) {
             java.util.Set<String> listed = classes.computeIfAbsent(d.getKey(), k -> new java.util.LinkedHashSet<>());
-            for (String c : wanted) if (!listed.contains(c) && serves(d.getValue(), c)) listed.add(c);
+            for (String c : wanted) {
+                cancelled();
+                if (!listed.contains(c) && serves(d.getValue(), c)) listed.add(c);
+            }
             java.util.Set<String> pk = new java.util.LinkedHashSet<>();
             for (String pkg : PROTECTED_PACKAGES) {
-                if (Files.isDirectory(d.getValue().resolve(pkg), LinkOption.NOFOLLOW_LINKS)) pk.add(pkg);
+                // A class beneath the package root, as the file system serves it; resources alone are no class (M33A-CDX-63).
+                Path root = d.getValue().resolve(pkg);
+                if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) continue;
+                try (var w = Files.walk(root)) {
+                    var it = w.iterator();
+                    while (it.hasNext()) {
+                        cancelled();
+                        Path f = it.next();
+                        if (Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS) && loose(f.getFileName().toString()).endsWith(".class")) {
+                            pk.add(pkg);
+                            break;
+                        }
+                    }
+                }
             }
             packages.put(d.getKey(), java.util.Set.copyOf(pk));
         }
@@ -382,6 +434,7 @@ public final class HostSnapshot {
         for (Anchor a : anchors) listed.add(a.ordinal() + "|" + a.path());
         for (var d : dirs.entrySet()) {
             for (String n : names) {
+                cancelled();
                 if (listed.contains(d.getKey() + "|" + n) || !serves(d.getValue(), n)) continue;
                 anchors.add(new Anchor(d.getKey(), n, readCapped(d.getValue().resolve(n), total)));
             }
@@ -391,7 +444,16 @@ public final class HostSnapshot {
     /** Whether the copied directory's file system serves a regular file under {@code rel}. */
     private static boolean serves(Path dir, String rel) {
         if (!HostSpec.safeRelative(rel)) return false;
-        return Files.isRegularFile(dir.resolve(rel), LinkOption.NOFOLLOW_LINKS);
+        try {
+            return Files.isRegularFile(dir.resolve(rel), LinkOption.NOFOLLOW_LINKS);
+        } catch (java.nio.file.InvalidPathException e) {
+            return false;   // a name this file system cannot hold is not served from it (M33A-CDX-65)
+        }
+    }
+
+    /** Stops the resolution pass once the snapshot is cancelled (M33A-CDX-66). */
+    private static void cancelled() throws HostSpec.Invalid {
+        if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
     }
 
     /**
@@ -549,7 +611,8 @@ public final class HostSnapshot {
      */
     /** Records a jar's anchors and classes; true when its manifest makes it a multi-release jar. */
     private static boolean jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total, Map<Integer, java.util.Set<String>> classes,
-                                      Map<Integer, Map<String, java.util.Set<Integer>>> versioned, long[] classCount)
+                                      Map<Integer, Map<String, java.util.Set<Integer>>> versioned, long[] classCount,
+                                      Map<Integer, Map<String, Integer>> fileNames, List<String> ambiguities)
             throws HostSpec.Invalid, IOException {
         try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jar.toFile(), false)) {
             // The effective manifest, read through a bounded stream before it is parsed (M31A-CDX-25).
@@ -605,6 +668,7 @@ public final class HostSnapshot {
             while (en.hasMoreElements()) {
                 ZipEntry ze = en.nextElement();
                 String name = ze.getName();
+                countName(fileNames, ordinal, name);   // every physical entry, repeats included, as the runtime counts
                 // Jar names are exact: the JVM looks them up case-sensitively (M33A-CDX-45).
                 if (!ze.isDirectory() && HostSpec.safeRelative(name)) addClass(classes, versioned, ordinal, name, classCount);
                 if (ze.isDirectory() || !isAnchor(name) || !HostSpec.safeRelative(name)) continue;
@@ -618,17 +682,17 @@ public final class HostSnapshot {
                 anchors.add(new Anchor(ordinal, name, b));
             }
             // Multi-Release as the JDK reads it: Boolean.parseBoolean of the value, never trimmed. A value other than true or
-            // false, or a verdict other than this JDK's own, is ambiguous across JDKs and refused (M33A-CDX-55).
+            // false, or a verdict other than this JDK's own, may read differently on the host's JDK: the snapshot is kept
+            // (views and listings still work) and nothing is anchored (M33A-CDX-55, -DES-26).
             String mr = mf == null ? null : mf.getMainAttributes().getValue("Multi-Release");
-            if (mr != null && !mr.equalsIgnoreCase("true") && !mr.equalsIgnoreCase("false")) {
-                throw new HostSpec.Invalid("a class-path jar's Multi-Release value is ambiguous (ordinal " + ordinal + ")");
-            }
             boolean ours = Boolean.parseBoolean(mr);
             boolean jdk;
             try (java.util.jar.JarFile v = new java.util.jar.JarFile(jar.toFile(), false, java.util.zip.ZipFile.OPEN_READ, Runtime.version())) {
                 jdk = v.isMultiRelease();
             }
-            if (ours != jdk) throw new HostSpec.Invalid("a class-path jar reads as multi-release differently to the JVM (ordinal " + ordinal + ")");
+            if ((mr != null && !mr.equalsIgnoreCase("true") && !mr.equalsIgnoreCase("false")) || ours != jdk) {
+                ambiguities.add("a class-path jar's Multi-Release value may read differently on another JDK (ordinal " + ordinal + ")");
+            }
             return ours;
         } catch (java.util.zip.ZipException e) {
             throw new HostSpec.Invalid("a class-path jar is not a readable zip");

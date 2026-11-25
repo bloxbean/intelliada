@@ -261,8 +261,8 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         assertRefused(snapshot(List.of(jar, ex.verifierJar())), name, "is not in the build");
     }
 
-    /** M33A-CDX-55: a Multi-Release value the JDK reads differently (here with trailing blanks) refuses the snapshot. */
-    public void testAnAmbiguousMultiReleaseValueIsRefused() throws Exception {
+    /** M33A-CDX-55, -DES-26: a Multi-Release value read differently across JDKs keeps the snapshot and anchors nothing. */
+    public void testAnAmbiguousMultiReleaseValueAnchorsNothing() throws Exception {
         Path jar = newFolder().resolve("mr.jar");
         try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
             out.putNextEntry(new java.util.zip.ZipEntry("META-INF/MANIFEST.MF"));
@@ -272,11 +272,78 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
             out.write(new byte[]{(byte) 0xca, (byte) 0xfe});
             out.closeEntry();
         }
+        HostSnapshot s = snapshot(List.of(jar));
         try {
-            snapshot(List.of(jar)).delete();
-            fail("an ambiguous Multi-Release value was accepted");
-        } catch (HostSpec.Invalid e) {
-            assertTrue(e.getMessage(), e.getMessage().contains("Multi-Release"));
+            assertFalse(s.ambiguities().isEmpty());
+            assertTrue(s.ambiguities().get(0).contains("Multi-Release"));
+        } finally {
+            s.delete();
+        }
+    }
+
+    /** M33A-CDX-61: a base and a versioned validator in one jar are two classes of that name to the runtime. */
+    public void testABaseAndAVersionedValidatorAreTwo() throws Exception {
+        Examples ex = examples("testABaseAndAVersionedValidatorAreTwo");
+        if (ex == null) return;
+        Path bank = ex.classes("bank");
+        String name = "org.julclang.state.examples.bank.Bank";
+        String v = "org/julclang/state/examples/bank/BankValidator.class";
+        Path jar = newFolder().resolve("mr.jar");
+        var mf = new java.util.jar.Manifest();
+        mf.getMainAttributes().put(java.util.jar.Attributes.Name.MANIFEST_VERSION, "1.0");
+        mf.getMainAttributes().putValue("Multi-Release", "true");
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar), mf)) {
+            for (String e : List.of(v, "META-INF/versions/21/" + v)) {
+                out.putNextEntry(new java.util.zip.ZipEntry(e));
+                out.write(Files.readAllBytes(bank.resolve(v)));
+                out.closeEntry();
+            }
+            for (String r : List.of("META-INF/plutus/BankValidator.plutus.json", "META-INF/joust/" + name + ".json")) {
+                out.putNextEntry(new java.util.zip.ZipEntry(r));
+                out.write(Files.readAllBytes(bank.resolve(r)));
+                out.closeEntry();
+            }
+        }
+        assertRefused(snapshot(List.of(jar, ex.verifierJar())), name, "holds 2 classes of that name");
+    }
+
+    /**
+     * M33A-CDX-62, -DES-25: a sole validator reached through a differently cased package folder is one class, and anchors
+     * where the file system serves it.
+     */
+    public void testASoleValidatorUnderAnotherSpellingIsOne() throws Exception {
+        Examples ex = examples("testASoleValidatorUnderAnotherSpellingIsOne");
+        if (ex == null) return;
+        Path bank = copy(ex.classes("bank"));
+        String name = "org.julclang.state.examples.bank.Bank";
+        Path from = bank.resolve("org");
+        Path tmp = bank.resolve("tmp-rename");
+        Files.move(from, tmp);
+        Files.move(tmp, bank.resolve("ORG"));
+        HostSnapshot s = snapshot(List.of(bank, ex.verifierJar()));
+        boolean served = Files.isRegularFile(bank.resolve("org/julclang/state/examples/bank/BankValidator.class"));
+        if (!served) {
+            assertRefused(s, name, "is not in the build");
+            return;
+        }
+        try {
+            assertNotNull(JoustAnchors.derive(s, name, 0, 25));
+        } finally {
+            s.delete();
+        }
+    }
+
+    /** M33A-CDX-63: a protected package folder holding only resources serves no JOUST class. */
+    public void testAResourceOnlyProtectedPackageIsNotServed() throws Exception {
+        Path dir = newFolder();
+        Path res = dir.resolve("org/julclang/state/runtime/messages.properties");
+        Files.createDirectories(res.getParent());
+        Files.writeString(res, "a=b");
+        HostSnapshot s = snapshot(List.of(dir));
+        try {
+            assertFalse(s.servesPackage(0, "org/julclang/state/runtime/"));
+        } finally {
+            s.delete();
         }
     }
 

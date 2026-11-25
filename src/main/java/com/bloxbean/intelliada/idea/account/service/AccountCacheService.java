@@ -110,7 +110,14 @@ public class AccountCacheService {
      */
     private static boolean ownPrivateDirectory(java.nio.file.Path f) throws java.io.IOException {
         try {
-            if (!java.nio.file.Files.isDirectory(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
+            // The type read directly: isDirectory hides a read failure as false (M33A-CDX-64).
+            java.nio.file.attribute.BasicFileAttributes attrs;
+            try {
+                attrs = java.nio.file.Files.readAttributes(f, java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            } catch (java.nio.file.NoSuchFileException gone) {
+                return false;   // established absent
+            }
+            if (!attrs.isDirectory()) return false;
             // The owner as a file-system principal, compared with the principal of a file this process creates: never a
             // name, which distinct users can share (M33A-CDX-32).
             var owner = java.nio.file.Files.getOwner(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
