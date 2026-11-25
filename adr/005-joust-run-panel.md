@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r9). The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r10). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -760,6 +760,38 @@ Delegated decisions (L27, L28, L30–L35) are tracked for the maintainer's ratif
 - **Q16.** Yano's coverage of `/txs/{h}/redeemers`, `/scripts/datum/{h}/cbor` and `/assets/{u}/transactions` (G3.4).
   Lean: answer `unsupported` where missing (map calls then refused) and report the gap to Yano.
 
+## 12. Implementation refinements (M3.1a #29, M3.1b #31; r10)
+
+These record what implementation and its reviews settled within the decisions above; none changes a decision or an
+invariant.
+
+- **E1. A read under a moving tip (D18).** On a provider whose tip read is slower than a block (a 114,000-block DevKit's
+  Yaci Store answers `/blocks/latest` in 0.7–1.6 s against 1 s blocks), a tip read before and after an answer almost
+  never agree. When they differ, IntelliAda reads the answer again: identical answers read before and after the later
+  tip was observed held at that tip, and the answer is reported there; a changing answer is retried and finally
+  `failed`, never given a mixed chain point. A `tip` read is its own chain point (one read). (M31B-SEC-3.)
+- **E2. Yano is not bound in M3.1b (L36).** Yano lacks four reads the run panel needs (`/txs/{h}/redeemers`,
+  `/scripts/datum/{h}/cbor`, `/assets/{u}/transactions`, `/genesis`; bloxbean/yano#269), so its positive identity
+  (D14) cannot be established the way DevKit's is. The run panel binds Yaci DevKit only until Yano serves them or an
+  identity source is agreed (G3.3, G3.4); M3.4's Yano controls depend on it. G3.4's coverage on DevKit's Yaci Store:
+  `tip`, `protocolParams`, `utxos`, `output` and `redeemers` answer values; unknown `script`, `assetHistory` and `datum`
+  are `absent`; `stakeRegistration` is `unsupported` (Yaci Store's accounts carry no registration flag).
+- **E3. Read attribution residual (I22).** Protocol 1 does not tie a read's generation to its forward call, so a stray
+  read the host sends after a call that made no reads of its own is credited to the next queued call (common when
+  calls are queued). Only IntelliAda's own chain reads, answered to a host already trusted to read the chain, are at
+  stake. bloxbean/joust#192 asks for the generation to be normative (the forward call's index).
+- **E4. Snapshot directory identity on Windows (D11 step 3).** Windows' JBR has no `fileKey`; there the directory
+  identity check is skipped and the per-component no-link checks stand alone (a concurrent swap by same-user code is
+  outside L33). A Windows CI job is follow-up #30.
+- **E5. DevKit's admin endpoint (D14).** Until the node configuration has its own field, it is the node's host on port
+  10000, DevKit's default; read through the same capped, deadline-bounded client as every provider read.
+- **E6. The bundled checker and anchors (D13, Q15).** bloxbean/joust#193 asks JOUST to support the checker as a
+  production artifact with a stable entry and to export the anchor derivation.
+
+| # | Decision | By | Date | Basis |
+|---|---|---|---|---|
+| L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
+
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
 | Finding | Change in r2 |
@@ -916,3 +948,4 @@ Security and design approved round 8.
 - **r9** (2026-11-25, responds to review round 8 of `26ee03e`; security and design approved it): a read's tip advances the
   expected settlement state only once the host accepted the whole read in a completed call; the journal keeps the less
   advanced state (D17, I32); registration evidence re-read before replay (D15).
+- **r10** (2026-11-26): §12 implementation refinements E1–E6 from M3.1a (#29) and M3.1b (#31); L36 (delegated).
