@@ -80,6 +80,11 @@ public class AccountCacheService {
                 // writable by no one else (anyone can create /tmp/.intelliada; M33A-SEC-5).
                 // Only the exact home cache is exempt; any other folder, under the profile or not, is checked (M33A-CDX-42).
                 boolean homeCache = f.toAbsolutePath().normalize().equals(java.nio.file.Path.of(System.getProperty("user.home"), ".intelliada").toAbsolutePath().normalize());
+                if (!homeCache && !java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+                    // Without POSIX permissions the fallback's privacy cannot be established: the ownership decision is
+                    // refused rather than made without its accounts (M33A-CDX-49).
+                    throw new java.io.IOException("a legacy account store in " + f + " cannot be verified as private on this system");
+                }
                 if (!homeCache && !ownPrivateDirectory(f)) {
                     // Untrusted and not in use: skipped. Untrusted but the legacy store's active folder (its chooser
                     // and writer use it): the ownership decision is refused, never made without it (M33A-CDX-21).

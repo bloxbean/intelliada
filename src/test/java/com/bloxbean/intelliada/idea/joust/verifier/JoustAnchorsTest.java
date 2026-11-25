@@ -199,6 +199,27 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         assertRefused(snapshot(List.of(lower, bank, ex.verifierJar())), name, "two different descriptions");
     }
 
+    /** M33A-CDX-45: in a jar, BankValidator.CLASS is not the class (jar names are exact), so nothing anchors. */
+    public void testAJarEntryWithAnUpperCaseSuffixIsNotAClass() throws Exception {
+        Examples ex = examples("testAJarEntryWithAnUpperCaseSuffixIsNotAClass");
+        if (ex == null) return;
+        Path bank = ex.classes("bank");
+        Path jar = newFolder().resolve("upper.jar");
+        String name = "org.julclang.state.examples.bank.Bank";
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new java.util.zip.ZipEntry("org/julclang/state/examples/bank/BankValidator.CLASS"));
+            out.write(Files.readAllBytes(bank.resolve("org/julclang/state/examples/bank/BankValidator.class")));
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/plutus/BankValidator.plutus.json"));
+            out.write(Files.readAllBytes(bank.resolve("META-INF/plutus/BankValidator.plutus.json")));
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/joust/" + name + ".json"));
+            out.write(Files.readAllBytes(bank.resolve("META-INF/joust/" + name + ".json")));
+            out.closeEntry();
+        }
+        assertRefused(snapshot(List.of(jar, ex.verifierJar())), name, "is not in the build");
+    }
+
     /** M33A-CDX-7: two blueprints of the validator's name in its own jar are ambiguous. */
     public void testDuplicateBlueprintsInOneJarRefuse() throws Exception {
         Examples ex = examples("testDuplicateBlueprintsInOneJarRefuse");

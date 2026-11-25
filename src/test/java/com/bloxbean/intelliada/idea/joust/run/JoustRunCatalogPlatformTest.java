@@ -26,11 +26,8 @@ public class JoustRunCatalogPlatformTest extends BasePlatformTestCase {
         String r = JoustTestTools.env("JOUST_EXAMPLES", test);
         if (r == null) return false;
         root = Path.of(r);
-        try (var l = Files.list(root.resolve("julc-state-verifier/build/libs"))) {
-            for (Path p : (Iterable<Path>) l::iterator) {
-                if (p.getFileName().toString().matches("julc-state-verifier-0\\.1\\.0-pre3-01bad1f-SNAPSHOT\\.jar")) verifierJar = p;
-            }
-        }
+        Path jar = root.resolve("julc-state-verifier/build/libs/julc-state-verifier-0.1.0-pre3-01bad1f-SNAPSHOT.jar");
+        if (Files.isRegularFile(jar)) verifierJar = jar;   // a missing folder is a missing jar (M33A-CDX-53)
         if (verifierJar == null) {
             Path libs = root.resolve("julc-state-verifier/build/libs");
             if (JoustTestTools.required()) throw new AssertionError(test + " needs julc-state-verifier-0.1.0-pre3-01bad1f-SNAPSHOT.jar in " + libs);

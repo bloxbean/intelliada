@@ -41,10 +41,10 @@ public final class HostJson {
                 .build());
     }
 
-    /** A malformed body: a protocol violation on the host channel. */
     /**
-     * A description or blueprint read as JOUST's host reads it: Jackson's byte-stream reader, which detects a BOM and
-     * UTF-16/32, with this mapper's strictness (duplicate keys, trailing tokens). Protocol frames use {@link #parse}.
+     * A contract description read as JOUST's host reads it: Jackson's byte-stream reader, which detects a BOM and
+     * UTF-16/32, with this mapper's strictness (duplicate keys, trailing tokens). Blueprints and protocol frames use
+     * {@link #parse} (UTF-8, as the runtime decodes blueprints; M33A-CDX-47).
      */
     public static JsonNode parseResource(byte[] b) throws Malformed {
         try {
@@ -56,6 +56,7 @@ public final class HostJson {
         }
     }
 
+    /** A malformed body: a protocol violation on the host channel. */
     public static final class Malformed extends Exception {
         Malformed(String why) {
             super(why, null, false, false);

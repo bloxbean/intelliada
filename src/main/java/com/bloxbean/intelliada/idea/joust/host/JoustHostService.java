@@ -266,13 +266,7 @@ public final class JoustHostService implements Disposable {
             synchronized (slot) {
                 if (slot.stopping) throw new NotStarted("stopped");
                 try {
-                    s = HostLauncher.start(spec, snapshot, moduleDir, STDERR_CAP);
-                    if (s.javaFeature() != feature) {
-                        // The JDK changed between the confirmation and the start: the anchors would be resolved for the
-                        // wrong JVM (M33A-CDX-40).
-                        s.stop();
-                        throw new NotStarted("the project's JDK changed while the host was being confirmed; start it again");
-                    }
+                    s = HostLauncher.start(spec, snapshot, moduleDir, STDERR_CAP, feature);   // refused before any process (M33A-CDX-48)
                 } catch (IOException e) {
                     throw new NotStarted(e.getMessage());
                 }

@@ -104,8 +104,20 @@ public final class HostLauncher {
 
     /** Starts the host. The caller has the user's trust decision and confirmation (D1, D11 step 5). */
     public static Started start(HostSpec spec, HostSnapshot snapshot, Path projectRoot, int stderrCapBytes) throws IOException {
+        return start(spec, snapshot, projectRoot, stderrCapBytes, -1);
+    }
+
+    /**
+     * Starts the host, refusing before any process exists when the JDK's feature version is not {@code confirmedFeature}
+     * (when given): the anchors are resolved for the confirmed JVM (M33A-CDX-40, -CDX-48).
+     */
+    public static Started start(HostSpec spec, HostSnapshot snapshot, Path projectRoot, int stderrCapBytes, int confirmedFeature)
+            throws IOException {
         Path java = spec.java();
-        int feature = javaVersion(java);   // read immediately before the start, and carried (M33A-CDX-40)
+        int feature = javaVersion(java);   // read immediately before the start, and carried
+        if (confirmedFeature > 0 && feature != confirmedFeature) {
+            throw new IOException("the project's JDK changed while the host was being confirmed; start it again");
+        }
         if (!Files.isDirectory(projectRoot, LinkOption.NOFOLLOW_LINKS)) throw new IOException("the project directory is missing");
         ProcessBuilder pb = new ProcessBuilder(command(spec, snapshot));
         pb.directory(projectRoot.toFile());

@@ -190,6 +190,7 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
                     if (!stripped.path("node").path("scriptsAt").has(k)) extra.add(k);
                 });
                 assertEquals("exactly one holder not queried", 1, extra.size());
+                assertEquals("it is the output verifier's holder (the kit's mutation)", v.at("/anchors/outputVerifier/address").asText(), extra.get(0));
                 assertEquals("its recorded scripts were empty", 0, ourScripts.path(extra.get(0)).size());
                 ourScripts.remove(extra.get(0));
                 assertEquals("nothing else differs", stripped, trimmed);

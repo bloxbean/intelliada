@@ -199,7 +199,7 @@ public final class JoustAnchors {
             throw new Refused("the class " + classPath.replace('/', '.').replace(".class", "") + " is in " + holders.size()
                     + " class-path entries; it must be in exactly one");
         }
-        boolean folded = snapshot.isDirectory(entry);   // M33A-CDX-26
+        boolean folded = snapshot.foldsCase(entry);   // M33A-CDX-26
         String tail = (simple + ".class").toLowerCase(java.util.Locale.ROOT);
         long sameName = snapshot.classesAt(entry).stream()
                 .filter(c -> folded ? c.toLowerCase(java.util.Locale.ROOT).equals(tail) || c.toLowerCase(java.util.Locale.ROOT).endsWith("/" + tail)
@@ -215,7 +215,7 @@ public final class JoustAnchors {
         if (verifier && copies.size() > 1) throw new Refused("another class-path entry holds a blueprint named " + simple);
         JsonNode b;
         try {
-            b = parseResource(own.bytes());
+            b = HostJson.parse(own.bytes());   // a blueprint is strict UTF-8, as the runtime decodes it (M33A-CDX-47)
         } catch (HostJson.Malformed e) {
             throw new Refused("the blueprint of " + simple + " is not valid JSON");
         }

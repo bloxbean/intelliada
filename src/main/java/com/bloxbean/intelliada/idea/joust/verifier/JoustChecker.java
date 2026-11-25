@@ -251,10 +251,26 @@ public final class JoustChecker {
                 // not read to its end: refused below (M33A-CDX-5)
             }
         }, "JOUST checker stdout");
+        // Descendants are recorded while the checker lives, so cleanup reaches one the root left behind (M33A-CDX-50).
+        java.util.Set<ProcessHandle> seen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        Thread sampler = new Thread(() -> {
+            while (p.isAlive()) {
+                try {
+                    p.descendants().forEach(seen::add);
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    return;
+                } catch (RuntimeException e) {
+                    return;   // listing unsupported here: the root is still ended
+                }
+            }
+        }, "JOUST checker descendants");
+        sampler.setDaemon(true);
         writer.setDaemon(true);
         reader.setDaemon(true);
         writer.start();
         reader.start();
+        sampler.start();
         boolean finished = false;
         try {
             boolean done = p.waitFor(Math.max(0, end - System.nanoTime()), TimeUnit.NANOSECONDS);
@@ -275,11 +291,11 @@ public final class JoustChecker {
             if (!finished) {
                 // Every unfinished exit, an interrupt included, ends the process tree and reaps it (M33A-CDX-4). The root
                 // first and unconditionally: listing descendants can fail on some platforms (M33A-CDX-13).
-                java.util.List<ProcessHandle> children = java.util.List.of();
+                java.util.Set<ProcessHandle> children = new java.util.LinkedHashSet<>(seen);
                 try {
-                    children = p.descendants().toList();
+                    p.descendants().forEach(children::add);
                 } catch (RuntimeException listingFailed) {
-                    // the root is still ended below
+                    // the recorded ones are still ended below
                 }
                 // Signals only, through ProcessHandle: Process.destroyForcibly closes the pipes synchronously and can
                 // wait on a descendant that holds them (M33A-CDX-27). The root, then each descendant, then the streams.
