@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.joust.host;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.After;
 import org.junit.Test;
 
@@ -38,6 +39,7 @@ public class HostSessionTest {
             clientWrites = java.nio.channels.Channels.newOutputStream(toHost.sink());
             fromClient = new HostFrames.Reader(hostReads);
             session = new HostSession(clientReads, clientWrites, stops::incrementAndGet, reads, ends::add, stallNanos);
+            session.markInitializedForTests();
         }
 
         JsonNode next() throws Exception {
@@ -114,7 +116,7 @@ public class HostSessionTest {
     }
 
     @Test
-    public void aSecondCallWhileOneRunsIsRefusedLocally() throws Exception {
+    public void aSecondCallWaitsForTheFirstsTerminalAnswer() throws Exception {
         peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
         var first = new Thread(() -> {
             try {
@@ -123,15 +125,205 @@ public class HostSessionTest {
             }
         });
         first.start();
-        peer.next();
-        try {
-            peer.session.call("view", HostJson.object(), Duration.ofSeconds(1), () -> false);
-            fail("a second call reached the host");
-        } catch (IllegalStateException expected) {
-            // refused before sending
-        }
-        peer.session.close();
+        long id1 = peer.next().get("id").longValue();
+        var second = new java.util.concurrent.CompletableFuture<JsonNode>();
+        new Thread(() -> {
+            try {
+                second.complete(peer.session.call("view", HostJson.object(), Duration.ofSeconds(10), () -> false));
+            } catch (Exception e) {
+                second.completeExceptionally(e);
+            }
+        }).start();
+        Thread.sleep(300);
+        assertFalse("the second call waits (D11 serial calls)", second.isDone());
+        peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + id1 + ",\"result\":{}}");
+        JsonNode req2 = peer.next();
+        assertEquals("view", req2.get("method").textValue());
+        peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + req2.get("id").longValue() + ",\"result\":{\"v\":1}}");
+        assertEquals(1, second.get(5, java.util.concurrent.TimeUnit.SECONDS).path("v").intValue());
         first.join(5000);
+    }
+
+    @Test
+    public void anInterruptedCallerKeepsTheSlotUntilTheHostAnswers() throws Exception {
+        peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
+        Thread caller = new Thread(() -> {
+            try {
+                peer.session.call("prepare", HostJson.object(), Duration.ofSeconds(30), () -> false);
+            } catch (Exception ignored) {
+            }
+        });
+        caller.start();
+        long id1 = peer.next().get("id").longValue();
+        caller.interrupt();
+        assertEquals("an interrupted caller cancels its call", "$/cancelRequest", peer.next().get("method").textValue());
+        var second = new java.util.concurrent.CompletableFuture<JsonNode>();
+        new Thread(() -> {
+            try {
+                second.complete(peer.session.call("view", HostJson.object(), Duration.ofSeconds(10), () -> false));
+            } catch (Exception e) {
+                second.completeExceptionally(e);
+            }
+        }).start();
+        Thread.sleep(300);
+        assertFalse("no request reaches the host before the first call's terminal answer", second.isDone());
+        peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + id1 + ",\"error\":{\"code\":-32800,\"message\":\"c\",\"data\":{\"kind\":\"internal\","
+                + "\"code\":\"cancelled\",\"message\":\"cancelled\",\"sites\":[],\"retryAtSlot\":null}}}");
+        JsonNode req2 = peer.next();
+        assertEquals("view", req2.get("method").textValue());
+        peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + req2.get("id").longValue() + ",\"result\":{}}");
+        second.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    @Test
+    public void aReadInTheSameWriteAsTheResponseIsAViolationAndNeverAnswered() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        peer = new Peer((id, p) -> {
+            asked.incrementAndGet();
+            return HostJson.object();
+        }, HostFrames.STALL_NANOS);
+        new Thread(() -> {
+            try {
+                long id = peer.next().get("id").longValue();
+                String resp = "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{}}";
+                String read = "{\"jsonrpc\":\"2.0\",\"id\":\"" + id + ".1\",\"method\":\"chain/read\",\"params\":{\"kind\":\"tip\"}}";
+                byte[] a = resp.getBytes(StandardCharsets.UTF_8), b = read.getBytes(StandardCharsets.UTF_8);
+                peer.raw("Content-Length: " + a.length + "\r\n\r\n" + resp + "Content-Length: " + b.length + "\r\n\r\n" + read);
+            } catch (Throwable ignored) {
+            }
+        }).start();
+        peer.session.call("describe", HostJson.object(), Duration.ofSeconds(10), () -> false);
+        long end = System.nanoTime() + 5_000_000_000L;
+        while (peer.session.ended() == null && System.nanoTime() < end) Thread.sleep(10);
+        assertTrue("a chain/read after the call's terminal answer is a violation (M31A-DES-1)", peer.session.violated());
+        assertEquals("never answered", 0, asked.get());
+    }
+
+    @Test
+    public void aMalformedErrorEnvelopeIsAViolation() throws Exception {
+        peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
+        new Thread(() -> {
+            try {
+                long id = peer.next().get("id").longValue();
+                peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{}}");
+            } catch (Throwable ignored) {
+            }
+        }).start();
+        try {
+            peer.session.call("prepare", HostJson.object(), Duration.ofSeconds(10), () -> false);
+            fail("a malformed error was accepted");
+        } catch (HostSession.Ended expected) {
+            assertTrue(peer.session.violated());
+        }
+    }
+
+    @Test
+    public void aFrameAfterExitIsAViolation() throws Exception {
+        peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
+        new Thread(() -> {
+            try {
+                JsonNode sd = peer.next();
+                assertEquals("shutdown", sd.get("method").textValue());
+                peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + sd.get("id").longValue() + ",\"result\":{}}");
+                assertEquals("exit", peer.next().get("method").textValue());
+                peer.frame("{\"jsonrpc\":\"2.0\",\"method\":\"late\"}");
+                peer.hostWrites.close();
+            } catch (Throwable ignored) {
+            }
+        }).start();
+        peer.session.shutdown(Duration.ofSeconds(5));
+        assertTrue("the reader classified the frame after exit (M31A-CDX-5)", peer.session.violated());
+    }
+
+    @Test
+    public void aHostThatStopsReadingItsInputEndsTheSession() throws Exception {
+        // The peer never reads: once the pipe fills, the client's frame write stalls.
+        java.nio.channels.Pipe toClient = java.nio.channels.Pipe.open(), toHost = java.nio.channels.Pipe.open();
+        java.util.concurrent.atomic.AtomicInteger stops = new java.util.concurrent.atomic.AtomicInteger();
+        HostSession s = new HostSession(java.nio.channels.Channels.newInputStream(toClient.source()),
+                java.nio.channels.Channels.newOutputStream(toHost.sink()), stops::incrementAndGet, NO_READS, e -> { }, 300_000_000L);
+        s.markInitializedForTests();
+        ObjectNode big = HostJson.object();
+        big.put("x", "y".repeat(3_000_000));
+        try {
+            s.call("prepare", big, Duration.ofSeconds(20), () -> false);
+            fail("a write the host never read completed");
+        } catch (HostSession.Ended expected) {
+            assertTrue(s.violated());
+            assertTrue(s.ended(), s.ended().contains("stopped reading"));
+        } finally {
+            s.close();
+        }
+    }
+
+    @Test
+    public void stopDuringACallCancelsItAndDoesNotThrow() throws Exception {
+        peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
+        new Thread(() -> {
+            try {
+                peer.session.call("prepare", HostJson.object(), Duration.ofSeconds(30), () -> false);
+            } catch (Exception ignored) {
+            }
+        }).start();
+        peer.next();
+        peer.session.shutdown(Duration.ofSeconds(2));
+        assertEquals("$/cancelRequest", peer.next().get("method").textValue());
+        assertNotNull(peer.session.ended());
+    }
+
+    @Test
+    public void theHandshakeRefusesAnotherFingerprintOrProtocol() throws Exception {
+        for (String result : new String[]{
+                "{\"protocol\":1,\"fingerprint\":\"" + "1".repeat(64) + "\",\"network\":{\"networkId\":0},\"contracts\":[]}",
+                "{\"protocol\":2,\"fingerprint\":\"" + "0".repeat(64) + "\",\"network\":{\"networkId\":0},\"contracts\":[]}",
+                "{\"protocol\":1,\"fingerprint\":\"" + "0".repeat(64) + "\",\"network\":{\"networkId\":1},\"contracts\":[]}"}) {
+            java.nio.channels.Pipe toClient = java.nio.channels.Pipe.open(), toHost = java.nio.channels.Pipe.open();
+            java.util.concurrent.atomic.AtomicInteger stops = new java.util.concurrent.atomic.AtomicInteger();
+            var hostWrites = java.nio.channels.Channels.newOutputStream(toClient.sink());
+            var fromClient = new HostFrames.Reader(java.nio.channels.Channels.newInputStream(toHost.source()));
+            HostSession s = new HostSession(java.nio.channels.Channels.newInputStream(toClient.source()),
+                    java.nio.channels.Channels.newOutputStream(toHost.sink()), stops::incrementAndGet, NO_READS, e -> { });
+            new Thread(() -> {
+                try {
+                    long id = HostJson.parse(fromClient.next()).get("id").longValue();
+                    byte[] b = ("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":" + result + "}").getBytes(StandardCharsets.UTF_8);
+                    hostWrites.write(("Content-Length: " + b.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    hostWrites.write(b);
+                    hostWrites.flush();
+                } catch (Throwable ignored) {
+                }
+            }).start();
+            ObjectNode params = HostJson.object();
+            params.putObject("network").put("networkId", 0);
+            try {
+                s.initialize(params, "0".repeat(64), Duration.ofSeconds(10));
+                fail("accepted " + result);
+            } catch (HostSession.Ended expected) {
+                assertTrue(s.violated());
+                assertEquals("the host is stopped", 1, stops.get());
+            }
+            try {
+                s.call("describe", HostJson.object(), Duration.ofSeconds(1), () -> false);
+                fail("a call after a failed handshake");
+            } catch (IllegalStateException | HostSession.Ended expected) {
+                // refused
+            }
+        }
+    }
+
+    @Test
+    public void noCallButInitializeBeforeTheHandshake() throws Exception {
+        java.nio.channels.Pipe a = java.nio.channels.Pipe.open(), b = java.nio.channels.Pipe.open();
+        HostSession s = new HostSession(java.nio.channels.Channels.newInputStream(a.source()),
+                java.nio.channels.Channels.newOutputStream(b.sink()), () -> { }, NO_READS, e -> { });
+        try {
+            s.call("describe", HostJson.object(), Duration.ofSeconds(1), () -> false);
+            fail("describe before initialize");
+        } catch (IllegalStateException expected) {
+            // refused locally (M31A-CDX-1)
+        } finally {
+            s.close();
+        }
     }
 
     @Test

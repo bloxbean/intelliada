@@ -71,6 +71,11 @@ public final class HostSession implements AutoCloseable {
     private final Object lock = new Object();
     private Call current;
     private long nextId = 1;
+    /** One forward call at a time, in arrival order (ADR-005 D11 serial calls); released when a call's terminal answer arrives. */
+    private final java.util.concurrent.Semaphore turn = new java.util.concurrent.Semaphore(1, true);
+    private volatile boolean initialized;
+    /** initialize's {@code limits.readsPerCall}: more reverse reads in one call is a violation (M31A-SEC-7). */
+    private volatile int readsPerCall = 256;
     private volatile String ended;
     private volatile boolean violated;
     private final Thread readerThread;
@@ -80,6 +85,7 @@ public final class HostSession implements AutoCloseable {
         final long id;
         final CompletableFuture<JsonNode> result = new CompletableFuture<>();
         boolean answered;
+        int reads;
 
         Call(long id) {
             this.id = id;
@@ -131,44 +137,106 @@ public final class HostSession implements AutoCloseable {
      */
     public JsonNode call(String method, JsonNode params, Duration hardTimeout, BooleanSupplier cancelled)
             throws HostError, Ended, InterruptedException {
+        if (!initialized && !method.equals("initialize") && !method.equals("shutdown")) {
+            throw new IllegalStateException("the host session is not initialized");
+        }
+        // Wait for our turn: calls queue rather than reach the host while another runs (bad/busy).
+        long deadline = System.nanoTime() + hardTimeout.toNanos();
+        while (!turn.tryAcquire(100, TimeUnit.MILLISECONDS)) {
+            if (ended != null) throw new Ended(ended);
+            if (System.nanoTime() >= deadline) throw new Ended("another host call did not finish in time");
+        }
         Call c;
         synchronized (lock) {
-            if (ended != null) throw new Ended(ended);
-            if (current != null) throw new IllegalStateException("a host call is already in flight");
+            if (ended != null) {
+                turn.release();
+                throw new Ended(ended);
+            }
             c = current = new Call(nextId++);
         }
-        try {
-            ObjectNode req = F.objectNode().put("jsonrpc", "2.0").put("id", c.id).put("method", method);
-            req.set("params", params == null ? F.objectNode() : params);
-            send(req);
-            long deadline = System.nanoTime() + hardTimeout.toNanos();
-            boolean cancelSent = false;
-            while (true) {
-                try {
-                    return c.result.get(100, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException e) {
-                    long now = System.nanoTime();
-                    if (!cancelSent && (cancelled.getAsBoolean() || now >= deadline)) {
-                        cancelSent = true;
-                        send(F.objectNode().put("jsonrpc", "2.0").put("method", "$/cancelRequest")
-                                .set("params", F.objectNode().put("id", c.id)));
-                        deadline = Math.min(deadline, now) + TimeUnit.MILLISECONDS.toNanos(CANCEL_GRACE_MS);
-                    } else if (cancelSent && now >= deadline) {
-                        end("the host did not answer " + method + " in time", true);
-                    }
-                } catch (ExecutionException e) {
-                    Throwable t = e.getCause();
-                    if (t instanceof HostError he) throw he;
-                    if (t instanceof Ended en) throw en;
-                    throw new Ended(String.valueOf(t.getMessage()));
-                } catch (CancellationException e) {
-                    throw new Ended(ended == null ? "the call was abandoned" : ended);
-                }
-            }
-        } finally {
+        // The turn and the in-flight slot are held until the host's terminal answer (or the session's end), even if this
+        // thread stops waiting: an interrupted caller must not let another request onto the wire (M31A-CDX-6).
+        c.result.whenComplete((r, t) -> {
             synchronized (lock) {
                 if (current == c) current = null;
             }
+            turn.release();
+        });
+        ObjectNode req = F.objectNode().put("jsonrpc", "2.0").put("id", c.id).put("method", method);
+        req.set("params", params == null ? F.objectNode() : params);
+        send(req);
+        deadline = System.nanoTime() + hardTimeout.toNanos();
+        boolean cancelSent = false;
+        while (true) {
+            try {
+                return c.result.get(100, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                long now = System.nanoTime();
+                if (!cancelSent && (cancelled.getAsBoolean() || now >= deadline)) {
+                    cancelSent = true;
+                    sendCancel(c);
+                    deadline = Math.min(deadline, now) + TimeUnit.MILLISECONDS.toNanos(CANCEL_GRACE_MS);
+                } else if (cancelSent && now >= deadline) {
+                    end("the host did not answer " + method + " in time", true);
+                }
+            } catch (InterruptedException e) {
+                if (!cancelSent) sendCancel(c);
+                throw e;
+            } catch (ExecutionException e) {
+                Throwable t = e.getCause();
+                if (t instanceof HostError he) throw he;
+                if (t instanceof Ended en) throw en;
+                throw new Ended(String.valueOf(t.getMessage()));
+            } catch (CancellationException e) {
+                throw new Ended(ended == null ? "the call was abandoned" : ended);
+            }
+        }
+    }
+
+    /**
+     * The protocol's handshake (ADR-005 D11 step 7, I24): {@code initialize}, then the selected protocol must be 1, the
+     * echoed network the one sent, and the fingerprint the digest IntelliAda computed from its snapshot copies. Anything
+     * else stops the host; until it succeeds no other call is accepted (M31A-CDX-1).
+     */
+    public JsonNode initialize(ObjectNode params, String expectedDigest, Duration timeout)
+            throws HostError, Ended, InterruptedException {
+        JsonNode limit = params.path("limits").path("readsPerCall");
+        if (limit.isIntegralNumber() && limit.canConvertToInt() && limit.intValue() > 0) readsPerCall = limit.intValue();
+        JsonNode r = call("initialize", params, timeout, () -> false);
+        String why = null;
+        if (!r.path("protocol").isIntegralNumber() || !r.path("protocol").canConvertToInt() || r.path("protocol").intValue() != 1) {
+            why = "the host selected another protocol";
+        } else if (!expectedDigest.equals(r.path("fingerprint").textValue())) {
+            why = "the host's build fingerprint differs from the snapshot IntelliAda verified";
+        } else if (!r.path("network").equals(NUMERIC, params.path("network"))) {
+            why = "the host echoed another network";
+        } else if (!r.path("contracts").isArray()) {
+            why = "the host listed no contracts";
+        }
+        if (why != null) {
+            end(why, true);
+            throw new Ended(why);
+        }
+        initialized = true;
+        return r;
+    }
+
+    /** For unit tests with a scripted peer that skips the handshake. */
+    void markInitializedForTests() {
+        initialized = true;
+    }
+
+    /** JSON equality with numbers compared by value (an int sent, a BigInteger parsed). */
+    private static final java.util.Comparator<JsonNode> NUMERIC = (a, b) -> {
+        if (a.isNumber() && b.isNumber()) return a.decimalValue().compareTo(b.decimalValue());
+        return a.equals(b) ? 0 : 1;
+    };
+
+    private void sendCancel(Call c) {
+        try {
+            send(F.objectNode().put("jsonrpc", "2.0").put("method", "$/cancelRequest").set("params", F.objectNode().put("id", c.id)));
+        } catch (Ended ignored) {
+            // over already
         }
     }
 
@@ -186,9 +254,14 @@ public final class HostSession implements AutoCloseable {
      * {@code timeout}), so a frame the host still sends is reported as a violation rather than ignored (I20, I22).
      */
     public void shutdown(Duration timeout) throws InterruptedException {
+        Call running;
+        synchronized (lock) {
+            running = current;
+        }
+        if (running != null && !running.answered) sendCancel(running);   // Stop during a call (M31A-DES-5)
         try {
             call("shutdown", F.objectNode(), timeout, () -> false);
-        } catch (HostError | Ended ignored) {
+        } catch (HostError | Ended | IllegalStateException ignored) {
             // the host is stopped regardless
         }
         notify("exit");
@@ -246,11 +319,15 @@ public final class HostSession implements AutoCloseable {
                 throw new Violation("an unexpected message from the host");
             }
             if (m.size() != 4 || !m.path("params").isObject()) throw new Violation("a malformed chain/read request");
+            Call owner;
             synchronized (lock) {
-                if (current == null) throw new Violation("a chain/read outside a call");
+                owner = current;
+                // A read after the call's terminal answer is outside any call (M31A-CDX-7).
+                if (owner == null || owner.answered) throw new Violation("a chain/read outside a call");
+                if (++owner.reads > readsPerCall) throw new Violation("more reverse reads in one call than its limit");
             }
             if (!reverseIds.add(id.textValue())) throw new Violation("a reused chain/read id");
-            answer(id.textValue(), m.get("params"));
+            answer(id.textValue(), m.get("params"), owner);
             return;
         }
         JsonNode id = m.get("id");
@@ -268,7 +345,11 @@ public final class HostSession implements AutoCloseable {
             c.result.complete(m.get("result"));
         } else {
             JsonNode e = m.get("error");
-            if (!e.isObject()) throw new Violation("a malformed error response");
+            // JSON-RPC 2.0: an error has an integer code and a string message (M31A-CDX-10).
+            if (!e.isObject() || !e.path("code").isIntegralNumber() || !e.path("code").canConvertToInt()
+                    || !e.path("message").isTextual()) {
+                throw new Violation("a malformed error response");
+            }
             c.result.completeExceptionally(HostError.of(e));
         }
     }
@@ -285,7 +366,7 @@ public final class HostSession implements AutoCloseable {
         return true;
     }
 
-    private void answer(String id, JsonNode params) {
+    private void answer(String id, JsonNode params, Call owner) {
         readsInFlight.incrementAndGet();
         readPool.execute(() -> {
           try {
@@ -293,7 +374,12 @@ public final class HostSession implements AutoCloseable {
             try {
                 result = reads.read(id, params);
             } catch (Exception | LinkageError e) {
-                cancelCurrent();
+                // Cancel only the call that asked, and only while it is still running (M31A-CDX-7).
+                boolean live;
+                synchronized (lock) {
+                    live = current == owner && !owner.answered;
+                }
+                if (live) sendCancel(owner);
                 return;
             }
             ObjectNode resp = F.objectNode().put("jsonrpc", "2.0").put("id", id);
@@ -307,19 +393,6 @@ public final class HostSession implements AutoCloseable {
             readsInFlight.decrementAndGet();
           }
         });
-    }
-
-    private void cancelCurrent() {
-        Call c;
-        synchronized (lock) {
-            c = current;
-        }
-        if (c == null) return;
-        try {
-            send(F.objectNode().put("jsonrpc", "2.0").put("method", "$/cancelRequest").set("params", F.objectNode().put("id", c.id)));
-        } catch (Ended ignored) {
-            // over already
-        }
     }
 
     private void checkStalls() {

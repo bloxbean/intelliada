@@ -76,6 +76,12 @@ public class HostFramesTest {
         } catch (HostJson.Malformed expected) {
             // refused
         }
+        try {
+            HostJson.parse("{}".getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+            fail("accepted BOM-less UTF-16 (M31A-CDX-9)");
+        } catch (HostJson.Malformed expected) {
+            // refused
+        }
         String deep = "[".repeat(1001) + "]".repeat(1001);
         try {
             HostJson.parse(deep.getBytes(StandardCharsets.UTF_8));

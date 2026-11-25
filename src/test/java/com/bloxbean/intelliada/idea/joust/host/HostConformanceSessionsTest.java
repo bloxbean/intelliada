@@ -157,7 +157,13 @@ public class HostConformanceSessionsTest {
                 callDone.set(done);
                 cancel.set(false);
                 try {
-                    session.call(method, c.get("params"), Duration.ofSeconds(30), cancel::get);
+                    if (method.equals("initialize")) {
+                        // The production handshake, checked against the recording's (fixed) snapshot digest.
+                        session.initialize((ObjectNode) c.get("params"), c.path("params").path("build").path("digest").textValue(),
+                                Duration.ofSeconds(30));
+                    } else {
+                        session.call(method, c.get("params"), Duration.ofSeconds(30), cancel::get);
+                    }
                 } catch (HostError e) {
                     errors.add(e.kind() + "/" + e.code());
                 } catch (HostSession.Ended e) {

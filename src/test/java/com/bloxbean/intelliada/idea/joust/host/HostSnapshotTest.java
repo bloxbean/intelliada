@@ -181,6 +181,104 @@ public class HostSnapshotTest {
         assertTrue(HostSpec.safeRelative("META-INF/joust/a.json"));
     }
 
+    @Test
+    public void integersAreComparedWithoutNarrowing() throws Exception {
+        ObjectNode n = launchSet(false);
+        n.set("protocol", HostJson.MAPPER.readTree("4294967297"));
+        assertInvalid(n);
+        ObjectNode o = launchSet(false);
+        ((ObjectNode) o.get("launch").get(0)).set("ordinal", HostJson.MAPPER.readTree("4294967296"));
+        assertInvalid(o);
+    }
+
+    @Test
+    public void aLinkUnderADirectoryEntryAndAMissingRootAreRefused() throws Exception {
+        ObjectNode n = launchSet(false);
+        HostSpec spec = HostSpec.parse(n);
+        Path classes = spec.launch().get(0).path();
+        Path real = tmp.newFolder("elsewhere-dir").toPath();
+        Files.move(classes.resolve("org"), real.resolve("org"));
+        Files.createSymbolicLink(classes.resolve("org"), real.resolve("org"));
+        try {
+            HostSnapshot.create(spec, tmp.newFolder("s1").toPath());
+            fail("a linked subdirectory was followed (M31A-CDX-12)");
+        } catch (HostSpec.Invalid expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("link"));
+        }
+        ObjectNode empty = launchSet(false);
+        ObjectNode dir = (ObjectNode) empty.get("launch").get(0);
+        dir.put("path", tmp.getRoot().toPath().resolve("missing-dir").toString());
+        dir.putObject("files");
+        // The digest no longer matters: the missing root is refused first.
+        try {
+            HostSnapshot.create(HostSpec.parse(empty), tmp.newFolder("s2").toPath());
+            fail("a missing directory with no files passed");
+        } catch (HostSpec.Invalid expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("missing"));
+        }
+    }
+
+    @Test
+    public void aJarThatReadsDifferentlyToTheJvmIsRefused() throws Exception {
+        // M31A-SEC-2's proof of concept: junk before a manifest only the central directory lists, adding a Class-Path.
+        Path jar = tmp.newFolder("poc").toPath().resolve("0.jar");
+        try (var in = HostSnapshotTest.class.getResourceAsStream("/joust-m3/hidden-manifest.jar")) {
+            Files.copy(in, jar);
+        }
+        ObjectNode spec = HostJson.object().put("protocol", 1).put("mainClass", HostSpec.MAIN_CLASS).put("java", "/opt/jdk/bin/java");
+        String h = sha(Files.readAllBytes(jar));
+        spec.putArray("launch").addObject().put("ordinal", 0).put("path", jar.toString()).put("kind", "jar").put("sha256", h);
+        spec.put("digest", sha((h + " 0 jar \n").getBytes(StandardCharsets.UTF_8)));
+        try {
+            HostSnapshot.create(HostSpec.parse(spec), tmp.newFolder("s3").toPath());
+            fail("a jar with a hidden manifest was accepted");
+        } catch (HostSpec.Invalid expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("Class-Path") || expected.getMessage().contains("differently"));
+        }
+    }
+
+    @Test
+    public void aWhitespaceClassPathIsRefusedAsTheHostRefusesIt() throws Exception {
+        Path dir = tmp.newFolder("ws").toPath();
+        Path jar = dir.resolve("w.jar");
+        Manifest mf = new Manifest();
+        mf.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        mf.getMainAttributes().put(Attributes.Name.CLASS_PATH, " ");
+        try (OutputStream o = Files.newOutputStream(jar); JarOutputStream j = new JarOutputStream(o, mf)) {
+            j.putNextEntry(new ZipEntry("a.txt"));
+            j.closeEntry();
+        }
+        ObjectNode spec = HostJson.object().put("protocol", 1).put("mainClass", HostSpec.MAIN_CLASS).put("java", "/opt/jdk/bin/java");
+        String h = sha(Files.readAllBytes(jar));
+        spec.putArray("launch").addObject().put("ordinal", 0).put("path", jar.toString()).put("kind", "jar").put("sha256", h);
+        spec.put("digest", sha((h + " 0 jar \n").getBytes(StandardCharsets.UTF_8)));
+        try {
+            HostSnapshot.create(HostSpec.parse(spec), tmp.newFolder("s4").toPath());
+            fail("a whitespace Class-Path was accepted");
+        } catch (HostSpec.Invalid expected) {
+            assertTrue(expected.getMessage().contains("Class-Path"));
+        }
+    }
+
+    @Test
+    public void theRuntimeVersionIsReadOnlyFromTheExpectedInitializer() throws Exception {
+        var cw = new org.jetbrains.org.objectweb.asm.ClassWriter(0);
+        cw.visit(org.jetbrains.org.objectweb.asm.Opcodes.V17, org.jetbrains.org.objectweb.asm.Opcodes.ACC_PUBLIC,
+                "org/julclang/state/runtime/RuntimeVersion", null, "java/lang/Object", null);
+        var mv = cw.visitMethod(org.jetbrains.org.objectweb.asm.Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        mv.visitCode();
+        mv.visitLdcInsn("9.9.9");
+        mv.visitFieldInsn(org.jetbrains.org.objectweb.asm.Opcodes.PUTSTATIC, "org/julclang/state/runtime/RuntimeVersion", "VERSION", "Ljava/lang/String;");
+        mv.visitLdcInsn("1.2.3");
+        mv.visitMethodInsn(org.jetbrains.org.objectweb.asm.Opcodes.INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
+        mv.visitFieldInsn(org.jetbrains.org.objectweb.asm.Opcodes.PUTSTATIC, "org/julclang/state/runtime/RuntimeVersion", "VERSION", "Ljava/lang/String;");
+        mv.visitInsn(org.jetbrains.org.objectweb.asm.Opcodes.RETURN);
+        mv.visitMaxs(1, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        assertEquals("only LDC; String.valueOf; PUTSTATIC RuntimeVersion.VERSION counts", "1.2.3", HostVersions.versionOf(cw.toByteArray()));
+    }
+
     private static void assertInvalid(ObjectNode n) {
         try {
             HostSpec.parse(n);

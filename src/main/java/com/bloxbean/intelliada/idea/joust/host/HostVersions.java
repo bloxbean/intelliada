@@ -64,19 +64,31 @@ public final class HostVersions {
             @Override
             public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
                 if (!name.equals("<clinit>")) return null;
+                // Exactly: LDC "<version>"; INVOKESTATIC java/lang/String.valueOf; PUTSTATIC RuntimeVersion.VERSION (M31A-DES-11).
                 return new MethodVisitor(Opcodes.ASM9) {
                     String last;
+                    boolean valueOf;
 
                     @Override
                     public void visitLdcInsn(Object value) {
                         last = value instanceof String s ? s : null;
+                        valueOf = false;
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String mname, String mdesc, boolean itf) {
+                        valueOf = last != null && opcode == Opcodes.INVOKESTATIC && owner.equals("java/lang/String")
+                                && mname.equals("valueOf") && mdesc.equals("(Ljava/lang/Object;)Ljava/lang/String;");
                     }
 
                     @Override
                     public void visitFieldInsn(int opcode, String owner, String fname, String fdesc) {
-                        if (opcode == Opcodes.PUTSTATIC && fname.equals("VERSION") && fdesc.equals("Ljava/lang/String;") && found[0] == null) {
+                        if (opcode == Opcodes.PUTSTATIC && owner.equals("org/julclang/state/runtime/RuntimeVersion")
+                                && fname.equals("VERSION") && fdesc.equals("Ljava/lang/String;") && valueOf && found[0] == null) {
                             found[0] = last;
                         }
+                        last = null;
+                        valueOf = false;
                     }
                 };
             }

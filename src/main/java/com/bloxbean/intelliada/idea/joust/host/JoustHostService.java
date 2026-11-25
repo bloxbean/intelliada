@@ -5,6 +5,8 @@ import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustGradleTasks;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustRunGuard;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.PathManager;
@@ -29,19 +31,21 @@ import java.util.function.Consumer;
  * ADR-005 D11: the project's dev hosts, one per contract module. A host starts only from a user action in a trusted
  * project (D1), bound to that action's {@link JoustRunGuard}: revoking trust or closing the project stops it (I20). The
  * launch spec is produced by the project's own Gradle ({@code joustHostSpec}), copied into a private snapshot (deleted
- * when the host ends), and the first start of each module in an IDE session is confirmed by the user.
+ * when the host exits), the first start of each module in an IDE session is confirmed by the user, and the session is
+ * handed out only after a verified {@code initialize} (I24).
  */
 @Service(Service.Level.PROJECT)
 public final class JoustHostService implements Disposable {
 
     static final int STDERR_CAP = 1024 * 1024;
+    static final Duration INIT_TIMEOUT = Duration.ofSeconds(120);
 
     /** Modules whose host start the user confirmed in this IDE session (D11 step 5). */
     private static final Set<String> CONFIRMED = ConcurrentHashMap.newKeySet();
 
-    /** A running host. {@code session} is live until it ends; {@code initialize} is the caller's next call. */
+    /** A running, initialized host. */
     public record Running(Path moduleDir, HostSpec spec, HostSnapshot snapshot, Process process, HostSession session,
-                          HostStderr stderr, @Nullable String joustVersion) {
+                          HostStderr stderr, @Nullable String joustVersion, JsonNode initialize) {
     }
 
     /** Why a start did not happen; plain text for the panel. */
@@ -58,30 +62,46 @@ public final class JoustHostService implements Disposable {
 
     static volatile Confirm confirmForTests;
 
+    /** A module's slot, reserved before anything starts and released only once its process has exited (M31A-CDX-3). */
+    private static final class Slot {
+        volatile Running running;
+    }
+
     private final Project project;
-    private final Map<Path, Running> hosts = new ConcurrentHashMap<>();
+    private final Map<Path, Slot> slots = new ConcurrentHashMap<>();
 
     public JoustHostService(Project project) {
         this.project = project;
-        HostSnapshot.delete(snapshotsBase());   // leftovers of an earlier IDE run; no host of this project is alive yet
+        // Leftovers of an earlier IDE run (no host of this project is alive yet), off the calling thread (M31A-DES-8).
+        Path base = snapshotsBase();
+        ApplicationManager.getApplication().executeOnPooledThread(() -> HostSnapshot.delete(base));
     }
 
     public static JoustHostService getInstance(Project project) {
         return project.getService(JoustHostService.class);
     }
 
+    static Path key(Path moduleDir) {
+        try {
+            return moduleDir.toRealPath();
+        } catch (IOException e) {
+            return moduleDir.toAbsolutePath().normalize();
+        }
+    }
+
     /** The running host of {@code moduleDir}, or null. */
     public @Nullable Running running(Path moduleDir) {
-        Running r = hosts.get(moduleDir);
+        Slot s = slots.get(key(moduleDir));
+        Running r = s == null ? null : s.running;
         return r != null && r.session().ended() == null ? r : null;
     }
 
     /**
-     * Runs {@code joustHostSpec}, snapshots and starts the host of {@code moduleDir}. Off the EDT; blocks. The returned
-     * session has not been initialized.
+     * Runs {@code joustHostSpec}, then {@link #launch}. Off the EDT; blocks. {@code initialize} holds every
+     * {@code initialize} parameter except {@code build}, which this service fills from the verified snapshot.
      */
-    public Running start(JoustRunGuard guard, Path moduleDir, HostSession.Reads reads, Consumer<String> onEnd)
-            throws NotStarted, InterruptedException {
+    public Running start(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, HostSession.Reads reads,
+                         Consumer<String> onEnd) throws NotStarted, InterruptedException {
         Running existing = running(moduleDir);
         if (existing != null) return existing;
         if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
@@ -98,59 +118,96 @@ public final class JoustHostService implements Disposable {
                     : "joustHostSpec failed; see the Gradle output");
         }
         if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
-        return launch(guard, moduleDir, reads, onEnd);
+        return launch(guard, moduleDir, initialize, reads, onEnd);
     }
 
-    /**
-     * The part of {@link #start} after {@code joustHostSpec}: reads and snapshots the module's launch spec, confirms and
-     * starts the host. Off the EDT.
-     */
-    Running launch(JoustRunGuard guard, Path moduleDir, HostSession.Reads reads, Consumer<String> onEnd)
+    /** The part of {@link #start} after {@code joustHostSpec}: snapshot, confirm, start, {@code initialize}. Off the EDT. */
+    Running launch(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, HostSession.Reads reads, Consumer<String> onEnd)
             throws NotStarted, InterruptedException {
-        HostSpec spec;
-        HostSnapshot snapshot;
-        try {
-            spec = HostSpec.read(moduleDir);
-            snapshot = HostSnapshot.create(spec, snapshotsBase());
-        } catch (HostSpec.Invalid e) {
-            throw new NotStarted(e.getMessage());
-        } catch (IOException e) {
-            throw new NotStarted("could not copy the launch set: " + e.getMessage());
+        Path key = key(moduleDir);
+        Slot slot = new Slot();
+        if (slots.putIfAbsent(key, slot) != null) {
+            Running r = running(moduleDir);
+            if (r != null) return r;
+            throw new NotStarted("a host for this module is starting or stopping");
         }
-        boolean started = false;
+        JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
+        HostSnapshot snapshot = null;
+        JoustTaskTracker.Run run = null;
+        Process process = null;
+        HostSession session = null;
+        boolean handedOut = false;
         try {
+            HostSpec spec;
+            try {
+                spec = HostSpec.read(moduleDir);
+                HostLauncher.javaVersion(spec.java());   // D11 step 2, before the copy and the confirmation (M31A-DES-9)
+                snapshot = HostSnapshot.create(spec, snapshotsBase());
+            } catch (HostSpec.Invalid e) {
+                throw new NotStarted(e.getMessage());
+            } catch (IOException e) {
+                throw new NotStarted("could not copy the launch set: " + e.getMessage());
+            }
             String version = HostVersions.runtimeVersion(snapshot);
             if (!confirmed(moduleDir, spec, version) || !guard.live()) throw new NotStarted("not started");
-            JoustTaskTracker.Run run = JoustTaskTracker.getInstance(project).start(guard);
+            // Registered before the process exists; null when trust went away meanwhile (M31A-CDX-2).
+            run = tracker.start(guard);
+            if (run == null) throw new NotStarted("the project is not trusted, or was closed");
             HostLauncher.Started s;
             try {
                 s = HostLauncher.start(spec, snapshot, moduleDir, STDERR_CAP);
             } catch (IOException e) {
                 throw new NotStarted(e.getMessage());
             }
-            Process p = s.process();
-            HostSession session = new HostSession(p.getInputStream(), p.getOutputStream(), () -> HostLauncher.stop(p), reads,
-                    why -> {
-                        hosts.remove(moduleDir);
-                        onEnd.accept(why);
-                    });
-            run.attach(session::close);
+            process = s.process();
+            Process p = process;
+            session = new HostSession(p.getInputStream(), p.getOutputStream(), () -> HostLauncher.stop(p), reads, onEnd);
+            HostSession sess = session;
+            run.attach(sess::close);
+            // The process's exit releases the snapshot, the tracker entry and the module's slot; the reader, not this
+            // callback, decides how the session ended (the final frames and EOF are its to classify; M31A-CDX-5, -8).
+            HostSnapshot snap = snapshot;
+            JoustTaskTracker.Run tracked = run;
             p.onExit().thenRun(() -> {
-                session.close();
-                snapshot.delete();
+                snap.delete();
+                tracker.done(tracked);
+                slots.remove(key, slot);
             });
-            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version);
-            hosts.put(moduleDir, running);
-            started = true;
+            ObjectNode params = initialize.deepCopy();
+            params.putObject("build").put("snapshot", snapshot.root().toString()).put("digest", snapshot.digest());
+            JsonNode init;
+            try {
+                init = session.initialize(params, snapshot.digest(), INIT_TIMEOUT);
+            } catch (HostError e) {
+                throw new NotStarted("the host refused to initialize: " + e.kind() + "/" + e.code() + ": "
+                        + PlainText.literal(e.getMessage(), 300));
+            } catch (HostSession.Ended e) {
+                throw new NotStarted("the host did not start: " + e.getMessage() + " (see the JOUST host console: "
+                        + PlainText.literal(s.stderr().lastLine(), 300) + ")");
+            }
+            if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
+            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version, init);
+            slot.running = running;
+            handedOut = true;
             return running;
         } finally {
-            if (!started) snapshot.delete();
+            if (!handedOut) {
+                if (session != null) session.close();
+                if (process != null) {
+                    HostLauncher.stop(process);    // the exit callback then releases the rest
+                } else {
+                    if (snapshot != null) snapshot.delete();
+                    if (run != null) tracker.done(run);
+                    slots.remove(key, slot);
+                }
+            }
         }
     }
 
     /** Stops the host of {@code moduleDir} in order (shutdown, exit, end of output), then ends its process tree. */
     public void stop(Path moduleDir) {
-        Running r = hosts.remove(moduleDir);
+        Slot s = slots.get(key(moduleDir));
+        Running r = s == null ? null : s.running;
         if (r == null) return;
         try {
             r.session().shutdown(Duration.ofSeconds(5));
@@ -163,16 +220,19 @@ public final class JoustHostService implements Disposable {
 
     @Override
     public void dispose() {
-        for (Running r : hosts.values()) {
+        for (Slot s : slots.values()) {
+            Running r = s.running;
+            if (r == null) continue;
             r.session().close();
             HostLauncher.stop(r.process());
             r.snapshot().delete();
         }
-        hosts.clear();
     }
 
+    /** Asks on the EDT and waits: {@link #start} must not be called under a read action or a modal progress. */
     private boolean confirmed(Path moduleDir, HostSpec spec, @Nullable String version) {
-        String key = project.getLocationHash() + "|" + moduleDir;
+        // Keyed on what the dialog shows: another java or JOUST version is confirmed again (M31A-DES-9).
+        String key = project.getLocationHash() + "|" + key(moduleDir) + "|" + spec.java() + "|" + version;
         if (CONFIRMED.contains(key)) return true;
         Confirm c = confirmForTests;
         boolean[] yes = {false};
