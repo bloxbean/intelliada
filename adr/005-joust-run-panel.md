@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r12). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r13). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -811,10 +811,23 @@ invariant.
 - **E6. The bundled checker and anchors (D13, Q15).** bloxbean/joust#193 asks JOUST to support the checker as a
   production artifact with a stable entry and to export the anchor derivation.
 
+- **E8. A scoped exception to I12 until #10 is fixed; mainnet accounts wait for M5 (L38).** The JOUST store and its
+  sessions meet I12: an account is offered only in sessions of its class, the two stores refuse each other's keys by
+  payment-key fingerprint, and a legacy account enters only by migration, which is a move (legacy testnet accounts
+  whose address is their phrase's first key; removed from the legacy store once the phrase is read back from a durable
+  safe; a move an interruption left half done is completed when the Accounts tab opens). **The exception:** legacy
+  IntelliAda accounts carry no network class, so the legacy transfer and mint choosers still offer a legacy `addr_test`
+  account on any non-mainnet node. I12's "in every IntelliAda flow" holds for JOUST accounts now and for legacy ones once
+  #10's fix migrates every legacy account and deletes the old store. Removing a legacy entry does not erase older copies
+  in backups or synced settings; the migration dialog says so. **Mainnet:** until M5's opt-in (D14a), the store refuses
+  to create or import mainnet accounts and the tab offers devnet and testnet only; mainnet entries already in the store
+  are kept and named, not hidden. (M32-SEC-5, M32-DES-2, M32-DES-9.)
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
 | L37 | Pin the checker closure by a checked-in SHA-256 lock; strict build by default; command-line-only overrides for a checker-less or SNAPSHOT-kit build (E7) | delegated | 2026-11-26 | two advisors (maintainer, supply chain); D13 |
+| L38 | I12's legacy-chooser exception until #10; migration is a move; no mainnet accounts until M5 (E8) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 1 |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -975,3 +988,4 @@ Security and design approved round 8.
 - **r10** (2026-11-26): §12 implementation refinements E1–E6 from M3.1a (#29) and M3.1b (#31); L36 (delegated).
 - **r11** (2026-11-26): §12 E1 states its no-revert assumption; E1a (forward-only chain points). From M3.1b round 2.
 - **r12** (2026-11-26): §12 E1a continuations; E7 and L37 (the checker lock, delegated). From M3.1b round 4 and M3.3a.
+- **r13** (2026-11-26): §12 E8 and L38 (delegated). From M3.2 round 1.
