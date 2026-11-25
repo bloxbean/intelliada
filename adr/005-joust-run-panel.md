@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r10). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r11). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -769,7 +769,15 @@ invariant.
   Yaci Store answers `/blocks/latest` in 0.7–1.6 s against 1 s blocks), a tip read before and after an answer almost
   never agree. When they differ, IntelliAda reads the answer again: identical answers read before and after the later
   tip was observed held at that tip, and the answer is reported there; a changing answer is retried and finally
-  `failed`, never given a mixed chain point. A `tip` read is its own chain point (one read). (M31B-SEC-3.)
+  `failed`, never given a mixed chain point. A `tip` read is its own chain point (one read). (M31B-SEC-3.) The rule
+  assumes an answer does not change and change back between its two reads (A→B→A): a stake credential deregistered and
+  re-registered, or an output created and spent in between, would be reported at a point where it differed. Spent
+  references never return, so a non-empty `utxos` or `assetHistory` set cannot reappear; an `absent` or empty answer can
+  hide such a short-lived state, which leaves the host building nothing or failing on a spent input. Once signing
+  depends on these reads (M3.3b), the checker re-validates against IntelliAda's own reads. (M31B-SEC-8, M31B-DES-14.)
+- **E1a. Chain points only go forward within a call (protocol 1).** A tip behind the last chain point handed to the
+  host in the same call (a lagging backend) is read again under the read's deadline, and finally answered `failed` at
+  that last point, never a lower one. (M31B-CDX-22, M31B-DES-11.)
 - **E2. Yano is not bound in M3.1b (L36).** Yano lacks four reads the run panel needs (`/txs/{h}/redeemers`,
   `/scripts/datum/{h}/cbor`, `/assets/{u}/transactions`, `/genesis`; bloxbean/yano#269), so its positive identity
   (D14) cannot be established the way DevKit's is. The run panel binds Yaci DevKit only until Yano serves them or an
@@ -949,3 +957,4 @@ Security and design approved round 8.
   expected settlement state only once the host accepted the whole read in a completed call; the journal keeps the less
   advanced state (D17, I32); registration evidence re-read before replay (D15).
 - **r10** (2026-11-26): §12 implementation refinements E1–E6 from M3.1a (#29) and M3.1b (#31); L36 (delegated).
+- **r11** (2026-11-26): §12 E1 states its no-revert assumption; E1a (forward-only chain points). From M3.1b round 2.
