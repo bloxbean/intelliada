@@ -78,7 +78,15 @@ public class AccountCacheService {
                 if (java.nio.file.Files.notExists(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
                 // The shared temp directory counts only when this user made it: a real directory, owned by this user,
                 // writable by no one else (anyone can create /tmp/.intelliada; M33A-SEC-5).
-                if (!f.startsWith(System.getProperty("user.home")) && !ownPrivateDirectory(f)) continue;
+                if (!f.startsWith(System.getProperty("user.home")) && !ownPrivateDirectory(f)) {
+                    // Untrusted and not in use: skipped. Untrusted but the legacy store's active folder (its chooser
+                    // and writer use it): the ownership decision is refused, never made without it (M33A-CDX-21).
+                    String active = getAccountCacheFolder();
+                    if (active != null && java.nio.file.Path.of(active).toAbsolutePath().normalize().equals(f.toAbsolutePath().normalize())) {
+                        throw new java.io.IOException("the active legacy account store is in a shared, untrusted folder");
+                    }
+                    continue;
+                }
                 if (!java.nio.file.Files.isDirectory(f) || !java.nio.file.Files.isReadable(f)) {
                     throw new java.io.IOException("an account cache folder cannot be read");
                 }
@@ -93,7 +101,8 @@ public class AccountCacheService {
         try {
             if (!java.nio.file.Files.isDirectory(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
             var owner = java.nio.file.Files.getOwner(f, java.nio.file.LinkOption.NOFOLLOW_LINKS).getName();
-            if (!owner.equals(System.getProperty("user.name"))) return false;
+            String plain = owner.substring(owner.lastIndexOf('\\') + 1);   // Windows names the owner with its domain first (M33A-SEC-10)
+            if (!plain.equalsIgnoreCase(System.getProperty("user.name"))) return false;
             var perms = java.nio.file.Files.getPosixFilePermissions(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
             return !perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
                     && !perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE);

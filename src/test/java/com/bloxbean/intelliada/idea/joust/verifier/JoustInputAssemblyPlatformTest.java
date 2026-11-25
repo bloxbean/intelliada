@@ -148,7 +148,6 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
             List<String> want = new ArrayList<>();
             v.path("violations").forEach(x -> want.add(x.asText()));
             String family = want.isEmpty() ? null : want.get(0).split("/")[0];
-            if (family != null) seenFamilies.add(family);   // every vector runs; families are counted (M33A-DES-1)
             ObjectNode in;
             try {
                 in = JoustCheckInput.assemble(v.path("method").asText(), (ObjectNode) v.get("request"), a,
@@ -178,8 +177,10 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
                 var f = it.next();
                 subset &= f.getValue().equals(theirs.get(f.getKey()));
             }
-            if ((!mine.equals(stripped) || !subset) && !want.isEmpty()) {
-                mutatedFacts++;   // a rejection whose recorded node facts were mutated: an honest assembly never produces them
+            // The one rejection whose recorded node was mutated on purpose (its holder never queried): an honest
+            // assembly always queries every holder, so it is named and counted, never silently skipped (M33A-CDX-23).
+            if ((!mine.equals(stripped) || !subset) && "publicationPresence/holder".equals(v.path("check").asText())) {
+                mutatedFacts++;
                 continue;
             }
             if (!mine.equals(stripped) || !subset) {
@@ -202,10 +203,17 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
                 problems.add(v.path("source").asText() + ": want " + want + ", got " + got);
             }
             if (want.isEmpty()) accepted++;
-            else rejected++;
+            else {
+                rejected++;
+                seenFamilies.add(family);   // only vectors actually compared count (M33A-DES-17)
+            }
         }
         assertTrue(problems.size() + " problems, e.g. " + problems.stream().limit(4).toList(), problems.isEmpty());
         assertEquals("every accepted vector of the five contracts", 42, accepted);
+        // Every rejection of the five contracts (with unmutated anchors) is compared: none is skipped (M33A-CDX-23).
+        assertEquals("rejections through the checker", 236, rejected - assemblyRefusals);
+        assertEquals("rejections already refused by the assembly", 3, assemblyRefusals);
+        assertEquals("the one rejection with a mutated node", 1, mutatedFacts);
         assertTrue("rule families " + seenFamilies, seenFamilies.size() >= 10);
         System.out.println("I23: " + accepted + " accepted and " + rejected + " rejected vectors (" + seenFamilies.size() + " rule families "
                 + new java.util.TreeSet<>(seenFamilies) + "; " + assemblyRefusals + " refused already by the assembly; " + mutatedFacts

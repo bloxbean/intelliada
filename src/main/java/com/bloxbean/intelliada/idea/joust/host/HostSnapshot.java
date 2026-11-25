@@ -442,9 +442,12 @@ public final class HostSnapshot {
                     if (local.size() > 200_000) break;
                 }
             }
-            // A repeated name: IntelliAda and the JVM could read different entries under it (M33A-SEC-2).
-            if (new java.util.HashSet<>(central).size() != central.size() || new java.util.HashSet<>(local).size() != local.size()) {
-                throw new HostSpec.Invalid("a class-path jar repeats an entry name (ordinal " + ordinal + ")");
+            // A repeated name IntelliAda reads (an anchor, the manifest, RuntimeVersion): IntelliAda and the JVM could read
+            // different bytes under it (M33A-SEC-2). Other repeats change nothing IntelliAda derives (M33A-DES-12).
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (String n : central) {
+                boolean read = isAnchor(n) || n.equalsIgnoreCase("META-INF/MANIFEST.MF") || n.endsWith("org/julclang/state/runtime/RuntimeVersion.class");
+                if (!seen.add(n) && read) throw new HostSpec.Invalid("a class-path jar repeats the entry " + n + " (ordinal " + ordinal + ")");
             }
             local.sort(null);
             central.sort(null);

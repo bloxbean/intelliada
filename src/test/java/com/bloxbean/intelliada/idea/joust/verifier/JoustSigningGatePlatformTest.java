@@ -22,11 +22,13 @@ public class JoustSigningGatePlatformTest extends BasePlatformTestCase {
         try {
             ObjectNode init = HostJson.object();
             init.putObject("versions").putObject("engine").put("joust", "0.1.0-pre3-01bad1f-SNAPSHOT");
-            var gate = JoustSigningGate.evaluate(JoustVersionPolicy.reviewed(), spec, s, init, List.of("org.example.counter.Counter"), 0, 25);
+            var gate = JoustSigningGate.evaluate(JoustVersionPolicy.reviewed(), spec, s, init, 0, 25);
             assertTrue(gate.why(), gate.maySign());
             assertEquals("5de2e73fb4674a846230cb548335f0e095c3997043fcedfc7fc9c4ed", gate.anchors().get("org.example.counter.Counter").contract().hash());
-            var other = JoustSigningGate.evaluate(JoustVersionPolicy.reviewed(), spec, s, init, List.of("org.example.counter.Missing"), 0, 25);
-            assertFalse(other.maySign());
+            assertEquals("every described contract, not a caller's subset", java.util.Set.of("org.example.counter.Counter"), gate.anchors().keySet());
+            ObjectNode other = HostJson.object();
+            other.putObject("versions").putObject("engine").put("joust", "0.1.0-other");
+            assertFalse(JoustSigningGate.evaluate(JoustVersionPolicy.reviewed(), spec, s, other, 0, 25).maySign());
         } finally {
             s.delete();
         }

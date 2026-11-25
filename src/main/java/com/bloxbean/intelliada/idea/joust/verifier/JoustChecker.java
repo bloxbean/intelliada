@@ -74,6 +74,8 @@ public final class JoustChecker {
     static final AtomicInteger STARTS = new AtomicInteger();
     /** Tests: called with each checker process as soon as it starts. */
     static volatile java.util.function.Consumer<Process> startedForTests;
+    /** Tests: called with each checker process once its whole input is written (I19 probes a running check). */
+    static volatile java.util.function.Consumer<Process> writtenForTests;
 
     /** The built-in manifest: what the plugin was built with. */
     record Manifest(boolean bundled, @Nullable String kit, boolean snapshot, @Nullable String runner, @Nullable String main,
@@ -223,10 +225,14 @@ public final class JoustChecker {
         java.util.concurrent.atomic.AtomicBoolean readToEnd = new java.util.concurrent.atomic.AtomicBoolean();
         // stdin and stdout each on their own thread: a checker that stops reading never blocks the caller (M33A-CDX-4).
         Thread writer = new Thread(() -> {
-            try (OutputStream in = p.getOutputStream()) {
-                in.write(stdin);
-                in.flush();
-                wrote.set(true);
+            try {
+                try (OutputStream in = p.getOutputStream()) {
+                    in.write(stdin);
+                    in.flush();
+                }
+                wrote.set(true);   // the whole input written to the pipe and the stream closed cleanly (M33A-CDX-25, -DES-14)
+                java.util.function.Consumer<Process> written = writtenForTests;
+                if (written != null) written.accept(p);
             } catch (IOException e) {
                 // not delivered: the verdict is refused below (M33A-CDX-5)
             }
@@ -267,14 +273,29 @@ public final class JoustChecker {
             return verdict(p.exitValue(), o);
         } finally {
             if (!finished) {
-                // Every unfinished exit, an interrupt included, ends the process tree and reaps it (M33A-CDX-4).
-                p.descendants().forEach(ProcessHandle::destroyForcibly);
+                // Every unfinished exit, an interrupt included, ends the process tree and reaps it (M33A-CDX-4). The root
+                // first and unconditionally: listing descendants can fail on some platforms (M33A-CDX-13).
+                java.util.List<ProcessHandle> children = java.util.List.of();
+                try {
+                    children = p.descendants().toList();
+                } catch (RuntimeException listingFailed) {
+                    // the root is still ended below
+                }
                 p.destroyForcibly();
+                for (ProcessHandle c : children) {
+                    try {
+                        c.destroyForcibly();
+                    } catch (RuntimeException ignored) {
+                        // best effort for descendants
+                    }
+                }
+                boolean interrupted = Thread.interrupted();
                 try {
                     p.waitFor(5, TimeUnit.SECONDS);
                 } catch (InterruptedException again) {
-                    Thread.currentThread().interrupt();
+                    interrupted = true;
                 }
+                if (interrupted) Thread.currentThread().interrupt();
             }
         }
     }

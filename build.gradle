@@ -202,6 +202,7 @@ def joustVerifierBundleDir = layout.buildDirectory.dir('joust-verifier/bundle')
 def joustVerifierManifestDir = layout.buildDirectory.dir('joust-verifier/manifest')
 def joustVerifierBundle = tasks.register('joustVerifierBundle') {
     inputs.file(joustVerifierLockFile)
+    inputs.file(file('src/main/resources/joust/reviewed-sets.json')).withPropertyName('reviewedSets')   // M33A-CDX-18
     inputs.files(joustVerifierFiles).withPropertyName('kit')
     inputs.files(joustVerifierRunnerJar).withPropertyName('runner')
     inputs.property('checkerOptional', joustCheckerOptional)
@@ -252,10 +253,13 @@ def joustVerifierBundle = tasks.register('joustVerifierBundle') {
         def reviewed = new groovy.json.JsonSlurper().parse(file('src/main/resources/joust/reviewed-sets.json'))
         def lockSha = { String artifact -> joustVerifierLock.find { it.coord.split(':')[1] == artifact && it.coord.split(':').length == 3 }?.sha }
         def kitLabel = joustVerifierLock.find { it.coord.contains(':julc-state-host:') }.coord.split(':')[2]
-        def matching = reviewed.sets.find { it.label == kitLabel && it.jars['julc-state-api'] == lockSha('julc-state-api')
-                && it.jars['julc-state-runtime'] == lockSha('julc-state-runtime') }
-        if (matching == null) {
-            throw new GradleException("no reviewed set in joust/reviewed-sets.json is the bundled kit ${kitLabel} (label, julc-state-api and julc-state-runtime hashes)")
+        // Every set the runtime can authorize is the bundled kit's: its label, api and runtime hashes (M33A-CDX-19).
+        if (reviewed.sets.isEmpty()) throw new GradleException("joust/reviewed-sets.json has no reviewed set")
+        reviewed.sets.each { set ->
+            if (set.label != kitLabel || set.jars['julc-state-api'] != lockSha('julc-state-api')
+                    || set.jars['julc-state-runtime'] != lockSha('julc-state-runtime')) {
+                throw new GradleException("reviewed set ${set.label} in joust/reviewed-sets.json is not the bundled kit ${kitLabel} (label, julc-state-api and julc-state-runtime hashes)")
+            }
         }
         File runner = joustVerifierRunnerJar.get().archiveFile.get().asFile
         project.copy { from runner; into bundle }
@@ -277,7 +281,9 @@ def checkJoustKit = tasks.register('checkJoustKit') {
         def m = joustVerifierManifestDir.get().file('joust/joust-verifier.manifest').asFile.text
         def labels = new groovy.json.JsonSlurper().parse(file('src/main/resources/joust/reviewed-sets.json')).sets*.label
         boolean snapshotLabel = labels.any { it ==~ /.*(-SNAPSHOT|-\d{8}\.\d{6}-\d+)$/ }
-        if ((m.contains('snapshot=true') || snapshotLabel) && !joustAllowSnapshotKit) {
+        // Only a distribution carrying a checker can sign; a checker-less build (CI) refuses every check (M33A-CDX-11).
+        boolean bundled = m.contains('bundled=true')
+        if (bundled && (m.contains('snapshot=true') || snapshotLabel) && !joustAllowSnapshotKit) {
             throw new GradleException("the bundled JOUST checker kit is a SNAPSHOT build; a distributable plugin needs a released, " +
                     "reviewed kit. For a local build only, pass -Pjoust.allowSnapshotKit=true on the command line.")
         }
@@ -296,13 +302,16 @@ def verifyJoustPluginLayout = tasks.register('verifyJoustPluginLayout') {
             def p = l.substring(5).split(' ', 2)
             expected[p[1]] = p[0]
         }
+        // A class's logical name: a multi-release copy counts as its class (M33A-CDX-20).
+        def logical = { String n -> def m = (n =~ /^META-INF\/versions\/\d+\/(.+)$/); m.matches() ? m.group(1) : n }
         def found = [:]
         def bad = []
         new java.util.zip.ZipFile(zip).withCloseable { z ->
             z.entries().each { e ->
                 if (e.isDirectory()) return
                 boolean verifier = e.name.contains('/joust-verifier/')
-                boolean julcRuntime = e.name.contains('/julc-runtime/')   // IntelliAda's JuLC integration: its own class loader
+                // IntelliAda's JuLC integration (its own class loader) may hold JuLC's compiler and VM, never JOUST.
+                boolean julcRuntime = e.name.contains('/julc-runtime/')
                 if (e.name.endsWith('.class') && !verifier) bad << "a loose class ${e.name}"
                 if (verifier) {
                     def rel = e.name.substring(e.name.indexOf('/joust-verifier/') + '/joust-verifier/'.length())
@@ -310,17 +319,20 @@ def verifyJoustPluginLayout = tasks.register('verifyJoustPluginLayout') {
                     println "joust-verifier ${found[rel]} ${rel}"
                     return
                 }
-                if (!e.name.endsWith('.jar') || julcRuntime) return
+                if (!e.name.endsWith('.jar')) return
                 new java.util.zip.ZipInputStream(z.getInputStream(e)).withCloseable { jar ->
                     def je
                     while ((je = jar.nextEntry) != null) {
-                        if (je.name.endsWith('.class') && je.name.startsWith('org/julclang/')) bad << "${e.name}: ${je.name}"
+                        if (!je.name.endsWith('.class')) continue
+                        String c = logical(je.name)
+                        if (c.startsWith('org/julclang/state/')) bad << "a JOUST class outside joust-verifier/: ${e.name}: ${je.name}"
+                        else if (!julcRuntime && c.startsWith('org/julclang/')) bad << "a JuLC class on the plugin class path: ${e.name}: ${je.name}"
                     }
                 }
             }
         }
-        // joust-verifier/ holds exactly the manifest's files with the manifest's hashes (M33A-SEC-7).
-        if (!expected.isEmpty() && found != expected) bad << "joust-verifier/ differs from the built-in manifest"
+        // joust-verifier/ holds exactly the manifest's files and hashes, none for a checker-less build (M33A-CDX-20).
+        if (found != expected) bad << "joust-verifier/ differs from the built-in manifest"
         if (!bad.isEmpty()) throw new GradleException("I9: ${bad.take(5)}")
     }
 }

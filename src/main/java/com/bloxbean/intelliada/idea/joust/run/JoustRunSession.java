@@ -253,14 +253,29 @@ public final class JoustRunSession {
     private final java.util.Map<String, com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors> anchors =
             new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Set<String> deploymentChecked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** The launch JDK's feature version, read once (M33A-CDX-22); -1 when it could not be read. */
+    private volatile int javaFeature = -2;
+    /** Why this session cannot sign (read-only use continues), or null (M33A-CDX-12). */
+    private volatile String signingDisabled;
 
-    /** The feature version of the launch spec's java: classes are resolved as that JVM loads them. */
+    /** The feature version of the launch spec's java: classes are resolved as that JVM loads them. Read once. */
     int javaFeature() throws NetworkIdentity.Refused {
-        try {
-            return com.bloxbean.intelliada.idea.joust.host.HostLauncher.javaVersion(running.spec().java());
-        } catch (java.io.IOException e) {
-            throw new NetworkIdentity.Refused("the launch spec's java could not be identified");
+        int f = javaFeature;
+        if (f == -2) {
+            try {
+                f = com.bloxbean.intelliada.idea.joust.host.HostLauncher.javaVersion(running.spec().java());
+            } catch (java.io.IOException e) {
+                f = -1;
+            }
+            javaFeature = f;
         }
+        if (f < 0) throw new NetworkIdentity.Refused("the launch spec's java could not be identified");
+        return f;
+    }
+
+    /** Why the session cannot sign, or null; views, listings and decoding work either way (D11 step 4). */
+    public @Nullable String signingDisabled() {
+        return signingDisabled;
     }
 
     /** The contract's anchors, derived from the verified snapshot (never from the host). */
@@ -279,72 +294,126 @@ public final class JoustRunSession {
     }
 
     /**
-     * The host's deployment for {@code contract} must equal the derived one before any prerequisites, publish or
-     * prepare; a difference stops the host and refuses (I24).
+     * Checks a deployment reply against the derived one whenever anchors are available: every reply, the Deployment
+     * button's included (M33A-CDX-14); a difference stops the host and refuses (I24).
      */
-    void checkDeployment(String contract) throws Exception {
-        if (deploymentChecked.contains(contract)) return;
-        var a = anchors(contract);
-        JsonNode dep = deployment(contract);
+    private JsonNode checked(String contract, JsonNode dep) throws Exception {
+        com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors a;
+        try {
+            a = anchors(contract);
+        } catch (com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Refused | NetworkIdentity.Refused unanchored) {
+            signingDisabled = "read-only: " + contract + " cannot be anchored: " + unanchored.getMessage();
+            return dep;   // read-only use continues; nothing is signed without anchors
+        }
         String why = com.bloxbean.intelliada.idea.joust.verifier.JoustDeployment.check(a, dep);
         if (why != null) {
             stopHost();
             throw new NetworkIdentity.Refused(why + "; the host was stopped");
         }
         deploymentChecked.add(contract);
+        return dep;
+    }
+
+    /** Before any prerequisites, publish or prepare: the deployment, checked (the cache only spares a request). */
+    void checkDeployment(String contract) throws Exception {
+        if (deploymentChecked.contains(contract)) return;
+        deployment(contract);
+        if (!deploymentChecked.contains(contract)) {
+            throw new NetworkIdentity.Refused(signingDisabled != null ? signingDisabled : contract + " cannot be anchored");
+        }
     }
 
     /**
-     * Checks {@code initialize}'s contract catalog against the snapshot (M33A-CDX-2): the same contracts as the
-     * snapshot's descriptions, each with the script hashes IntelliAda derives (the unapplied template hash for a
-     * parameterized one; a stake hash for {@code stakeSelf} or {@code purposes} contracts). A difference stops the host.
+     * Checks {@code initialize}'s contract catalog against the snapshot (M33A-CDX-2): the host's own discovery rule
+     * (the first copy of each {@code META-INF/joust/*.json} with {@code x-joust}), the same names, each entry's status
+     * (parameterized: {@code unsupported:"params"}, otherwise {@code served:true}) and script hashes. A contract that
+     * cannot be anchored disables signing only; an established conflict stops the host. Any failure to verify releases
+     * the host too (M33A-CDX-22).
      */
     public void verifyCatalog() throws Exception {
-        String why = catalogDifference(running.initialize(), running.snapshot(), binding.identity().networkId(), javaFeature());
-        if (why != null) {
+        Catalog c;
+        try {
+            c = catalog(running.initialize(), running.snapshot(), binding.identity().networkId(), javaFeature());
+        } catch (Exception e) {
             stopHost();
-            throw new NetworkIdentity.Refused(why + "; the host was stopped");
+            throw e;
         }
+        if (c.conflict() != null) {
+            stopHost();
+            throw new NetworkIdentity.Refused(c.conflict() + "; the host was stopped");
+        }
+        if (!c.unanchored().isEmpty()) {
+            signingDisabled = "read-only: " + String.join("; ", c.unanchored());
+        }
+    }
+
+    /** A catalog comparison: a conflict (stop the host), or contracts that cannot be anchored (no signing). */
+    record Catalog(@Nullable String conflict, java.util.List<String> unanchored) {
     }
 
     static @Nullable String catalogDifference(JsonNode initialize, com.bloxbean.intelliada.idea.joust.host.HostSnapshot snapshot,
                                               int networkId, int javaFeature) {
+        return catalog(initialize, snapshot, networkId, javaFeature).conflict();
+    }
+
+    static Catalog catalog(JsonNode initialize, com.bloxbean.intelliada.idea.joust.host.HostSnapshot snapshot, int networkId,
+                           int javaFeature) {
         java.util.Map<String, JsonNode> listed = new java.util.HashMap<>();
         for (JsonNode c : initialize.path("contracts")) {
             String n = c.path("name").textValue();
-            if (n == null || listed.put(n, c) != null) return "the host lists a contract twice or without a name";
+            if (n == null || listed.put(n, c) != null) return new Catalog("the host lists a contract twice or without a name", java.util.List.of());
         }
+        // The host's discovery: the first copy of each description on the class path, skipped without x-joust (M33A-CDX-15).
         java.util.Set<String> described = new java.util.HashSet<>();
-        for (String path : snapshot.firstByPath().keySet()) {
-            if (path.startsWith("META-INF/joust/") && path.endsWith(".json")) {
-                described.add(path.substring("META-INF/joust/".length(), path.length() - 5));
+        for (var e : snapshot.firstByPath().entrySet()) {
+            String path = e.getKey();
+            if (!path.startsWith("META-INF/joust/") || !path.endsWith(".json")) continue;
+            try {
+                if (HostJson.parse(e.getValue().bytes()).path("x-joust").isMissingNode()) continue;
+            } catch (HostJson.Malformed m) {
+                return new Catalog("the build's " + path + " is not valid JSON", java.util.List.of());
             }
+            described.add(path.substring("META-INF/joust/".length(), path.length() - 5));
         }
         if (!listed.keySet().equals(described)) {
-            return "the host's contracts " + new java.util.TreeSet<>(listed.keySet()) + " are not the build's "
-                    + new java.util.TreeSet<>(described);
+            return new Catalog("the host's contracts " + new java.util.TreeSet<>(listed.keySet()) + " are not the build's "
+                    + new java.util.TreeSet<>(described), java.util.List.of());
         }
+        java.util.List<String> unanchored = new java.util.ArrayList<>();
         for (var e : listed.entrySet()) {
+            JsonNode entry = e.getValue();
             com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors a;
             try {
                 a = com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.derive(snapshot, e.getKey(), networkId, javaFeature);
             } catch (com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Refused r) {
-                return "the build's " + e.getKey() + " cannot be anchored: " + r.getMessage();
+                unanchored.add(e.getKey() + " cannot be anchored: " + r.getMessage());
+                continue;
             }
             String h = a.contract().hash();
             JsonNode x = a.description().path("x-joust");
+            boolean params = x.has("params");
             ObjectNode want = HostJson.object();
-            if (x.has("params")) {
+            if (params) {
                 want.put("unapplied", h);
             } else {
                 want.put("spend", h).put("mint", h);
                 if (x.path("stakeSelf").asBoolean(false) || x.has("purposes")) want.put("stake", h);
             }
-            if (!want.equals(e.getValue().get("scriptHashes"))) {
-                return "the host reports " + e.getKey() + "'s script hashes as " + e.getValue().get("scriptHashes") + ", the build's are " + want;
+            if (!want.equals(entry.get("scriptHashes"))) {
+                return new Catalog("the host reports " + e.getKey() + "'s script hashes as " + entry.get("scriptHashes")
+                        + ", the build's are " + want, java.util.List.of());
+            }
+            // The status, as the reviewed host reports it (M33A-CDX-16).
+            JsonNode served = entry.get("served"), unsupported = entry.get("unsupported");
+            boolean statusOk = params
+                    ? served == null && unsupported != null && "params".equals(unsupported.textValue())
+                    : unsupported == null && served != null && served.isBoolean() && served.booleanValue();
+            if (!statusOk) {
+                return new Catalog("the host reports " + e.getKey() + "'s status as served=" + served + ", unsupported=" + unsupported,
+                        java.util.List.of());
             }
         }
-        return null;
+        return new Catalog(null, java.util.List.copyOf(unanchored));
     }
 
     private void stopHost() {
@@ -357,7 +426,7 @@ public final class JoustRunSession {
     }
 
     public JsonNode deployment(String contract) throws Exception {
-        return call("deployment", HostJson.object().put("contract", contract), true);
+        return checked(contract, call("deployment", HostJson.object().put("contract", contract), true));
     }
 
     public JsonNode prerequisites(String contract) throws Exception {

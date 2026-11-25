@@ -18,6 +18,8 @@ import static org.junit.Assert.*;
  */
 public class JoustArchitectureTest {
 
+    static final String REVIEW = "com/bloxbean/intelliada/idea/joust/review/";
+
     /**
      * By rule, not by a list of names (M33A-DES-5): any Plutus data type or serializer of CCL, any JuLC class, and CCL's
      * and cbor's encoders and transaction readers.
@@ -35,29 +37,48 @@ public class JoustArchitectureTest {
                 || name.equals("co/nstant/in/cbor/CborDecoder");
     }
 
-    /** The internal class names a class file refers to: CONSTANT_Class entries, and names inside descriptors. */
+    /**
+     * The internal class names a class file refers to, parsed with ASM: every type the remapper sees (class
+     * references, field and method descriptors, signatures, annotations), never a raw byte scan (M33A-CDX-24).
+     */
     static java.util.Set<String> referencedClasses(byte[] b) {
         java.util.Set<String> out = new java.util.HashSet<>();
-        String text = new String(b, StandardCharsets.ISO_8859_1);
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*(?:/[A-Za-z_$][A-Za-z0-9_$]*)+").matcher(text);
-        while (m.find()) out.add(m.group());
+        org.jetbrains.org.objectweb.asm.commons.Remapper collect = new org.jetbrains.org.objectweb.asm.commons.Remapper() {
+            @Override
+            public String map(String internalName) {
+                out.add(internalName);
+                return internalName;
+            }
+        };
+        new org.jetbrains.org.objectweb.asm.ClassReader(b).accept(new org.jetbrains.org.objectweb.asm.commons.ClassRemapper(
+                new org.jetbrains.org.objectweb.asm.ClassWriter(0), collect), 0);
         return out;
     }
 
-    static final String REVIEW = "com/bloxbean/intelliada/idea/joust/review/";
-
-    /** A canary the rule must flag: a reference to BytesPlutusData is an encoder. */
+    /** A compiled canary the parser and the rule must flag: a field of type BytesPlutusData is an encoder reference. */
     @Test
-    public void theRuleFlagsEveryPlutusDataTypeAndJuLC() {
+    public void aCompiledCanaryIsFlagged() throws Exception {
         assertTrue(encoder("com/bloxbean/cardano/client/plutus/spec/BytesPlutusData"));
-        assertTrue(encoder("com/bloxbean/cardano/client/plutus/spec/serializers/PlutusDataJsonConverter"));
-        assertTrue(encoder("org/julclang/clientlib/PlutusDataAdapter"));
         assertTrue(encoder("org/julclang/core/cbor/PlutusDataCborEncoder"));
-        assertFalse("naming a JOUST class (a resource path) is not an encoder", encoder("org/julclang/state/verifier/OutputVerifier"));
         assertTrue(decoder("com/bloxbean/cardano/client/transaction/spec/TransactionWitnessSet"));
+        assertFalse(encoder("org/julclang/state/verifier/OutputVerifier"));
         assertFalse(encoder("com/bloxbean/cardano/client/address/Address"));
-        byte[] canary = "\u0001\u0000\u0037com/bloxbean/cardano/client/plutus/spec/BytesPlutusData".getBytes(StandardCharsets.ISO_8859_1);
-        assertTrue(referencedClasses(canary).stream().anyMatch(JoustArchitectureTest::encoder));
+        // The test runtime may have no compiler: use the JDK 25 beside the configured java (or JAVA_HOME's).
+        String java = System.getProperty("joust.lint.java", "");
+        Path javac = java.isEmpty() ? Path.of(System.getenv("JAVA_HOME"), "bin", "javac") : Path.of(java).resolveSibling("javac");
+        Path dir = Files.createTempDirectory("canary");
+        Path src = dir.resolve("Canary.java");
+        Files.writeString(src, "public class Canary { com.bloxbean.cardano.client.plutus.spec.BytesPlutusData data; "
+                + "Object read(byte[] b) throws Exception { return com.bloxbean.cardano.client.transaction.spec.Transaction.deserialize(b); } }");
+        Process p = new ProcessBuilder(javac.toString(), "-cp", System.getProperty("java.class.path"), "-d", dir.toString(), src.toString())
+                .redirectErrorStream(true).start();
+        String log = new String(p.getInputStream().readAllBytes());
+        int rc = p.waitFor();
+        assertEquals("the canary compiles: " + log, 0, rc);
+
+        java.util.Set<String> refs = referencedClasses(Files.readAllBytes(dir.resolve("Canary.class")));
+        assertTrue("the field's descriptor is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::encoder));
+        assertTrue("the decoder call is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::decoder));
     }
 
     @Test

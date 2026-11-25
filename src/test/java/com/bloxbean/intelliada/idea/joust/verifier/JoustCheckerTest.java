@@ -189,7 +189,9 @@ public class JoustCheckerTest {
             Path java = bin.resolve("java");
             Files.writeString(java, "#!/bin/sh\n" + c[0] + "\n");
             java.toFile().setExecutable(true);
-            JoustChecker.Verdict v = new JoustChecker(t.manifest(), t.dir(), java, Duration.ofSeconds(2)).check(HostJson.object());
+            // 2 s only where the stand-in must be cut off; 10 s where it finishes on its own (M33A-SEC-10).
+            Duration d = c[0].contains("sleep") ? Duration.ofSeconds(2) : Duration.ofSeconds(10);
+            JoustChecker.Verdict v = new JoustChecker(t.manifest(), t.dir(), java, d).check(HostJson.object());
             assertFalse(c[0], v.accepted());
             assertTrue(c[0] + " -> " + v, ((JoustChecker.Refused) v).why().contains(c[1]));
         }
@@ -215,9 +217,9 @@ public class JoustCheckerTest {
         }
         Path tool = lsof;
         java.util.List<String> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
-        JoustChecker.startedForTests = p -> {
+        JoustChecker.writtenForTests = p -> {
             try {
-                Thread.sleep(1200);   // the JVM is up, blocked on its input
+                // The whole input is written: the runner is reading it and loading the kit to check it.
                 Process l = new ProcessBuilder(tool.toString(), "-nP", "-a", "-p", String.valueOf(p.pid()), "-i").redirectErrorStream(true).start();
                 seen.add(new String(l.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
                 l.waitFor();
@@ -235,7 +237,7 @@ public class JoustCheckerTest {
             in.remove("source");
             assertTrue("a real check, accepted", t.checker().check(in).accepted());
         } finally {
-            JoustChecker.startedForTests = null;
+            JoustChecker.writtenForTests = null;
         }
         assertEquals(1, seen.size());
         String sockets = seen.get(0);

@@ -5,7 +5,6 @@ import com.bloxbean.intelliada.idea.joust.host.HostSpec;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +23,24 @@ public final class JoustSigningGate {
     private JoustSigningGate() {
     }
 
+    /**
+     * The gate over every contract the snapshot describes (the host's discovery rule), never a caller's subset
+     * (M33A-CDX-17).
+     */
     public static Gate evaluate(List<JoustVersionPolicy.ReviewedSet> sets, HostSpec spec, HostSnapshot snapshot, JsonNode initialize,
-                                Collection<String> contracts, int networkId, int javaFeature) {
+                                int networkId, int javaFeature) {
+        List<String> contracts = new ArrayList<>();
+        for (var e : snapshot.firstByPath().entrySet()) {
+            String path = e.getKey();
+            if (!path.startsWith("META-INF/joust/") || !path.endsWith(".json")) continue;
+            try {
+                if (com.bloxbean.intelliada.idea.joust.host.HostJson.parse(e.getValue().bytes()).path("x-joust").isMissingNode()) continue;
+            } catch (com.bloxbean.intelliada.idea.joust.host.HostJson.Malformed m) {
+                return new Gate(false, "read-only: " + path + " is not valid JSON", Map.of());
+            }
+            contracts.add(path.substring("META-INF/joust/".length(), path.length() - 5));
+        }
+        if (contracts.isEmpty()) return new Gate(false, "read-only: the build describes no contract", Map.of());
         Map<String, JoustAnchors.Anchors> anchors = new LinkedHashMap<>();
         List<JsonNode> descriptions = new ArrayList<>();
         for (String c : contracts) {

@@ -103,9 +103,21 @@ public final class JoustCheckInput {
             ObjectNode regs = HostJson.object();
             // The contract's own stake credential too, when its deployment has one: a stakeRegistration publication of
             // the contract needs its status (M33A-CDX-3).
+            List<String> hashes = new java.util.ArrayList<>();
             for (String v : List.of("stake", "outputVerifier", "mapVerifier")) {
                 String h = expected.path("scriptHashes").path(v).textValue();
-                if (h == null) continue;
+                if (h != null && !hashes.contains(h)) hashes.add(h);
+            }
+            // A publication that registers its target (kind stakeRegistration or verifier, as the checker reads it): that
+            // target's registration, whichever script it is (M33A-DES-17).
+            String prerequisite = request.path("prerequisite").textValue();
+            if (method.equals("publish") && prerequisite != null) {
+                String[] p = prerequisite.split(":", 2);
+                if (p.length == 2 && !p[0].equals("referenceScript") && p[1].matches("[0-9a-f]{56}") && !hashes.contains(p[1])) {
+                    hashes.add(0, p[1]);
+                }
+            }
+            for (String h : hashes) {
                 Boolean r = chain.registered(h);
                 if (r == null) regs.put(h, "unknown");
                 else regs.put(h, r);
