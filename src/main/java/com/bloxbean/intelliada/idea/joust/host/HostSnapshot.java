@@ -58,12 +58,44 @@ public final class HostSnapshot {
     private final List<Path> classPath;
     private final String digest;
     private final List<Anchor> anchors;
+    /** The class files of each class-path entry, by ordinal (ADR-005 D13 anchors: which entry holds a class). */
+    private final Map<Integer, java.util.Set<String>> classes;
+    static final int MAX_CLASS_NAMES = 1_000_000;
 
-    private HostSnapshot(Path root, List<Path> classPath, String digest, List<Anchor> anchors) {
+    private HostSnapshot(Path root, List<Path> classPath, String digest, List<Anchor> anchors, Map<Integer, java.util.Set<String>> classes) {
         this.root = root;
         this.classPath = classPath;
         this.digest = digest;
         this.anchors = anchors;
+        this.classes = classes;
+    }
+
+    /** The class files ({@code pkg/Name.class}) of the entry with this ordinal; a versioned copy counts as its class. */
+    public java.util.Set<String> classesAt(int ordinal) {
+        return classes.getOrDefault(ordinal, java.util.Set.of());
+    }
+
+    /** The first entry, in class-path order (ordinals follow the launch order), holding {@code classPath} ({@code pkg/Name.class}), or -1. */
+    public int firstWithClass(String classPath) {
+        for (Map.Entry<Integer, java.util.Set<String>> e : classes.entrySet()) {
+            if (e.getValue().contains(classPath)) return e.getKey();
+        }
+        return -1;
+    }
+
+    /** A class file name as the class loader sees it: a multi-release copy under its plain name, or null if not a class. */
+    static String className(String entry) {
+        if (!entry.endsWith(".class") || entry.endsWith("module-info.class") || entry.endsWith("package-info.class")) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("META-INF/versions/\\d{1,3}/(.+)").matcher(entry);
+        return m.matches() ? m.group(1) : entry;
+    }
+
+    private static void addClass(Map<Integer, java.util.Set<String>> classes, int ordinal, String entry, long[] count)
+            throws HostSpec.Invalid {
+        String c = className(entry);
+        if (c == null) return;
+        if (++count[0] > MAX_CLASS_NAMES) throw new HostSpec.Invalid("the launch set has too many classes");
+        classes.computeIfAbsent(ordinal, k -> new java.util.LinkedHashSet<>()).add(c);
     }
 
     /** The snapshot directory ({@code build.snapshot} in {@code initialize}). */
@@ -130,7 +162,7 @@ public final class HostSnapshot {
             List<Path> cp = new ArrayList<>();
             for (Path p : s.classPath) cp.add(done.resolve(s.root.relativize(p)));
             ok = true;
-            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors);
+            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes);
         } finally {
             if (!ok) delete(root);
         }
@@ -140,7 +172,9 @@ public final class HostSnapshot {
         StringBuilder lines = new StringBuilder();
         List<Path> cp = new ArrayList<>();
         List<Anchor> anchors = new ArrayList<>();
+        Map<Integer, java.util.Set<String>> classes = new LinkedHashMap<>();
         long[] total = {0, 0};
+        long[] classCount = {0};
         for (HostSpec.Entry e : spec.launch()) {
             int o = e.ordinal();
             if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
@@ -149,7 +183,7 @@ public final class HostSnapshot {
                 String h = copyFile(e.path(), dst, total);
                 if (!h.equals(e.sha256())) throw new HostSpec.Invalid("a class-path jar changed since joustHostSpec ran (ordinal " + o + ")");
                 lines.append(h).append(' ').append(o).append(" jar \n");
-                jarAnchors(dst, o, anchors, total);
+                jarAnchors(dst, o, anchors, total, classes, classCount);
                 cp.add(dst);
             } else {
                 // The declared root must be a real directory (not a link), even when it lists no files (M31A-CDX-12).
@@ -173,6 +207,7 @@ public final class HostSnapshot {
                         if (!h.equals(e.files().get(rel))) throw new HostSpec.Invalid("a class-path file changed since joustHostSpec ran: " + rel);
                         lines.append(h).append(' ').append(o).append(" dir ").append(rel).append('\n');
                         if (isAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
+                        addClass(classes, o, rel, classCount);
                     }
                 }
                 cp.add(dir);
@@ -180,7 +215,9 @@ public final class HostSnapshot {
         }
         String digest = sha256Hex(lines.toString().getBytes(StandardCharsets.UTF_8));
         if (!digest.equals(spec.digest())) throw new HostSpec.Invalid("the launch set's digest does not match the launch spec");
-        return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors));
+        Map<Integer, java.util.Set<String>> frozen = new LinkedHashMap<>();
+        classes.forEach((k, v) -> frozen.put(k, Collections.unmodifiableSet(v)));
+        return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors), Collections.unmodifiableMap(frozen));
     }
 
     /**
@@ -319,7 +356,8 @@ public final class HostSnapshot {
      * The anchors of a copied jar, read through {@link java.util.jar.JarFile}, the central directory the JVM itself uses
      * (M31A-CDX-13); a manifest adding a {@code Class-Path} is refused, as the host refuses it.
      */
-    private static void jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total) throws HostSpec.Invalid, IOException {
+    private static void jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total, Map<Integer, java.util.Set<String>> classes,
+                                   long[] classCount) throws HostSpec.Invalid, IOException {
         try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jar.toFile(), false)) {
             // The effective manifest, read through a bounded stream before it is parsed (M31A-CDX-25).
             // Exactly one entry may be named like the manifest, in any case: with several, IntelliAda could check one while
@@ -367,6 +405,7 @@ public final class HostSnapshot {
             while (en.hasMoreElements()) {
                 ZipEntry ze = en.nextElement();
                 String name = ze.getName();
+                if (!ze.isDirectory() && HostSpec.safeRelative(name)) addClass(classes, ordinal, name, classCount);
                 if (ze.isDirectory() || !isAnchor(name) || !HostSpec.safeRelative(name)) continue;
                 byte[] b;
                 try (InputStream in = jf.getInputStream(ze)) {
