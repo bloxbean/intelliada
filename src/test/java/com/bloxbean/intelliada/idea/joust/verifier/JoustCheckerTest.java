@@ -202,6 +202,36 @@ public class JoustCheckerTest {
         assertTrue(((JoustChecker.Refused) v).why().contains("Java 25"));
     }
 
+    /** I19: the checker process opens no listening socket (its stdin held open, so it stays alive to be inspected). */
+    @Test
+    public void theCheckerListensOnNoSocket() throws Exception {
+        Tools t = tools("theCheckerListensOnNoSocket");
+        if (t == null || JoustTestTools.windows()) return;
+        Path lsof = Path.of("/usr/sbin/lsof");
+        if (!Files.isExecutable(lsof)) lsof = Path.of("/usr/bin/lsof");
+        if (!Files.isExecutable(lsof)) {
+            assertFalse("lsof is needed for I19", JoustTestTools.required());
+            return;
+        }
+        List<String> cp = new ArrayList<>();
+        for (String f : t.manifest().files().keySet()) cp.add(t.dir().resolve(f).toString());
+        Process p = new ProcessBuilder(t.java().toString(), "-cp", String.join(File.pathSeparator, cp), t.manifest().main())
+                .redirectErrorStream(true).start();
+        try {
+            Thread.sleep(1500);   // the JVM is up and blocked reading stdin
+            assertTrue("the runner waits for its input", p.isAlive());
+            Process l = new ProcessBuilder(lsof.toString(), "-nP", "-a", "-p", String.valueOf(p.pid()), "-i").redirectErrorStream(true).start();
+            String sockets = new String(l.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            l.waitFor();
+            assertFalse("I19: the checker holds no network socket: " + sockets, sockets.contains("LISTEN") || sockets.contains("UDP")
+                    || sockets.contains("TCP"));
+        } finally {
+            p.getOutputStream().close();
+            p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+            p.destroyForcibly();
+        }
+    }
+
     private static byte[] b(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }

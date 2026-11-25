@@ -262,6 +262,36 @@ def checkJoustKit = tasks.register('checkJoustKit') {
 }
 tasks.matching { it.name in ['buildPlugin', 'signPlugin', 'publishPlugin'] }.configureEach { dependsOn(checkJoustKit) }
 
+// ADR-005 I9: the zip carries no org/julclang class on the plugin class path (lib/) and no JOUST class
+// (org/julclang/state/) anywhere but joust-verifier/; printed with the bundle's SHA-256s for the PR (I9).
+def verifyJoustPluginLayout = tasks.register('verifyJoustPluginLayout') {
+    doLast {
+        def zip = tasks.named('buildPlugin').get().archiveFile.get().asFile
+        def bad = []
+        new java.util.zip.ZipFile(zip).withCloseable { z ->
+            z.entries().each { e ->
+                if (!e.name.endsWith('.jar')) return
+                boolean verifier = e.name.contains('/joust-verifier/')
+                boolean lib = e.name.matches('[^/]+/lib/[^/]+\\.jar')
+                new java.util.zip.ZipInputStream(z.getInputStream(e)).withCloseable { jar ->
+                    def je
+                    while ((je = jar.nextEntry) != null) {
+                        if (!je.name.endsWith('.class')) continue
+                        if (lib && je.name.startsWith('org/julclang/')) bad << "${e.name}: ${je.name}"
+                        if (!verifier && je.name.startsWith('org/julclang/state/')) bad << "${e.name}: ${je.name}"
+                    }
+                }
+                if (verifier) {
+                    def sha = java.security.MessageDigest.getInstance('SHA-256').digest(z.getInputStream(e).bytes).encodeHex().toString()
+                    println "joust-verifier ${sha} ${e.name.substring(e.name.lastIndexOf('/') + 1)}"
+                }
+            }
+        }
+        if (!bad.isEmpty()) throw new GradleException("I9: JOUST or JuLC classes on the plugin class path: ${bad.take(5)}")
+    }
+}
+tasks.named('buildPlugin') { finalizedBy(verifyJoustPluginLayout) }
+
 def joustLintLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
 
 test {
