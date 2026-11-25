@@ -51,6 +51,9 @@ public class HostRealHostTest {
             init.put("restoring", false);
             JsonNode r = s.call("initialize", init, Duration.ofSeconds(120), () -> false);
             assertEquals(1, r.path("protocol").intValue());
+            String version = HostVersions.runtimeVersion(snap);
+            assertNotNull("RuntimeVersion read from the snapshot's bytecode", version);
+            assertEquals("D12: the bytecode version equals the handshake's", r.path("versions").path("engine").path("joust").textValue(), version);
             assertEquals("I24: the host's fingerprint is IntelliAda's digest", snap.digest(), r.path("fingerprint").textValue());
             JsonNode contracts = r.path("contracts");
             assertTrue(contracts.isArray() && contracts.size() >= 1);
