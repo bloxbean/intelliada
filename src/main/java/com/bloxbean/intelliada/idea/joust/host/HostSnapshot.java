@@ -204,7 +204,8 @@ public final class HostSnapshot {
     /** A class file's plain name, or null if not a class. */
     static String className(String entry) {
         // Exact, as in a jar (M33A-CDX-45). What a directory serves under another spelling is resolved separately.
-        if (!entry.endsWith(".class") || entry.endsWith("module-info.class") || entry.endsWith("package-info.class")) return null;
+        // A package-info class counts: it is loaded from its package, so it marks the entry as supplying it (M33A-CDX-69).
+        if (!entry.endsWith(".class") || entry.endsWith("module-info.class")) return null;
         java.util.regex.Matcher m = VERSIONED.matcher(entry);
         return m.matches() ? m.group(2) : entry;
     }
@@ -352,6 +353,10 @@ public final class HostSnapshot {
                         addClass(classes, versioned, o, rel, classCount);
                     }
                 }
+                // The copy, as the host will walk it, holds exactly the declared names: a file system that changes a name
+                // (normalization, a trimmed trailing dot) would otherwise make IntelliAda count names the host never sees
+                // (M33A-CDX-67).
+                checkCopiedNames(dir, rels);
                 cp.add(dir);
             }
         }
@@ -415,7 +420,7 @@ public final class HostSnapshot {
                     while (it.hasNext()) {
                         cancelled();
                         Path f = it.next();
-                        if (Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS) && loose(f.getFileName().toString()).endsWith(".class")) {
+                        if (servedAsClass(f)) {
                             pk.add(pkg);
                             break;
                         }
@@ -448,6 +453,47 @@ public final class HostSnapshot {
             return Files.isRegularFile(dir.resolve(rel), LinkOption.NOFOLLOW_LINKS);
         } catch (java.nio.file.InvalidPathException e) {
             return false;   // a name this file system cannot hold is not served from it (M33A-CDX-65)
+        }
+    }
+
+    /**
+     * Whether a file is what its folder serves under a name with the literal {@code .class} suffix: the file itself, or a
+     * spelling the file system resolves to it (M33A-CDX-68).
+     */
+    private static boolean servedAsClass(Path f) throws IOException {
+        if (!Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)) return false;
+        String n = f.getFileName().toString();
+        if (n.endsWith(".class")) return true;
+        int dot = n.lastIndexOf('.');
+        if (dot < 0) return false;
+        Path literal;
+        try {
+            literal = f.resolveSibling(n.substring(0, dot) + ".class");
+        } catch (java.nio.file.InvalidPathException e) {
+            return false;
+        }
+        return Files.isRegularFile(literal, LinkOption.NOFOLLOW_LINKS) && Files.isSameFile(f, literal);
+    }
+
+    /** Refuses a directory copy whose walked relative names are not exactly {@code declared} (M33A-CDX-67). */
+    static void checkCopiedNames(Path dir, java.util.Collection<String> declared) throws HostSpec.Invalid, IOException {
+        java.util.Set<String> walked = new java.util.HashSet<>();
+        try (var w = Files.walk(dir)) {
+            var it = w.iterator();
+            while (it.hasNext()) {
+                cancelled();
+                Path f = it.next();
+                if (Files.isDirectory(f, LinkOption.NOFOLLOW_LINKS)) continue;
+                StringBuilder rel = new StringBuilder();
+                for (Path part : dir.relativize(f)) {
+                    if (rel.length() > 0) rel.append('/');
+                    rel.append(part);
+                }
+                walked.add(rel.toString());
+            }
+        }
+        if (!walked.equals(new java.util.HashSet<>(declared))) {
+            throw new HostSpec.Invalid("a class-path file name reads differently once copied; rename it and run the build again");
         }
     }
 

@@ -349,4 +349,25 @@ public class HostSnapshotTest {
                 "USERPROFILE", "u", "NODE_OPTIONS", "x"), true);
         assertEquals(java.util.Set.of("Path", "SystemRoot", "TEMP", "USERPROFILE"), win.keySet());
     }
+
+    /** M33A-CDX-67: a copy whose walked names differ from the declared ones (a name the file system changed) is refused. */
+    @Test
+    public void aCopyMustHoldExactlyTheDeclaredNames() throws Exception {
+        Path dir = tmp.newFolder("names").toPath();
+        Files.createDirectories(dir.resolve("a"));
+        Files.writeString(dir.resolve("a/Key.class"), "x");
+        HostSnapshot.checkCopiedNames(dir, List.of("a/Key.class"));
+        try {
+            HostSnapshot.checkCopiedNames(dir, List.of("a/Key.class", "b/Key.class"));
+            fail("a declared name missing from the copy was accepted");
+        } catch (HostSpec.Invalid expected) {
+            assertTrue(expected.getMessage().contains("reads differently"));
+        }
+        try {
+            HostSnapshot.checkCopiedNames(dir, List.of("a/Key.class."));
+            fail("a changed name was accepted");
+        } catch (HostSpec.Invalid expected) {
+            assertTrue(expected.getMessage().contains("reads differently"));
+        }
+    }
 }

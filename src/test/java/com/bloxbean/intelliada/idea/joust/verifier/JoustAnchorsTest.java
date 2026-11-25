@@ -347,6 +347,39 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         }
     }
 
+    /** M33A-CDX-68: a protected folder's file counts as a class only where the literal .class name reaches it. */
+    public void testOnlyALiteralClassNameServesAProtectedPackage() throws Exception {
+        for (String name : List.of("schema.CLASS", "schema.\uff43\uff4c\uff41\uff53\uff53")) {
+            Path dir = newFolder();
+            Path f = dir.resolve("org/julclang/state/runtime/" + name);
+            Files.createDirectories(f.getParent());
+            Files.write(f, new byte[]{(byte) 0xca, (byte) 0xfe});
+            boolean served = Files.isRegularFile(dir.resolve("org/julclang/state/runtime/schema.class"));
+            HostSnapshot s = snapshot(List.of(dir));
+            try {
+                assertEquals(name, served, s.servesPackage(0, "org/julclang/state/runtime/"));
+            } finally {
+                s.delete();
+            }
+        }
+    }
+
+    /** M33A-CDX-69: a jar's package-info class in a protected package is a class of that package. */
+    public void testAPackageInfoClassCounts() throws Exception {
+        Path jar = newFolder().resolve("pi.jar");
+        try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new java.util.zip.ZipEntry("org/julclang/state/runtime/package-info.class"));
+            out.write(new byte[]{(byte) 0xca, (byte) 0xfe});
+            out.closeEntry();
+        }
+        HostSnapshot s = snapshot(List.of(jar));
+        try {
+            assertTrue(s.classesAt(0).contains("org/julclang/state/runtime/package-info.class"));
+        } finally {
+            s.delete();
+        }
+    }
+
     /** M33A-CDX-56: a blueprint with a UTF-8 BOM, which the runtime reads, anchors to the same hash. */
     public void testABlueprintWithAByteOrderMarkAnchors() throws Exception {
         Examples ex = examples("testABlueprintWithAByteOrderMarkAnchors");
