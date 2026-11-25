@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r16). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r17). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -851,8 +851,9 @@ invariant.
   - **Resolution for the launch JDK.** Classes resolve as the launch spec's JVM loads them: base entries, and versioned copies only in `Multi-Release` jars, at most that version (M33A-CDX-8).
   - **Network.** Anchors carry their network.
   - **Production gates.** The host's `initialize` catalog and each contract's `deployment` are checked in the live session (launch, and before the first `prerequisites`/`publish`/`prepare`); a difference stops the host (M33A-CDX-1, -CDX-2). `JoustSigningGate` composes D12 with the rule that the verifiers come from the reviewed `julc-state-verifier` jar's own entry (M33A-DES-3).
-  - **Checker process.** stdin and stdout are supervised and the deadline runs from launch; a verdict counts only after the whole input was delivered and the output read to its end; every unfinished exit kills and reaps the process tree; the JVM runs without the attach mechanism or perf data.
-  - **I9.** It holds as "no JuLC class on the plugin class path, no JOUST class outside `joust-verifier/`". IntelliAda's earlier JuLC integration keeps its compiler and VM in `julc-runtime/`, loaded by its own class loader, which is the one other place JuLC classes may be.
+  - **Checker process.** stdin and stdout are supervised and the deadline runs from launch; a verdict counts only after the whole input was written to the pipe (and the stream closed cleanly) and the output read to its end, and the pinned runner reads its input to the end before deciding; every unfinished exit ends the root process first, then its descendants, and reaps it; the JVM runs without the attach mechanism or perf data.
+  - **Read-only, not stopped (D11 step 4).** A contract that cannot be anchored leaves the session read-only (views, listings, decoding); only an established conflict (a contract missing or extra against the host's discovery rule, a differing hash or status) stops the host. Every deployment reply is checked when anchors exist. The signing gate covers every contract the snapshot describes, never a caller's subset. A snapshot refuses repeats only of the names IntelliAda reads (anchors, the manifest, `RuntimeVersion`).
+  - **I9.** It holds as "no JuLC class on the plugin class path, no JOUST class outside `joust-verifier/`" (logical names, multi-release copies included). IntelliAda's earlier JuLC integration keeps its compiler and VM in `julc-runtime/`, loaded by its own class loader: the one other place JuLC classes may be, and never JOUST's.
   - **The reviewed set** (D12) must be the bundled kit's: the same label, `julc-state-api` hash and `julc-state-runtime` hash. The build checks this.
   - **Deferred to M3.3b's end-to-end runs:** the verifier and staking deployment fields against a live host (Dex, Token).
 
@@ -1026,3 +1027,4 @@ Security and design approved round 8.
 - **r14** (2026-11-26): §12 E8a and L39 (delegated). From M3.2 round 2.
 - **r15** (2026-11-26): §12 E8a wording (the hidden legacy copy, repair, watch-only entries, forSession). From M3.2 round 3.
 - **r16** (2026-11-26): §12 E9, anchor and checker rules from M3.3a round 1.
+- **r17** (2026-11-26): §12 E9 from M3.3a round 2 (read-only on unanchored contracts, checker I/O wording, I9).
