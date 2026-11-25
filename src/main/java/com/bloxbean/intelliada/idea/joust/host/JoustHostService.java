@@ -61,7 +61,7 @@ public final class JoustHostService implements Disposable {
         boolean ask(Project project, Path moduleDir, HostSpec spec, @Nullable String joustVersion);
     }
 
-    static volatile Confirm confirmForTests;
+    public static volatile Confirm confirmForTests;
 
     /** A module's slot, reserved before anything starts and released only once its process has exited (M31A-CDX-3). */
     private static final class Slot {
@@ -216,7 +216,7 @@ public final class JoustHostService implements Disposable {
     }
 
     /** The part of {@link #start} after {@code joustHostSpec}: snapshot, confirm, start, {@code initialize}. Off the EDT. */
-    Running launch(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, String binding, HostSession.Reads reads,
+    public Running launch(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, String binding, HostSession.Reads reads,
                    Consumer<String> onEnd) throws NotStarted, InterruptedException {
         Path key = key(moduleDir);
         Slot slot = new Slot();

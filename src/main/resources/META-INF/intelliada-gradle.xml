@@ -7,6 +7,9 @@
         <applicationService serviceInterface="com.bloxbean.intelliada.idea.joust.tasks.JoustGradleTasks"
                             serviceImplementation="com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustGradleTasksImpl"/>
         <externalSystemTaskNotificationListener implementation="com.bloxbean.intelliada.idea.joust.tasks.gradle.JoustAbiFailureListener"/>
+        <!-- JOUST ADR-005 M3.1b (D15): the read-only run panel; its dev host is launched through Gradle (joustHostSpec) -->
+        <toolWindow id="JOUST Run" anchor="bottom" canCloseContents="false"
+                    factoryClass="com.bloxbean.intelliada.idea.joust.run.JoustRunToolWindowFactory"/>
     </extensions>
     <actions>
         <!-- ADR-004 D7: the JOUST actions in the Gradle tool window's project and module menus too -->
