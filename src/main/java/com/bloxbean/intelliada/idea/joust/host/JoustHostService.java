@@ -98,6 +98,15 @@ public final class JoustHostService implements Disposable {
                     : "joustHostSpec failed; see the Gradle output");
         }
         if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
+        return launch(guard, moduleDir, reads, onEnd);
+    }
+
+    /**
+     * The part of {@link #start} after {@code joustHostSpec}: reads and snapshots the module's launch spec, confirms and
+     * starts the host. Off the EDT.
+     */
+    Running launch(JoustRunGuard guard, Path moduleDir, HostSession.Reads reads, Consumer<String> onEnd)
+            throws NotStarted, InterruptedException {
         HostSpec spec;
         HostSnapshot snapshot;
         try {
