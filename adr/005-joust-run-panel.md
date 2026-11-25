@@ -1,7 +1,7 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r7). The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
-JOUST built, as gate G3.1 requires; r2–r7 answer review rounds 1–6 (§10). Reviewed before any milestone that signs starts.
+**Status:** Proposed (r8). The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+JOUST built, as gate G3.1 requires; r2–r8 answer review rounds 1–7 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
 
@@ -410,7 +410,10 @@ calls** wait for M3c (D17's designation journal). `@Params` and `@AuthorizedBy` 
   settled before the next), then the `init` call; call actions and views.
 - **Registration evidence (ADR5-CDX-10):** when a node rejects a registration as already registered, or IntelliAda sees
   the registration confirmed at an inclusion slot, it sends `registered` with that evidence and lists `prerequisites`
-  again; a script's presence is checked separately (a duplicate registration says nothing about it).
+  again; a script's presence is checked separately (a duplicate registration says nothing about it). Both kinds of
+  evidence are kept in the chain's journal and re-sent to every fresh host (D14); a rewind drops slot evidence above the
+  restored tip, and drops a duplicate-registration message unless the provider confirms the registration again
+  (ADR5-CDX-26).
 - **Forms from the description** in its JSON encoding (`x-joust.encoding.json`), as d2 lists: bytes as hex (with key
   hash pickers), integers as decimal strings, Bool by shape, Optional, lists, maps (canonical key order), sum types by
   `$variant`, `Data` as CBOR hex; `payable` lovelace and `takesAssets` rows (policies and names in the protocol's
@@ -474,16 +477,22 @@ The protocol makes these the client's duties (dev-host-1 "Reservation journal (D
   any entry is live and before forwarding the next call, and sends `settled` with the reservation, `txHash`, the status
   and the observed tip (the first `confirmed` carries the inclusion slot as its tip, as the playground does; ADR5-DES-20): `confirmed` with the inclusion slot, `rolledBack`, `expired` once the
   observed tip passes `validTo + settlementSlots`. **The reply is checked** (ADR5-CDX-20): IntelliAda keeps, per
-  reservation, the state machine of the protocol's table and applies, **in order, every tip the host accepted**: each
-  `settled` event's tip, and each reverse-read answer's tip once the host has used it (an answer with a value or
-  `absent` in a call that completed). A tip whose acceptance is uncertain (a `failed` or `unsupported` answer, or a read
-  of a call that ended in an error or was cancelled) is applied only to an **upper** copy of the machine: the host's
-  reply may match either copy, and the journal keeps the less advanced state until a later accepted tip settles it
-  (ADR5-CDX-23). A tip applies to every reservation of that host as it exists when the tip is accepted, so **inclusions
+  reservation, the state machine of the protocol's table and applies, **in order, every tip the host accepts into its reservation table**,
+  exactly as JOUST's `Reads` does (ADR5-CDX-23, r8): each `settled` event's tip; and a reverse-read answer's tip when it
+  is a `value` or `absent` answer of `utxos`, `output`, `tip`, `protocolParams`, `script` or `stakeRegistration`, or an
+  `unsupported` answer of `stakeRegistration`. It is **not** applied for a `failed` answer (the host ends the call before
+  observing it), for any other `unsupported` answer, or for the map-history kinds (`assetHistory`, `redeemers`, `datum`),
+  whose tips count only toward the call's greatest tip. The only genuinely uncertain case is an answer IntelliAda wrote
+  while the call was being cancelled or had timed out: its tip goes to an **upper** copy of the machine, the host's
+  reply may match either copy, and the journal keeps the less advanced state until a later accepted tip settles it. A tip applies to every reservation of that host as it exists when the tip is accepted, so **inclusions
   are reported first** (ADR5-CDX-25): before any forward call and on each poll, IntelliAda sends every newly observed
   inclusion in ascending slot order, each `confirmed` with its inclusion slot as tip, and only then the current tip; no
-  forward call (whose reads would carry newer tips) is sent while an observed inclusion is unreported. The expected state
-  is the machine's and compares the host's reply;
+  forward call (whose reads would carry newer tips) is sent while an observed inclusion is unreported. **Inside a call**
+  (ADR5-CDX-25, r8), before answering a reverse read whose tip would pass `validTo + settlementSlots` of a reservation
+  that is `prepared` (or included but not yet reported) on that host, IntelliAda asks the node whether that body landed;
+  if it did, or if its inclusion is recorded but unreported, the read answers `failed` (retryable: "a transaction
+  landed and its settlement is not reported yet"), the call ends, and the inclusion is reported before the next call,
+  as the playground's read handler does. The expected state is the machine's and compares the host's reply;
   the journal keeps IntelliAda's derived state, and a disagreement keeps the reservation and fences that host (stopped;
   a new host is restored from the journal), as the playground's `inform` does. **`discarded` only for a body declined before handout** (and, in M3c,
   a keyed attempt the node definitely rejected). A handed-out ordinary body, even one the node refused or whose
@@ -512,9 +521,13 @@ The protocol makes these the client's duties (dev-host-1 "Reservation journal (D
     the base on a public network). No user confirmation ends this fence.
   - **Registry entry and chain record both unreadable** while a journal survives (ADR5-CDX-3, ADR5-SEC-19): no bound
     on the missing history can be derived (k counts blocks, not slots, so no slot margin covers a rewind before
-    detection), and there is no user override for the same chain. Building on it stays fenced, and the panel explains
-    why: it lifts only when the lost files are restored (from a backup), or, for a devnet, when the devnet is positively
-    recreated (D14). Views and listings still work.
+    detection), and no restored copy can be shown to be fresh (a backup may predate a later handout from another module,
+    ADR5-CDX-3, r8). There is no user override for the same chain: building on it stays fenced, and the panel explains
+    why. It lifts only for a devnet that is positively recreated (D14); on a public chain it does not lift. Views and
+    listings still work.
+  - **Accepted residual (ADR5-DES-24):** a user who also deletes the surviving journals turns this into the
+    everything-lost case below, which IntelliAda cannot tell from a new chain. Deleting IntelliAda's state by hand is
+    outside what it can defend.
   - **Everything lost** (no registry entry, no record, no journal for a chain): IntelliAda cannot tell it from a new
     chain. This residual, losing all of IntelliAda's state for a chain, is accepted and documented.
   - **Forget this chain** is offered only for a devnet positively identified as recreated (D14); forgetting local
@@ -596,12 +609,12 @@ These continue ADR-004's. This ADR also relies on ADR-004's I15, I18, I20 and I2
 | I22 | M3.1a: the kit's Bank session and seven `violation-*` sessions against `FakeHost`, plus IntelliAda's own tests for a stalled frame, a host that never answers, and a frame after `exit`; M3.3b: `sessions/maps.json`; M3c: `sessions/keyed.json` |
 | I23 | M3.3a: the checker adapter agrees with all 333 vectors; a recorded `prepared` (Bank) fed through IntelliAda's **own input assembly** (anchors derived from a snapshot of JOUST's example, reads from a recorded node) is accepted, and one mutation per rule family refused; a checker that crashes, times out, prints extra output or is tampered with refuses |
 | I24 | M3.1a: a snapshot copy edited after hashing, a spec digest mismatch, and a host reporting another fingerprint are each refused; M3.3a: anchors derived from JOUST examples' snapshots equal the vectors' `anchors`; the recomputed Counter hash equals the host's; a tampered blueprint `hash`, a duplicate resource, a project class named `OutputVerifier` and a conflicting `deployment` are refused |
-| I25 | M3.3b: a crash immediately before signing and between persisting and handout; a failed journal write refuses; two modules sharing a payer on one chain, and simultaneous prepares through two node configurations of one chain; a restart with a lower limit never lowers the mark; with complete history restore resumes at once; a lost journal completes restore only above the mark; a missing chain record beside a surviving journal, and a public chain in the registry with neither, unblock only after the derived bound; with the registry entry and the record both lost the chain stays fenced across restarts; a record lost after a rewind uses the registry's highest tip as the base; an IDE restart during recovery keeps the derived mark and its fence (a restart right after writing the replacement is not complete history); simultaneous admissions on two chains keep both registry maxima |
+| I25 | M3.3b: a crash immediately before signing and between persisting and handout; a failed journal write refuses; two modules sharing a payer on one chain, and simultaneous prepares through two node configurations of one chain; a restart with a lower limit never lowers the mark; with complete history restore resumes at once; a lost journal completes restore only above the mark; a missing chain record beside a surviving journal, and a public chain in the registry with neither, unblock only after the derived bound; with the registry entry and the record both lost the chain stays fenced across restarts, and a restored stale backup (listing only module A while B's journal is lost) does not lift it; a record lost after a rewind uses the registry's highest tip as the base; an IDE restart during recovery keeps the derived mark and its fence (a restart right after writing the replacement is not complete history); simultaneous admissions on two chains keep both registry maxima |
 | I26 | M3.3b: rewriting the snapshot's description after launch does not change the anchors |
 | I27 | M3.3a: a changed checker file refuses before any process starts; output `[]` with extra text refuses |
 | I28 | M3.1b: a node answering an older tip yields the previous `now` |
 | I29 | M3.3a: a description with a bumped `x-joust.version`, a runtime jar whose hash is not reviewed, a `dir` runtime, a `RuntimeVersion` that disagrees with `versions.engine.joust`, and an earlier launch entry holding a same-version copy of `org/julclang/state/runtime/**` each leave the panel read-only |
-| I32 | M3.3b: a host answering `confirmed` one slot after inclusion is fenced and the reservation kept; a body restored valid through 2025, a read answered at tip 2070, then `confirmed` at slot and tip 2005, is expected exactly as the real host answers (no fence); a `failed` read carrying tip 2100 does not advance the expected state (`Registry-remove`: `shallow` at 2005, `confirmed` at 2070); two bodies restored together (`Bank-publish-1`, `Bank-init`) with inclusions at 1871 and 1875 are both reported before the poll tip 1951, with no `conflict` |
+| I32 | M3.3b: a host answering `confirmed` one slot after inclusion is fenced and the reservation kept; a body restored valid through 2025, a read answered at tip 2070, then `confirmed` at slot and tip 2005, is expected exactly as the real host answers (no fence); a `failed` read carrying tip 2100 does not advance the expected state (`Registry-remove`: `shallow` at 2005, `confirmed` at 2070); two bodies restored together (`Bank-publish-1`, `Bank-init`) with inclusions at 1871 and 1875 are both reported before the poll tip 1951, with no `conflict`; a body `shallow` at 2005 (margin 60), a `failed` read at 2100, then a repeat confirmation at 2006 is expected `shallow`; an `unsupported` `stakeRegistration` answer advances it and a successful `datum` answer does not; a reverse read inside an in-flight call whose tip would expire a body that landed answers `failed`, and the inclusion is reported before the next call |
 | I33 | M3.3b: the same module opened through two aliases of one chain is refused while the first runs; restarting one host leaves another host's live reservation untouched; concurrent publications of one shared verifier from distinct payers admit one |
 | I30 | M3.3b: a 5xx and a node refusal on submit leave the body reserved until chain evidence or expiry; a shallow rollback returns it to `prepared` and keeps its inputs across a restart; a deep rollback fences building |
 | I31 | M3.3b: a lagging provider tip and a shallow rollback keep the journal and the mark; a lower tip below an expired handed-out body's `validTo`, and one more than 900 slots below the last `now`, each trigger reconciliation; a public-network reorg below the depth margin leaves deeper inclusions untouched; a replacement branch with unchanged block 1, one retained and one removed inclusion, restores the retained one `shallow` and the removed one `prepared`; a final inclusion retained after a rewind to within its margin becomes shallow again (inputs held), and a final one that moved slots is restored at its new slot; two node configurations of one chain share one mark; M3.4: an external Yano snapshot restore across an inclusion with an outstanding export fences and reconciles (same identity); a recreated DevKit (new block at height 1) starts a new journal |
@@ -708,7 +721,7 @@ New in r1:
 | L32 | For the run panel the bound node's answers are trusted (ADR-0023's model); ADR-004 §2's "defence in depth against a lying endpoint" no longer applies to it; provider integrity rests on D14 | delegated | 2026-11-25 | ADR5-SEC-7; JOUST ADR-0023 (maintainer, 2026-11-23) |
 | L33 | Threat boundary: D13 defends against a buggy or misbehaving host, staleness and corruption, not hostile same-user project code | delegated | 2026-11-25 | ADR5-SEC-4, ADR5-DES-5; ADR-004 §2, ADR-0022 §2 |
 | L34 | Chain identity is the chain (magic; devnets also the block at height 1), never the node configuration; a lower tip is a rollback or a transient read, never a new chain; recreation only on a positive identity change | delegated | 2026-11-25 | ADR5-SEC-10, ADR5-SEC-11, ADR5-DES-15, ADR5-CDX-6 |
-| L35 | A lost chain record is replaced by a bound derived from the policy's hard ceilings over the highest tip and `now` ever recorded (r5), persisted with an explicit recovery fence and waited out; with the registry entry also lost, the chain stays fenced until the files are restored or a devnet is recreated (r7); no user confirmation ends a recovery fence; public chains are never forgotten | delegated | 2026-11-25 | ADR5-SEC-15, ADR5-CDX-3, ADR5-DES-18 |
+| L35 | A lost chain record is replaced by a bound derived from the policy's hard ceilings over the highest tip and `now` ever recorded (r5), persisted with an explicit recovery fence and waited out; with the registry entry also lost, the chain stays fenced (a restored backup cannot prove freshness), lifting only for a recreated devnet (r7, r8); no user confirmation ends a recovery fence; public chains are never forgotten | delegated | 2026-11-25 | ADR5-SEC-15, ADR5-CDX-3, ADR5-DES-18 |
 
 Delegated decisions (L27, L28, L30–L35) are tracked for the maintainer's ratification on this PR.
 
@@ -836,6 +849,18 @@ Security and design approved round 6.
 | ADR5-SEC-20 (non-blocking) | D14: reconciliation also triggers for an expired handed-out body a rewind revalidates, and for a lower tip more than 900 slots below the last `now`; I31 tests |
 | ADR5-DES-23 (non-blocking) | noted for M3.3b: every live host on the chain is restarted under the chain's fence, and `registered` evidence is re-sent after a restart |
 
+### Review round 7 (head `d5acf70`) and where r8 answers it
+
+Security and design approved round 7.
+
+| Finding | Change in r8 |
+|---|---|
+| ADR5-CDX-3 | D17: a restored backup no longer lifts the both-lost fence (its freshness cannot be shown); only a recreated devnet lifts it; L35; I25 stale-backup test |
+| ADR5-CDX-23 | D17: the tips the host accepts, per kind and outcome, as JOUST's `Reads` does; the upper copy only for answers written during a cancellation or timeout; I32 cases |
+| ADR5-CDX-25 | D17: a reverse read inside a call that would expire a landed body answers `failed` and the inclusion is reported first; I32 case |
+| ADR5-CDX-26 (non-blocking) | D15: slot and duplicate-registration evidence kept, re-sent to fresh hosts, dropped by rewinds |
+| ADR5-DES-24 (non-blocking) | D17: deleting the surviving journals by hand is an accepted residual |
+
 ## Revision history
 
 - **d1** (2026-11-19): moved from ADR-004 r2's Part C; advisor changes L14 and L17.
@@ -870,3 +895,6 @@ Security and design approved round 6.
 - **r7** (2026-11-25, responds to review round 6 of `f4b7763`; security and design approved it): settlement advanced only
   by tips the host accepted, inclusions reported first in slot order (D17, I32); no slot bound after losing both the
   registry entry and the record, so the chain stays fenced (D17, L35); wider reconciliation trigger (D14, I31).
+- **r8** (2026-11-25, responds to review round 7 of `d5acf70`; security and design approved it): accepted tips per read
+  kind and outcome, and reads inside a call that cannot overtake a landed body (D17, I32); the both-lost fence lifts only
+  for a recreated devnet (D17, L35); registration evidence across restarts (D15); the manual-deletion residual (D17).
