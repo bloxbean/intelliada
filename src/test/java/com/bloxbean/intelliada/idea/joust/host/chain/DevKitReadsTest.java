@@ -65,7 +65,7 @@ public class DevKitReadsTest {
             init.putObject("limits").put("callDeadlineMs", 60000).put("readsPerCall", 256).put("readBytesPerCall", 33554432);
             init.putObject("build").put("snapshot", snap.root().toString()).put("digest", snap.digest());
             init.put("restoring", false);
-            JsonNode r = s.call("initialize", init, Duration.ofSeconds(120), () -> false);
+            JsonNode r = s.initialize(init, snap.digest(), Duration.ofSeconds(120));
             String contract = r.path("contracts").get(0).path("name").textValue();
             long now = api.get("/blocks/latest").path("slot").asLong();
 
