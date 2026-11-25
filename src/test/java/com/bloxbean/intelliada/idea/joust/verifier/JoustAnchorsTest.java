@@ -178,25 +178,135 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
     }
 
     /**
-     * M33A-CDX-35, -CDX-36: in a directory, a differently cased class file or description is what a case-insensitive
-     * file system can serve under the canonical name; it counts as a copy.
+     * M33A-CDX-35, -CDX-36, -CDX-54, -DES-24: a directory holds what its file system serves under a name. A differently
+     * spelled class file or description counts as a copy exactly when the file system resolves the canonical name to it;
+     * otherwise the build anchors normally.
      */
-    public void testCaseVariantsInDirectoriesCount() throws Exception {
-        Examples ex = examples("testCaseVariantsInDirectoriesCount");
+    public void testDirectoriesHoldWhatTheirFileSystemServes() throws Exception {
+        Examples ex = examples("testDirectoriesHoldWhatTheirFileSystemServes");
         if (ex == null) return;
         Path bank = ex.classes("bank");
         String name = "org.julclang.state.examples.bank.Bank";
-        // A class file with an upper-case suffix in an earlier directory is a second copy of the validator.
+        String validator = "org/julclang/state/examples/bank/BankValidator.class";
+        // An upper-case suffix.
         Path upper = newFolder();
         Path cls = upper.resolve("org/julclang/state/examples/bank/BankValidator.CLASS");
         Files.createDirectories(cls.getParent());
-        Files.copy(bank.resolve("org/julclang/state/examples/bank/BankValidator.class"), cls);
-        assertRefused(snapshot(List.of(upper, bank, ex.verifierJar())), name, "exactly one");
-        // A differently cased, different description in an earlier directory is a second description.
+        Files.copy(bank.resolve(validator), cls);
+        expect(Files.isRegularFile(upper.resolve(validator)), snapshot(List.of(upper, bank, ex.verifierJar())), name, "exactly one");
+        // A lower-case prefix, with a different description.
         Path lower = newFolder();
         Files.createDirectories(lower.resolve("meta-inf/joust"));
         Files.writeString(lower.resolve("meta-inf/joust/" + name + ".json"), "{\"x-joust\":{\"contract\":\"Other\"}}");
-        assertRefused(snapshot(List.of(lower, bank, ex.verifierJar())), name, "two different descriptions");
+        expect(Files.isRegularFile(lower.resolve("META-INF/joust/" + name + ".json")), snapshot(List.of(lower, bank, ex.verifierJar())),
+                name, "two different descriptions");
+        // A Unicode spelling (long s), which some file systems fold to s.
+        Path longS = newFolder();
+        Files.createDirectories(longS.resolve("META-INF/jou\u017ft"));
+        Files.writeString(longS.resolve("META-INF/jou\u017ft/" + name + ".json"), "{\"x-joust\":{\"contract\":\"Other\"}}");
+        expect(Files.isRegularFile(longS.resolve("META-INF/joust/" + name + ".json")), snapshot(List.of(longS, bank, ex.verifierJar())),
+                name, "two different descriptions");
+    }
+
+    /** The refusal when the file system serves the variant under the canonical name, normal anchoring when it does not. */
+    private static void expect(boolean served, HostSnapshot s, String contract, String why) throws Exception {
+        if (served) {
+            assertRefused(s, contract, why);
+            return;
+        }
+        try {
+            assertNotNull(JoustAnchors.derive(s, contract, 0, 25));
+        } finally {
+            s.delete();
+        }
+    }
+
+    /** M33A-CDX-54: a directory serving a protected package under another spelling serves the package. */
+    public void testAProtectedPackageIsServedUnderAnotherSpelling() throws Exception {
+        Path dir = newFolder();
+        Path cls = dir.resolve("ORG/julclang/state/runtime/X.class");
+        Files.createDirectories(cls.getParent());
+        Files.write(cls, new byte[]{(byte) 0xca, (byte) 0xfe});
+        Path other = newFolder();
+        Files.writeString(other.resolve("a.txt"), "a");
+        HostSnapshot s = snapshot(List.of(dir, other));
+        try {
+            assertEquals(Files.isDirectory(dir.resolve("org/julclang/state/runtime")), s.servesPackage(0, "org/julclang/state/runtime/"));
+            assertFalse(s.servesPackage(1, "org/julclang/state/runtime/"));
+        } finally {
+            s.delete();
+        }
+    }
+
+    /** M33A-CDX-55: a version directory with a leading zero is not one the JDK reads; a validator only there is not loaded. */
+    public void testAVersionDirectoryWithALeadingZeroIsNotAVersion() throws Exception {
+        Examples ex = examples("testAVersionDirectoryWithALeadingZeroIsNotAVersion");
+        if (ex == null) return;
+        Path bank = ex.classes("bank");
+        String name = "org.julclang.state.examples.bank.Bank";
+        Path jar = newFolder().resolve("mr.jar");
+        var mf = new java.util.jar.Manifest();
+        mf.getMainAttributes().put(java.util.jar.Attributes.Name.MANIFEST_VERSION, "1.0");
+        mf.getMainAttributes().putValue("Multi-Release", "true");
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar), mf)) {
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/versions/025/org/julclang/state/examples/bank/BankValidator.class"));
+            out.write(Files.readAllBytes(bank.resolve("org/julclang/state/examples/bank/BankValidator.class")));
+            out.closeEntry();
+            for (String r : List.of("META-INF/plutus/BankValidator.plutus.json", "META-INF/joust/" + name + ".json")) {
+                out.putNextEntry(new java.util.zip.ZipEntry(r));
+                out.write(Files.readAllBytes(bank.resolve(r)));
+                out.closeEntry();
+            }
+        }
+        assertRefused(snapshot(List.of(jar, ex.verifierJar())), name, "is not in the build");
+    }
+
+    /** M33A-CDX-55: a Multi-Release value the JDK reads differently (here with trailing blanks) refuses the snapshot. */
+    public void testAnAmbiguousMultiReleaseValueIsRefused() throws Exception {
+        Path jar = newFolder().resolve("mr.jar");
+        try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/MANIFEST.MF"));
+            out.write("Manifest-Version: 1.0\r\nMulti-Release: true  \r\n\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/versions/21/a/B.class"));
+            out.write(new byte[]{(byte) 0xca, (byte) 0xfe});
+            out.closeEntry();
+        }
+        try {
+            snapshot(List.of(jar)).delete();
+            fail("an ambiguous Multi-Release value was accepted");
+        } catch (HostSpec.Invalid e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("Multi-Release"));
+        }
+    }
+
+    /** M33A-CDX-56: a blueprint with a UTF-8 BOM, which the runtime reads, anchors to the same hash. */
+    public void testABlueprintWithAByteOrderMarkAnchors() throws Exception {
+        Examples ex = examples("testABlueprintWithAByteOrderMarkAnchors");
+        if (ex == null) return;
+        Path bank = copy(ex.classes("bank"));
+        String name = "org.julclang.state.examples.bank.Bank";
+        HostSnapshot plain = snapshot(List.of(bank, ex.verifierJar()));
+        String want;
+        try {
+            want = JoustAnchors.contractScript(plain, name, 25).hash();
+        } finally {
+            plain.delete();
+        }
+        Path bp = bank.resolve("META-INF/plutus/BankValidator.plutus.json");
+        byte[] b = Files.readAllBytes(bp);
+        byte[] bom = new byte[b.length + 3];
+        bom[0] = (byte) 0xef;
+        bom[1] = (byte) 0xbb;
+        bom[2] = (byte) 0xbf;
+        System.arraycopy(b, 0, bom, 3, b.length);
+        Files.write(bp, bom);
+        HostSnapshot s = snapshot(List.of(bank, ex.verifierJar()));
+        try {
+            assertEquals(want, JoustAnchors.contractScript(s, name, 25).hash());
+        } finally {
+            s.delete();
+        }
     }
 
     /** M33A-CDX-45: in a jar, BankValidator.CLASS is not the class (jar names are exact), so nothing anchors. */

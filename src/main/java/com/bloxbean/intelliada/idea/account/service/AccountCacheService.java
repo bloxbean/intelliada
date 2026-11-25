@@ -104,7 +104,11 @@ public class AccountCacheService {
         return all;
     }
 
-    private static boolean ownPrivateDirectory(java.nio.file.Path f) {
+    /**
+     * True when the folder is established as this user's own private directory, false when it is established not to be;
+     * an IOException when it cannot be established, which refuses the ownership decision (M33A-CDX-58).
+     */
+    private static boolean ownPrivateDirectory(java.nio.file.Path f) throws java.io.IOException {
         try {
             if (!java.nio.file.Files.isDirectory(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
             // The owner as a file-system principal, compared with the principal of a file this process creates: never a
@@ -126,7 +130,7 @@ public class AccountCacheService {
             return !perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
                     && !perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE);
         } catch (UnsupportedOperationException | java.io.IOException e) {
-            return false;
+            throw new java.io.IOException("whether " + f + " is a private account store cannot be established", e);
         }
     }
 

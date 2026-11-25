@@ -73,8 +73,8 @@ public final class JoustAnchors {
         }
     }
 
-    static final String OUTPUT_VERIFIER = "org/julclang/state/verifier/OutputVerifier.class";
-    static final String MAP_VERIFIER = "org/julclang/state/verifier/MapVerifier.class";
+    static final String OUTPUT_VERIFIER = HostSnapshot.VERIFIER_CLASSES.get(0);
+    static final String MAP_VERIFIER = HostSnapshot.VERIFIER_CLASSES.get(1);
     /** A validator's simple name: no {@code $}, whose blueprint name the runtime would derive differently (M33A-SEC-2). */
     private static final Pattern NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,200}");
     private static final Pattern PACKAGE = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]{0,100}(?:\\.[A-Za-z_$][A-Za-z0-9_$]{0,100}){0,30}");
@@ -199,11 +199,11 @@ public final class JoustAnchors {
             throw new Refused("the class " + classPath.replace('/', '.').replace(".class", "") + " is in " + holders.size()
                     + " class-path entries; it must be in exactly one");
         }
-        boolean folded = snapshot.foldsCase(entry);   // M33A-CDX-26
-        String tail = (simple + ".class").toLowerCase(java.util.Locale.ROOT);
-        long sameName = snapshot.classesAt(entry).stream()
-                .filter(c -> folded ? c.toLowerCase(java.util.Locale.ROOT).equals(tail) || c.toLowerCase(java.util.Locale.ROOT).endsWith("/" + tail)
-                        : c.equals(simple + ".class") || c.endsWith("/" + simple + ".class")).count();
+        // In a directory, names its file system may treat alike count as one name: over-reporting only refuses.
+        boolean dir = snapshot.isDirectory(entry);
+        String tail = dir ? HostSnapshot.loose(simple + ".class") : simple + ".class";
+        long sameName = snapshot.classesAt(entry).stream().map(c -> dir ? HostSnapshot.loose(c) : c)
+                .filter(c -> c.equals(tail) || c.endsWith("/" + tail)).count();
         if (sameName != 1) throw new Refused("the class-path entry holding " + simple + " holds " + sameName + " classes of that name");
         String blueprint = "META-INF/plutus/" + simple + ".plutus.json";
         List<HostSnapshot.Anchor> copies = snapshot.anchorsNamed(blueprint);   // any casing in a directory (M33A-CDX-36)
@@ -215,7 +215,10 @@ public final class JoustAnchors {
         if (verifier && copies.size() > 1) throw new Refused("another class-path entry holds a blueprint named " + simple);
         JsonNode b;
         try {
-            b = HostJson.parse(own.bytes());   // a blueprint is strict UTF-8, as the runtime decodes it (M33A-CDX-47)
+            // Strict UTF-8, as the runtime decodes a blueprint; one leading UTF-8 BOM, which its reader accepts (M33A-CDX-47, -CDX-56).
+            byte[] bb = own.bytes();
+            if (bb.length >= 3 && (bb[0] & 0xff) == 0xef && (bb[1] & 0xff) == 0xbb && (bb[2] & 0xff) == 0xbf) bb = Arrays.copyOfRange(bb, 3, bb.length);
+            b = HostJson.parse(bb);
         } catch (HostJson.Malformed e) {
             throw new Refused("the blueprint of " + simple + " is not valid JSON");
         }

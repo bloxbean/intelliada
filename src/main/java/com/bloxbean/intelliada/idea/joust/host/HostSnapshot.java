@@ -1,5 +1,6 @@
 package com.bloxbean.intelliada.idea.joust.host;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -64,19 +65,43 @@ public final class HostSnapshot {
     private final Map<Integer, Map<String, java.util.Set<Integer>>> versioned;
     /** The jars whose manifest says {@code Multi-Release: true}. */
     private final java.util.Set<Integer> multiRelease;
-    /**
-     * The directory entries whose lookups ignore case: directories, when the snapshot's own file system (which the host
-     * loads from) ignores case. Empty on a case-sensitive file system, where names match exactly (M33A-CDX-26, -CDX-46).
-     */
+    /** The directory entries. */
     private final java.util.Set<Integer> directories;
+    /**
+     * Per directory entry, the protected package roots its file system serves under their canonical names, whatever the
+     * spelling of the copied paths (M33A-CDX-54). Resolved when the snapshot is made, never later.
+     */
+    private final Map<Integer, java.util.Set<String>> packagesServed;
 
-    /** Whether the entry with this ordinal serves any casing of a name (a directory on a case-insensitive file system). */
-    public boolean foldsCase(int ordinal) {
+    /** The package roots of JOUST's reviewed jars: no other entry may serve classes in them (D12). */
+    public static final List<String> PROTECTED_PACKAGES = List.of("org/julclang/state/api/", "org/julclang/state/runtime/",
+            "org/julclang/state/serve/", "org/julclang/state/host/", "org/julclang/state/verifier/");
+
+    /** Classes IntelliAda anchors besides each description's validator. */
+    public static final List<String> VERIFIER_CLASSES = List.of("org/julclang/state/verifier/OutputVerifier.class",
+            "org/julclang/state/verifier/MapVerifier.class");
+
+    /** Whether the entry with this ordinal is a directory. */
+    public boolean isDirectory(int ordinal) {
         return directories.contains(ordinal);
     }
 
-    /** Whether {@code dir}'s file system ignores case: a file created there is found under another casing. */
-    static boolean ignoresCase(Path dir) throws IOException {
+    /** Whether the directory entry with this ordinal serves a class in {@code pkg} (one of {@link #PROTECTED_PACKAGES}). */
+    public boolean servesPackage(int ordinal, String pkg) {
+        return packagesServed.getOrDefault(ordinal, java.util.Set.of()).contains(pkg);
+    }
+
+    /**
+     * A loose key for names a directory may treat as equal: case-folded both ways and decomposed. Used only to
+     * over-report ambiguity, never to decide what an entry serves (that is the file system's answer).
+     */
+    public static String loose(String s) {
+        return java.text.Normalizer.normalize(s.toUpperCase(java.util.Locale.ROOT).toLowerCase(java.util.Locale.ROOT),
+                java.text.Normalizer.Form.NFKD);
+    }
+
+    /** Whether {@code dir}'s file system ignores case: a file created there is found under another casing. For tests. */
+    public static boolean ignoresCase(Path dir) throws IOException {
         String name = ".intelliada-case-probe-" + java.util.UUID.randomUUID().toString().replace("-", "");
         Path probe = Files.createFile(dir.resolve(name));
         try {
@@ -86,15 +111,11 @@ public final class HostSnapshot {
         }
     }
 
-    /** Whether {@code have} names {@code want} as the entry would serve it: exactly in a jar, ignoring case in a directory. */
-    private boolean same(int ordinal, String have, String want) {
-        return directories.contains(ordinal) ? have.equalsIgnoreCase(want) : have.equals(want);
-    }
     static final int MAX_CLASS_NAMES = 1_000_000;
 
     private HostSnapshot(Path root, List<Path> classPath, String digest, List<Anchor> anchors, Map<Integer, java.util.Set<String>> classes,
                          Map<Integer, Map<String, java.util.Set<Integer>>> versioned, java.util.Set<Integer> multiRelease,
-                         java.util.Set<Integer> directories) {
+                         java.util.Set<Integer> directories, Map<Integer, java.util.Set<String>> packagesServed) {
         this.root = root;
         this.classPath = classPath;
         this.digest = digest;
@@ -103,6 +124,7 @@ public final class HostSnapshot {
         this.versioned = versioned;
         this.multiRelease = multiRelease;
         this.directories = directories;
+        this.packagesServed = packagesServed;
     }
 
     /**
@@ -125,7 +147,8 @@ public final class HostSnapshot {
         ordinals.addAll(versioned.keySet());
         for (int o : ordinals) {
             if (directories.contains(o)) {
-                for (String c : classes.getOrDefault(o, java.util.Set.of())) if (c.equalsIgnoreCase(classPath)) return o;
+                // What the directory's file system serves under the name, resolved when the snapshot was made.
+                if (classes.getOrDefault(o, java.util.Set.of()).contains(classPath)) return o;
                 continue;   // a directory never serves a versioned copy
             }
             if (classes.getOrDefault(o, java.util.Set.of()).contains(classPath)) return o;
@@ -143,39 +166,25 @@ public final class HostSnapshot {
         ordinals.addAll(versioned.keySet());
         List<Integer> out = new ArrayList<>();
         for (int o : ordinals) {
-            for (String c : classesAt(o)) {
-                if (same(o, c, classPath)) {
-                    out.add(o);
-                    break;
-                }
-            }
+            if (classesAt(o).contains(classPath)) out.add(o);
         }
         return out;
     }
 
-    private static final java.util.regex.Pattern VERSIONED = java.util.regex.Pattern.compile("META-INF/versions/(\\d{1,3})/(.+)");
+    /** A version directory as the JDK spells it: a feature number without leading zeros (M33A-CDX-55). */
+    private static final java.util.regex.Pattern VERSIONED = java.util.regex.Pattern.compile("META-INF/versions/([1-9][0-9]{0,2})/(.+)");
 
     /** A class file's plain name, or null if not a class. */
     static String className(String entry) {
-        return className(entry, false);
-    }
-
-    /**
-     * A class file's plain name, or null. With {@code folds} (a directory on a case-insensitive file system) any casing of
-     * the suffix counts: such a directory serves Foo.CLASS as Foo.class (M33A-CDX-35). Otherwise, as in every jar, the
-     * suffix is exact: a jar entry Foo.CLASS is never loaded as a class (M33A-CDX-45).
-     */
-    static String className(String entry, boolean folds) {
-        String l = folds ? entry.toLowerCase(java.util.Locale.ROOT) : entry;
-        if (!l.endsWith(".class") || l.endsWith("module-info.class") || l.endsWith("package-info.class")) return null;
-        if (!entry.endsWith(".class")) entry = entry.substring(0, entry.length() - 6) + ".class";
+        // Exact, as in a jar (M33A-CDX-45). What a directory serves under another spelling is resolved separately.
+        if (!entry.endsWith(".class") || entry.endsWith("module-info.class") || entry.endsWith("package-info.class")) return null;
         java.util.regex.Matcher m = VERSIONED.matcher(entry);
         return m.matches() ? m.group(2) : entry;
     }
 
     private static void addClass(Map<Integer, java.util.Set<String>> classes, Map<Integer, Map<String, java.util.Set<Integer>>> versioned,
-                                 int ordinal, String entry, long[] count, boolean folds) throws HostSpec.Invalid {
-        String c = className(entry, folds);
+                                 int ordinal, String entry, long[] count) throws HostSpec.Invalid {
+        String c = className(entry);
         if (c == null) return;
         if (++count[0] > MAX_CLASS_NAMES) throw new HostSpec.Invalid("the launch set has too many classes");
         java.util.regex.Matcher m = VERSIONED.matcher(entry);
@@ -251,7 +260,9 @@ public final class HostSnapshot {
             List<Path> cp = new ArrayList<>();
             for (Path p : s.classPath) cp.add(done.resolve(s.root.relativize(p)));
             ok = true;
-            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes, s.versioned, s.multiRelease, s.directories);
+            // The resolutions were made in the copy before it moved; the moved directory serves the same names.
+            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes, s.versioned, s.multiRelease, s.directories,
+                    s.packagesServed);
         } finally {
             if (!ok) delete(root);
         }
@@ -267,7 +278,7 @@ public final class HostSnapshot {
         java.util.Set<Integer> directories = new java.util.HashSet<>();
         long[] total = {0, 0};
         long[] classCount = {0};
-        boolean folds = ignoresCase(root);   // the host loads from these copies: their file system decides (M33A-CDX-46)
+        Map<Integer, Path> dirPaths = new LinkedHashMap<>();
         for (HostSpec.Entry e : spec.launch()) {
             int o = e.ordinal();
             if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
@@ -284,7 +295,8 @@ public final class HostSnapshot {
                     throw new HostSpec.Invalid("a class-path directory is missing or a link; run the build again");
                 }
                 Path dir = root.resolve(String.valueOf(o));
-                if (folds) directories.add(o);
+                directories.add(o);
+                dirPaths.put(o, dir);
                 createPrivateDir(dir);
                 List<String> rels = new ArrayList<>(e.files().keySet());
                 rels.sort(HostSnapshot::compareUtf8);
@@ -300,8 +312,8 @@ public final class HostSnapshot {
                         String h = sds != null ? copySecure(sds, rel, dst, total) : copyFile(noLinkBelow(e.path(), rel), dst, total);
                         if (!h.equals(e.files().get(rel))) throw new HostSpec.Invalid("a class-path file changed since joustHostSpec ran: " + rel);
                         lines.append(h).append(' ').append(o).append(" dir ").append(rel).append('\n');
-                        if (folds ? isDirectoryAnchor(rel) : isAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
-                        addClass(classes, versioned, o, rel, classCount, folds);
+                        if (isAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
+                        addClass(classes, versioned, o, rel, classCount);
                     }
                 }
                 cp.add(dir);
@@ -309,10 +321,77 @@ public final class HostSnapshot {
         }
         String digest = sha256Hex(lines.toString().getBytes(StandardCharsets.UTF_8));
         if (!digest.equals(spec.digest())) throw new HostSpec.Invalid("the launch set's digest does not match the launch spec");
+        Map<Integer, java.util.Set<String>> packagesServed = resolveInDirectories(dirPaths, anchors, classes, total);
+        anchors.sort(java.util.Comparator.comparingInt(Anchor::ordinal));   // class-path order; stable within an entry
         Map<Integer, java.util.Set<String>> frozen = new LinkedHashMap<>();
         classes.forEach((k, v) -> frozen.put(k, Collections.unmodifiableSet(v)));
         return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors), Collections.unmodifiableMap(frozen),
-                Collections.unmodifiableMap(versioned), java.util.Set.copyOf(multiRelease), java.util.Set.copyOf(directories));
+                Collections.unmodifiableMap(versioned), java.util.Set.copyOf(multiRelease), java.util.Set.copyOf(directories),
+                Collections.unmodifiableMap(packagesServed));
+    }
+
+    /**
+     * Asks each copied directory's own file system what it serves under the names IntelliAda anchors, as the host's class
+     * loader asks: a file system may treat other spellings as the same name (case, Unicode folding such as {@code ſ}
+     * for {@code s}, normalization), and its answer is the only exact one (M33A-CDX-54). The names: every anchor named
+     * exactly anywhere on the class path; each description's validator class and blueprint; the verifiers'; and the
+     * protected package roots. A directory serving one under another spelling holds it, as if it were listed so.
+     * Resolved here, once, from the private copy before the host starts; never later.
+     */
+    private static Map<Integer, java.util.Set<String>> resolveInDirectories(Map<Integer, Path> dirs, List<Anchor> anchors,
+                                                                          Map<Integer, java.util.Set<String>> classes, long[] total)
+            throws HostSpec.Invalid, IOException {
+        Map<Integer, java.util.Set<String>> packages = new LinkedHashMap<>();
+        if (dirs.isEmpty()) return packages;
+        java.util.Set<String> descriptions = new java.util.TreeSet<>(), blueprints = new java.util.TreeSet<>();
+        for (Anchor a : anchors) (a.path().startsWith("META-INF/joust/") ? descriptions : blueprints).add(a.path());
+        resolveAnchors(dirs, descriptions, anchors, total);
+        java.util.Set<String> wanted = new java.util.TreeSet<>(VERIFIER_CLASSES);
+        for (String v : VERIFIER_CLASSES) blueprints.add("META-INF/plutus/" + v.substring(v.lastIndexOf('/') + 1, v.length() - 6) + ".plutus.json");
+        for (Anchor a : List.copyOf(anchors)) {
+            if (!a.path().startsWith("META-INF/joust/")) continue;
+            JsonNode x;
+            try {
+                x = HostJson.parseResource(a.bytes()).path("x-joust");
+            } catch (HostJson.Malformed m) {
+                continue;   // refused when anchored
+            }
+            String pkg = x.path("package").textValue(), validator = x.path("validator").textValue();
+            if (pkg == null || validator == null || !pkg.matches("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*")
+                    || !validator.matches("[A-Za-z_][A-Za-z0-9_]*")) continue;
+            wanted.add(pkg.replace('.', '/') + "/" + validator + ".class");
+            blueprints.add("META-INF/plutus/" + validator + ".plutus.json");
+        }
+        resolveAnchors(dirs, blueprints, anchors, total);
+        for (var d : dirs.entrySet()) {
+            java.util.Set<String> listed = classes.computeIfAbsent(d.getKey(), k -> new java.util.LinkedHashSet<>());
+            for (String c : wanted) if (!listed.contains(c) && serves(d.getValue(), c)) listed.add(c);
+            java.util.Set<String> pk = new java.util.LinkedHashSet<>();
+            for (String pkg : PROTECTED_PACKAGES) {
+                if (Files.isDirectory(d.getValue().resolve(pkg), LinkOption.NOFOLLOW_LINKS)) pk.add(pkg);
+            }
+            packages.put(d.getKey(), java.util.Set.copyOf(pk));
+        }
+        return packages;
+    }
+
+    /** Adds, for each directory, the anchors its file system serves under {@code names} that it does not list so. */
+    private static void resolveAnchors(Map<Integer, Path> dirs, java.util.Set<String> names, List<Anchor> anchors, long[] total)
+            throws HostSpec.Invalid, IOException {
+        java.util.Set<String> listed = new java.util.HashSet<>();
+        for (Anchor a : anchors) listed.add(a.ordinal() + "|" + a.path());
+        for (var d : dirs.entrySet()) {
+            for (String n : names) {
+                if (listed.contains(d.getKey() + "|" + n) || !serves(d.getValue(), n)) continue;
+                anchors.add(new Anchor(d.getKey(), n, readCapped(d.getValue().resolve(n), total)));
+            }
+        }
+    }
+
+    /** Whether the copied directory's file system serves a regular file under {@code rel}. */
+    private static boolean serves(Path dir, String rel) {
+        if (!HostSpec.safeRelative(rel)) return false;
+        return Files.isRegularFile(dir.resolve(rel), LinkOption.NOFOLLOW_LINKS);
     }
 
     /**
@@ -440,46 +519,21 @@ public final class HostSnapshot {
     }
 
     /**
-     * An anchor in a directory entry, whose file system may ignore case: a differently cased path can answer the canonical
-     * name the host's class loader asks for (M33A-CDX-36).
-     */
-    static boolean isDirectoryAnchor(String rel) {
-        return isAnchor(rel) || isAnchor(caseFolded(rel));
-    }
-
-    /** The anchor prefixes and suffix in their canonical case, the rest of the path as written. */
-    private static String caseFolded(String rel) {
-        String l = rel.toLowerCase(java.util.Locale.ROOT);
-        for (String prefix : new String[]{"META-INF/joust/", "META-INF/plutus/"}) {
-            if (l.startsWith(prefix.toLowerCase(java.util.Locale.ROOT))) {
-                String rest = rel.substring(prefix.length());
-                if (l.endsWith(".json")) rest = rest.substring(0, rest.length() - 5) + ".json";
-                return prefix + rest;
-            }
-        }
-        return rel;
-    }
-
-    /**
-     * The anchors that can answer {@code path}, in class-path order: an exact name in a jar; any casing of it in a
-     * directory (M33A-CDX-36).
+     * The anchors that answer {@code path}, in class-path order: the exact name in a jar; in a directory, the file its
+     * file system serves under that name, resolved when the snapshot was made (M33A-CDX-36, -CDX-54).
      */
     public List<Anchor> anchorsNamed(String path) {
-        // One index by case-folded name, built once: no scan of every anchor per lookup (M33A-CDX-51).
-        Map<String, List<Anchor>> index = byFoldedName;
+        // One index by name, built once: no scan of every anchor per lookup (M33A-CDX-51).
+        Map<String, List<Anchor>> index = byName;
         if (index == null) {
             index = new java.util.HashMap<>();
-            for (Anchor a : anchors) index.computeIfAbsent(a.path().toLowerCase(java.util.Locale.ROOT), k -> new ArrayList<>()).add(a);
-            byFoldedName = index;
+            for (Anchor a : anchors) index.computeIfAbsent(a.path(), k -> new ArrayList<>()).add(a);
+            byName = index;
         }
-        List<Anchor> out = new ArrayList<>();
-        for (Anchor a : index.getOrDefault(path.toLowerCase(java.util.Locale.ROOT), List.of())) {
-            if (directories.contains(a.ordinal()) ? a.path().equalsIgnoreCase(path) : a.path().equals(path)) out.add(a);
-        }
-        return out;
+        return List.copyOf(index.getOrDefault(path, List.of()));
     }
 
-    private volatile Map<String, List<Anchor>> byFoldedName;
+    private volatile Map<String, List<Anchor>> byName;
 
     private static byte[] readCapped(Path p, long[] total) throws HostSpec.Invalid, IOException {
         long size = Files.size(p);
@@ -552,7 +606,7 @@ public final class HostSnapshot {
                 ZipEntry ze = en.nextElement();
                 String name = ze.getName();
                 // Jar names are exact: the JVM looks them up case-sensitively (M33A-CDX-45).
-                if (!ze.isDirectory() && HostSpec.safeRelative(name)) addClass(classes, versioned, ordinal, name, classCount, false);
+                if (!ze.isDirectory() && HostSpec.safeRelative(name)) addClass(classes, versioned, ordinal, name, classCount);
                 if (ze.isDirectory() || !isAnchor(name) || !HostSpec.safeRelative(name)) continue;
                 byte[] b;
                 try (InputStream in = jf.getInputStream(ze)) {
@@ -563,7 +617,19 @@ public final class HostSnapshot {
                 if (total[1] > MAX_ANCHORS_TOTAL) throw new HostSpec.Invalid("the descriptions and blueprints are too large");
                 anchors.add(new Anchor(ordinal, name, b));
             }
-            return mf != null && "true".equalsIgnoreCase(String.valueOf(mf.getMainAttributes().getValue("Multi-Release")).trim());
+            // Multi-Release as the JDK reads it: Boolean.parseBoolean of the value, never trimmed. A value other than true or
+            // false, or a verdict other than this JDK's own, is ambiguous across JDKs and refused (M33A-CDX-55).
+            String mr = mf == null ? null : mf.getMainAttributes().getValue("Multi-Release");
+            if (mr != null && !mr.equalsIgnoreCase("true") && !mr.equalsIgnoreCase("false")) {
+                throw new HostSpec.Invalid("a class-path jar's Multi-Release value is ambiguous (ordinal " + ordinal + ")");
+            }
+            boolean ours = Boolean.parseBoolean(mr);
+            boolean jdk;
+            try (java.util.jar.JarFile v = new java.util.jar.JarFile(jar.toFile(), false, java.util.zip.ZipFile.OPEN_READ, Runtime.version())) {
+                jdk = v.isMultiRelease();
+            }
+            if (ours != jdk) throw new HostSpec.Invalid("a class-path jar reads as multi-release differently to the JVM (ordinal " + ordinal + ")");
+            return ours;
         } catch (java.util.zip.ZipException e) {
             throw new HostSpec.Invalid("a class-path jar is not a readable zip");
         }

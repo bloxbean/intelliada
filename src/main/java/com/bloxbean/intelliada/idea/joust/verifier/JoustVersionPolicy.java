@@ -34,8 +34,7 @@ public final class JoustVersionPolicy {
 
     static final List<String> ARTIFACTS = List.of("julc-state-api", "julc-state-runtime", "julc-state-serve", "julc-state-host",
             "julc-state-verifier");
-    static final List<String> PACKAGES = List.of("org/julclang/state/api/", "org/julclang/state/runtime/", "org/julclang/state/serve/",
-            "org/julclang/state/host/", "org/julclang/state/verifier/");
+    static final List<String> PACKAGES = HostSnapshot.PROTECTED_PACKAGES;
 
     public record ReviewedSet(String label, Map<String, String> jars, Set<Integer> xJoustVersions) {
     }
@@ -103,14 +102,16 @@ public final class JoustVersionPolicy {
             Set<Integer> reviewedEntries = Set.copyOf(ordinals.values());
             for (HostSpec.Entry e : launch) {
                 if (reviewedEntries.contains(e.ordinal())) continue;
-                boolean folded = snapshot.foldsCase(e.ordinal());   // a directory may serve any casing (M33A-CDX-26)
-                for (String c : snapshot.classesAt(e.ordinal())) {
-                    String name = folded ? c.toLowerCase(java.util.Locale.ROOT) : c;
-                    for (String pkg : PACKAGES) {
-                        if (name.startsWith(pkg)) {
-                            return Verdict.no("read-only: another class-path entry also holds JOUST's " + pkg.replace('/', '.')
-                                    + " classes (" + declared + ")");
-                        }
+                for (String pkg : PACKAGES) {
+                    // Exact names, and what a directory's file system serves under the package root (M33A-CDX-54).
+                    boolean holds = snapshot.isDirectory(e.ordinal()) && snapshot.servesPackage(e.ordinal(), pkg);
+                    for (String c : snapshot.classesAt(e.ordinal())) {
+                        if (holds) break;
+                        holds = c.startsWith(pkg);
+                    }
+                    if (holds) {
+                        return Verdict.no("read-only: another class-path entry also holds JOUST's " + pkg.replace('/', '.')
+                                + " classes (" + declared + ")");
                     }
                 }
             }
