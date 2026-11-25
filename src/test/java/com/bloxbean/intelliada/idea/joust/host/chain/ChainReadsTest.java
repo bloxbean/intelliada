@@ -361,11 +361,73 @@ public class ChainReadsTest {
     @Test
     public void anExhaustedBudgetFailsEveryRequestIncludingTheTip() throws Exception {
         ChainReads small = new ChainReads(new BlockfrostApi("http://127.0.0.1:" + server.getAddress().getPort() + "/api/v1", null,
-                Duration.ofSeconds(5)), 0, 480);
+                Duration.ofSeconds(5)), 0, 480 + ChainReads.FAILURE_RESERVE);
         JsonNode first = small.read("26.1", q("{\"kind\":\"tip\"}"));
         assertTrue(first.toString(), first.has("value"));
         JsonNode r = small.read("26.2", q("{\"kind\":\"tip\"}"));
         assertTrue("the tip request is under the budget too (M31B-CDX-16): " + r, r.has("failed"));
+    }
+
+    @Test
+    public void aContinuationBehindALaterPointFails() throws Exception {
+        StringBuilder p1 = new StringBuilder("[");
+        String datum = "d8799f" + "41".repeat(20000) + "ff";
+        for (int i = 0; i < 99; i++) p1.append(i == 0 ? "" : ",").append(utxo(i).replace("\"inline_datum\":null", "\"inline_datum\":\"" + datum + "\""));
+        routes.put("/api/v1/addresses/" + A + "/utxos?count=100&page=1", p1.append("]").toString());
+        tipBody = n -> n <= 2 ? tipAt(2000, 100, "ab") : tipAt(2005, 105, "cd");
+        JsonNode first = reads.read("30.1", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\"}"));
+        assertEquals(100, first.path("tip").path("height").intValue());
+        assertEquals(105, reads.read("30.2", q("{\"kind\":\"tip\"}")).path("tip").path("height").intValue());
+        JsonNode cont = reads.read("30.3", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\",\"cursor\":\"" + first.path("more").textValue() + "\"}"));
+        assertTrue("a cursor's older point is never sent after a later one (M31B-CDX-29): " + cont.path("tip"), cont.has("failed"));
+        assertEquals(105, cont.path("tip").path("height").intValue());
+    }
+
+    @Test
+    public void aHigherHeightInTheSameSlotIsNotAForwardPoint() throws Exception {
+        tipBody = n -> n == 1 ? tipAt(2000, 100, "ab") : tipAt(2000, 101, "cd");
+        reads.read("31.1", q("{\"kind\":\"tip\"}"));
+        JsonNode r = reads.read("31.2", q("{\"kind\":\"tip\"}"));
+        assertTrue("the host would answer chainMoved (M31B-CDX-29): " + r, r.has("failed"));
+        assertEquals(100, r.path("tip").path("height").intValue());
+    }
+
+    @Test
+    public void whenNoLegalResponseFitsTheCallIsCancelled() throws Exception {
+        ChainReads tiny = new ChainReads(new BlockfrostApi("http://127.0.0.1:" + server.getAddress().getPort() + "/api/v1", null,
+                Duration.ofSeconds(5)), 0, 150);
+        try {
+            tiny.read("32.1", q("{\"kind\":\"tip\"}"));
+            fail("an answer was sent although neither it nor a failure fits (M31B-CDX-32)");
+        } catch (Exception expected) {
+            // HostSession cancels the call
+        }
+    }
+
+    @Test
+    public void laterChunksAreReservedAgainstOtherReads() throws Exception {
+        String big = "d8799f" + "41".repeat(150_000) + "ff";
+        StringBuilder p1 = new StringBuilder("[");
+        for (int i = 0; i < 4; i++) p1.append(i == 0 ? "" : ",").append(utxo(i).replace("\"inline_datum\":null", "\"inline_datum\":\"" + big + "\""));
+        routes.put("/api/v1/addresses/" + A + "/utxos?count=100&page=1", p1.append("]").toString());
+        String dh = "ab".repeat(32);
+        routes.put("/api/v1/scripts/datum/" + dh + "/cbor", "{\"cbor\":\"" + "d8799f" + "42".repeat(50_000) + "ff" + "\"}");
+        String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/api/v1";
+        // Measure the list's cost with a large budget.
+        BlockfrostApi probeApi = new BlockfrostApi(base, null, Duration.ofSeconds(5));
+        ChainReads probe = new ChainReads(probeApi, 0, 64L * 1024 * 1024);
+        JsonNode c1 = probe.read("33.1", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\"}"));
+        JsonNode c2 = probe.read("33.2", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\",\"cursor\":\"" + c1.path("more").textValue() + "\"}"));
+        assertTrue(c2.has("value"));
+        long cost = probeApi.bytesRead() + HostJson.write(c1).length + HostJson.write(c2).length + 2 * 200 + ChainReads.FAILURE_RESERVE;
+        // With 120 KB to spare, a 100 KB datum (about 200 KB read and answered) fits only by spending the reservation.
+        ChainReads r = new ChainReads(new BlockfrostApi(base, null, Duration.ofSeconds(5)), 0, cost + 120_000);
+        JsonNode first = r.read("34.1", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\"}"));
+        assertTrue(first.toString().length() + "", first.has("more"));
+        JsonNode other = r.read("34.2", q("{\"kind\":\"datum\",\"hash\":\"" + dh + "\"}"));
+        assertTrue("the other read cannot spend the reserved chunks (M31B-SEC-9)", other.has("failed"));
+        JsonNode cont = r.read("34.3", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\",\"cursor\":\"" + first.path("more").textValue() + "\"}"));
+        assertTrue("the list is delivered whole: " + cont.path("failed"), cont.has("value"));
     }
 
     @Test
