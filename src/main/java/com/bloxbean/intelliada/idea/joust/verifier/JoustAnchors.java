@@ -88,32 +88,12 @@ public final class JoustAnchors {
      * classes as a JVM of feature version {@code javaFeature} (the launch spec's java) loads them.
      */
     public static Anchors derive(HostSnapshot snapshot, String contract, int networkId, int javaFeature) throws Refused {
-        if (!PACKAGE.matcher(contract).matches()) throw new Refused("not a contract name: " + contract);
         if (networkId != 0 && networkId != 1) throw new Refused("network id " + networkId + " is neither 0 nor 1");
         Network network = networkId == 1 ? Networks.mainnet() : Networks.testnet();
-        // The description: every copy on the class path must be the same bytes.
-        String descPath = "META-INF/joust/" + contract + ".json";
-        byte[] desc = null;
-        for (HostSnapshot.Anchor a : snapshot.anchors()) {
-            if (!a.path().equals(descPath)) continue;
-            if (desc == null) desc = a.bytes();
-            else if (!Arrays.equals(desc, a.bytes())) throw new Refused("two different descriptions of " + contract + " are on the class path");
-        }
-        if (desc == null) throw new Refused("no description of " + contract + " in the build");
-        JsonNode description;
-        try {
-            description = HostJson.parse(desc);
-        } catch (HostJson.Malformed e) {
-            throw new Refused("the description of " + contract + " is not valid JSON");
-        }
+        ContractScript cs = contractScript(snapshot, contract, javaFeature);
+        JsonNode description = cs.description();
         JsonNode x = description.path("x-joust");
-        String pkg = x.path("package").textValue(), validator = x.path("validator").textValue(), name = x.path("contract").textValue();
-        if (pkg == null || validator == null || name == null || !PACKAGE.matcher(pkg).matches() || !NAME.matcher(validator).matches()
-                || !(pkg + "." + name).equals(contract)) {
-            throw new Refused("the description of " + contract + " does not name its package, contract and validator");
-        }
-        // The validator's script, from the entry holding its class.
-        Resolved v = resolve(snapshot, pkg.replace('.', '/') + "/" + validator + ".class", validator, false, javaFeature);
+        Resolved v = new Resolved(cs.entry(), cs.hash());
         String address = x.path("stakeSelf").asBoolean(false)
                 ? AddressProvider.getBaseAddress(Credential.fromScript(HexFormat.of().parseHex(v.hash)),
                         Credential.fromScript(HexFormat.of().parseHex(v.hash)), network).toBech32()
@@ -129,6 +109,73 @@ public final class JoustAnchors {
         }
         return new Anchors(description, networkId, new Script("PlutusScriptV3", v.hash, address, reward),
                 verifierScript(ov.hash, network), map, v.entry, ov.entry, mapEntry);
+    }
+
+    /**
+     * The contracts a snapshot describes, by the host's discovery rule: the first copy of each
+     * {@code META-INF/joust/<name>.json} on the class path, skipped when it has no {@code x-joust}. The one discovery
+     * function for the catalog check and the signing gate (M33A-DES-13).
+     */
+    public static java.util.List<String> describedContracts(HostSnapshot snapshot) throws Refused {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (var e : snapshot.firstByPath().entrySet()) {
+            String path = e.getKey();
+            if (!path.startsWith("META-INF/joust/") || !path.endsWith(".json")) continue;
+            try {
+                if (parseResource(e.getValue().bytes()).path("x-joust").isMissingNode()) continue;
+            } catch (HostJson.Malformed m) {
+                throw new Refused("the build's " + path + " is not valid JSON");
+            }
+            out.add(path.substring("META-INF/joust/".length(), path.length() - 5));
+        }
+        return out;
+    }
+
+    /** A contract's own description and recomputed script hash, without its verifiers (M33A-CDX-28). */
+    public record ContractScript(JsonNode description, String hash, int entry) {
+    }
+
+    /**
+     * The contract's description and its validator's script, as {@link #derive} establishes them: what the catalog
+     * check compares even when a shared verifier cannot be anchored (M33A-CDX-28).
+     */
+    public static ContractScript contractScript(HostSnapshot snapshot, String contract, int javaFeature) throws Refused {
+        if (!PACKAGE.matcher(contract).matches()) throw new Refused("not a contract name: " + contract);
+        // The description: every copy on the class path must be the same bytes.
+        String descPath = "META-INF/joust/" + contract + ".json";
+        byte[] desc = null;
+        for (HostSnapshot.Anchor a : snapshot.anchors()) {
+            if (!a.path().equals(descPath)) continue;
+            if (desc == null) desc = a.bytes();
+            else if (!Arrays.equals(desc, a.bytes())) throw new Refused("two different descriptions of " + contract + " are on the class path");
+        }
+        if (desc == null) throw new Refused("no description of " + contract + " in the build");
+        JsonNode description;
+        try {
+            description = parseResource(desc);
+        } catch (HostJson.Malformed e) {
+            throw new Refused("the description of " + contract + " is not valid JSON");
+        }
+        JsonNode x = description.path("x-joust");
+        String pkg = x.path("package").textValue(), validator = x.path("validator").textValue(), name = x.path("contract").textValue();
+        if (pkg == null || validator == null || name == null || !PACKAGE.matcher(pkg).matches() || !NAME.matcher(validator).matches()
+                || !(pkg + "." + name).equals(contract)) {
+            throw new Refused("the description of " + contract + " does not name its package, contract and validator");
+        }
+        // The validator's script, from the entry holding its class.
+        Resolved v = resolve(snapshot, pkg.replace('.', '/') + "/" + validator + ".class", validator, false, javaFeature);
+        return new ContractScript(description, v.hash, v.entry);
+    }
+
+    /**
+     * A description or blueprint read as the host reads it (Jackson over the bytes): a leading UTF-8 byte-order mark is
+     * accepted, otherwise strict (M33A-CDX-29). Protocol frames keep their own strict parser.
+     */
+    public static JsonNode parseResource(byte[] b) throws HostJson.Malformed {
+        if (b.length >= 3 && (b[0] & 0xff) == 0xef && (b[1] & 0xff) == 0xbb && (b[2] & 0xff) == 0xbf) {
+            b = Arrays.copyOfRange(b, 3, b.length);
+        }
+        return HostJson.parse(b);
     }
 
     private record Resolved(int entry, String hash) {
@@ -150,8 +197,11 @@ public final class JoustAnchors {
             throw new Refused("the class " + classPath.replace('/', '.').replace(".class", "") + " is in " + holders.size()
                     + " class-path entries; it must be in exactly one");
         }
+        boolean folded = snapshot.isDirectory(entry);   // M33A-CDX-26
+        String tail = (simple + ".class").toLowerCase(java.util.Locale.ROOT);
         long sameName = snapshot.classesAt(entry).stream()
-                .filter(c -> c.equals(simple + ".class") || c.endsWith("/" + simple + ".class")).count();
+                .filter(c -> folded ? c.toLowerCase(java.util.Locale.ROOT).equals(tail) || c.toLowerCase(java.util.Locale.ROOT).endsWith("/" + tail)
+                        : c.equals(simple + ".class") || c.endsWith("/" + simple + ".class")).count();
         if (sameName != 1) throw new Refused("the class-path entry holding " + simple + " holds " + sameName + " classes of that name");
         String blueprint = "META-INF/plutus/" + simple + ".plutus.json";
         List<HostSnapshot.Anchor> copies = new ArrayList<>();
@@ -164,7 +214,7 @@ public final class JoustAnchors {
         if (verifier && copies.size() > 1) throw new Refused("another class-path entry holds a blueprint named " + simple);
         JsonNode b;
         try {
-            b = HostJson.parse(own.bytes());
+            b = parseResource(own.bytes());
         } catch (HostJson.Malformed e) {
             throw new Refused("the blueprint of " + simple + " is not valid JSON");
         }

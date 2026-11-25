@@ -16,15 +16,15 @@ import java.util.List;
 import java.util.TreeMap;
 
 /** Test helper: a real verified snapshot of any directories and jars, through a launch spec built here. */
-final class SnapshotOf {
+public final class SnapshotOf {
 
-    record Made(HostSpec spec, HostSnapshot snapshot) {
+    public record Made(HostSpec spec, HostSnapshot snapshot) {
     }
 
     private SnapshotOf() {
     }
 
-    static Made create(List<Path> entries, Path base) throws Exception {
+    public static Made create(List<Path> entries, Path base) throws Exception {
         ObjectNode spec = HostJson.object().put("protocol", 1).put("mainClass", HostSpec.MAIN_CLASS).put("java", Path.of(System.getProperty("java.home"), "bin",
                 System.getProperty("os.name", "").toLowerCase().startsWith("windows") ? "java.exe" : "java").toString());
         ArrayNode launch = spec.putArray("launch");

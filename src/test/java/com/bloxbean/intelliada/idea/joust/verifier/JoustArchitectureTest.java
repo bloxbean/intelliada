@@ -63,20 +63,13 @@ public class JoustArchitectureTest {
         assertTrue(decoder("com/bloxbean/cardano/client/transaction/spec/TransactionWitnessSet"));
         assertFalse(encoder("org/julclang/state/verifier/OutputVerifier"));
         assertFalse(encoder("com/bloxbean/cardano/client/address/Address"));
-        // The test runtime may have no compiler: use the JDK 25 beside the configured java (or JAVA_HOME's).
-        String java = System.getProperty("joust.lint.java", "");
-        Path javac = java.isEmpty() ? Path.of(System.getenv("JAVA_HOME"), "bin", "javac") : Path.of(java).resolveSibling("javac");
-        Path dir = Files.createTempDirectory("canary");
-        Path src = dir.resolve("Canary.java");
-        Files.writeString(src, "public class Canary { com.bloxbean.cardano.client.plutus.spec.BytesPlutusData data; "
-                + "Object read(byte[] b) throws Exception { return com.bloxbean.cardano.client.transaction.spec.Transaction.deserialize(b); } }");
-        Process p = new ProcessBuilder(javac.toString(), "-cp", System.getProperty("java.class.path"), "-d", dir.toString(), src.toString())
-                .redirectErrorStream(true).start();
-        String log = new String(p.getInputStream().readAllBytes());
-        int rc = p.waitFor();
-        assertEquals("the canary compiles: " + log, 0, rc);
-
-        java.util.Set<String> refs = referencedClasses(Files.readAllBytes(dir.resolve("Canary.class")));
+        // The canary is a test source, compiled with the tests: no compiler launched here (M33A-CDX-33).
+        byte[] canary;
+        try (var in = getClass().getResourceAsStream("/com/bloxbean/intelliada/idea/joust/verifier/canary/ArchitectureCanary.class")) {
+            assertNotNull("the compiled canary", in);
+            canary = in.readAllBytes();
+        }
+        java.util.Set<String> refs = referencedClasses(canary);
         assertTrue("the field's descriptor is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::encoder));
         assertTrue("the decoder call is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::decoder));
     }

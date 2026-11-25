@@ -103,9 +103,11 @@ public final class JoustVersionPolicy {
             Set<Integer> reviewedEntries = Set.copyOf(ordinals.values());
             for (HostSpec.Entry e : launch) {
                 if (reviewedEntries.contains(e.ordinal())) continue;
+                boolean folded = snapshot.isDirectory(e.ordinal());   // a directory may serve any casing (M33A-CDX-26)
                 for (String c : snapshot.classesAt(e.ordinal())) {
+                    String name = folded ? c.toLowerCase(java.util.Locale.ROOT) : c;
                     for (String pkg : PACKAGES) {
-                        if (c.startsWith(pkg)) {
+                        if (name.startsWith(pkg)) {
                             return Verdict.no("read-only: another class-path entry also holds JOUST's " + pkg.replace('/', '.')
                                     + " classes (" + declared + ")");
                         }

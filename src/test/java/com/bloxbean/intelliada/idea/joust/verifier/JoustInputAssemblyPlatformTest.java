@@ -179,7 +179,17 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
             }
             // The one rejection whose recorded node was mutated on purpose (its holder never queried): an honest
             // assembly always queries every holder, so it is named and counted, never silently skipped (M33A-CDX-23).
-            if ((!mine.equals(stripped) || !subset) && "publicationPresence/holder".equals(v.path("check").asText())) {
+            if ((!mine.equals(stripped) || !subset) && "holder-not-queried".equals(v.path("mutation").asText())) {
+                // Its only difference: the recorded node lacks exactly one holder that the honest assembly queried (M33A-CDX-34).
+                ObjectNode mineButNode = mine.deepCopy(), theirsButNode = stripped.deepCopy();
+                JsonNode myNode = mineButNode.remove("node"), theirNode = theirsButNode.remove("node");
+                java.util.Set<String> mine2 = new java.util.HashSet<>(), theirs2 = new java.util.HashSet<>();
+                myNode.path("scriptsAt").fieldNames().forEachRemaining(mine2::add);
+                theirNode.path("scriptsAt").fieldNames().forEachRemaining(theirs2::add);
+                assertEquals("only node differs", theirsButNode, mineButNode);
+                assertTrue(mine2.containsAll(theirs2));
+                assertEquals("exactly one holder not queried", 1, mine2.size() - theirs2.size());
+                assertEquals(theirNode.path("registrations"), myNode.path("registrations"));
                 mutatedFacts++;
                 continue;
             }

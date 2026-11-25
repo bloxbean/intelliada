@@ -46,7 +46,7 @@ public final class JoustHostService implements Disposable {
     /** A running, initialized host. */
     public record Running(Path moduleDir, HostSpec spec, HostSnapshot snapshot, Process process, HostSession session,
                           HostStderr stderr, @Nullable String joustVersion, JsonNode initialize, ObjectNode requested,
-                          String binding, HostLauncher.Started started) {
+                          String binding, HostLauncher.Started started, int javaFeature) {
     }
 
     /** Why a start did not happen; plain text for the panel. */
@@ -292,7 +292,8 @@ public final class JoustHostService implements Disposable {
             }
             if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
             if (slot.stopping) throw new NotStarted("stopped");   // Stop during startup (M31A-CDX-20)
-            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version, init, initialize.deepCopy(), binding, s);
+            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version, init, initialize.deepCopy(), binding, s,
+                    feature);   // the launch JDK, as read at launch (M33A-CDX-30)
             slot.running = running;
             handedOut = true;
             return running;

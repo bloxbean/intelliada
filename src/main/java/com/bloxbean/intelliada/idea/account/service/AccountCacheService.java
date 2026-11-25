@@ -100,15 +100,25 @@ public class AccountCacheService {
     private static boolean ownPrivateDirectory(java.nio.file.Path f) {
         try {
             if (!java.nio.file.Files.isDirectory(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
-            var owner = java.nio.file.Files.getOwner(f, java.nio.file.LinkOption.NOFOLLOW_LINKS).getName();
-            String plain = owner.substring(owner.lastIndexOf('\\') + 1);   // Windows names the owner with its domain first (M33A-SEC-10)
-            if (!plain.equalsIgnoreCase(System.getProperty("user.name"))) return false;
+            // The owner as a file-system principal, compared with the principal of a file this process creates: never a
+            // name, which distinct users can share (M33A-CDX-32).
+            var owner = java.nio.file.Files.getOwner(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            java.nio.file.Path probe = java.nio.file.Files.createTempFile("intelliada-owner", null);
+            java.nio.file.attribute.UserPrincipal me;
+            try {
+                me = java.nio.file.Files.getOwner(probe);
+            } finally {
+                java.nio.file.Files.deleteIfExists(probe);
+            }
+            if (!owner.equals(me)) return false;
+            if (!java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+                // Windows: trusted only inside the user's own profile (its per-user temp folder), whose ACL is the user's.
+                return f.toAbsolutePath().normalize().startsWith(java.nio.file.Path.of(System.getProperty("user.home")).toAbsolutePath().normalize());
+            }
             var perms = java.nio.file.Files.getPosixFilePermissions(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
             return !perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
                     && !perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE);
-        } catch (UnsupportedOperationException e) {
-            return true;   // Windows: the temp directory is the user's own
-        } catch (java.io.IOException e) {
+        } catch (UnsupportedOperationException | java.io.IOException e) {
             return false;
         }
     }

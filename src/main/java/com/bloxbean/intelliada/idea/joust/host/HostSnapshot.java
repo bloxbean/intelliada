@@ -64,10 +64,23 @@ public final class HostSnapshot {
     private final Map<Integer, Map<String, java.util.Set<Integer>>> versioned;
     /** The jars whose manifest says {@code Multi-Release: true}. */
     private final java.util.Set<Integer> multiRelease;
+    /** The directory entries: their lookups follow the file system, which may ignore case (M33A-CDX-26). */
+    private final java.util.Set<Integer> directories;
+
+    /** Whether the entry with this ordinal is a directory (a case-insensitive file system may serve any casing). */
+    public boolean isDirectory(int ordinal) {
+        return directories.contains(ordinal);
+    }
+
+    /** Whether {@code have} names {@code want} as the entry would serve it: exactly in a jar, ignoring case in a directory. */
+    private boolean same(int ordinal, String have, String want) {
+        return directories.contains(ordinal) ? have.equalsIgnoreCase(want) : have.equals(want);
+    }
     static final int MAX_CLASS_NAMES = 1_000_000;
 
     private HostSnapshot(Path root, List<Path> classPath, String digest, List<Anchor> anchors, Map<Integer, java.util.Set<String>> classes,
-                         Map<Integer, Map<String, java.util.Set<Integer>>> versioned, java.util.Set<Integer> multiRelease) {
+                         Map<Integer, Map<String, java.util.Set<Integer>>> versioned, java.util.Set<Integer> multiRelease,
+                         java.util.Set<Integer> directories) {
         this.root = root;
         this.classPath = classPath;
         this.digest = digest;
@@ -75,6 +88,7 @@ public final class HostSnapshot {
         this.classes = classes;
         this.versioned = versioned;
         this.multiRelease = multiRelease;
+        this.directories = directories;
     }
 
     /**
@@ -96,6 +110,10 @@ public final class HostSnapshot {
         java.util.TreeSet<Integer> ordinals = new java.util.TreeSet<>(classes.keySet());
         ordinals.addAll(versioned.keySet());
         for (int o : ordinals) {
+            if (directories.contains(o)) {
+                for (String c : classes.getOrDefault(o, java.util.Set.of())) if (c.equalsIgnoreCase(classPath)) return o;
+                continue;   // a directory never serves a versioned copy
+            }
             if (classes.getOrDefault(o, java.util.Set.of()).contains(classPath)) return o;
             if (multiRelease.contains(o)) {
                 java.util.Set<Integer> vs = versioned.getOrDefault(o, Map.of()).get(classPath);
@@ -110,7 +128,14 @@ public final class HostSnapshot {
         java.util.TreeSet<Integer> ordinals = new java.util.TreeSet<>(classes.keySet());
         ordinals.addAll(versioned.keySet());
         List<Integer> out = new ArrayList<>();
-        for (int o : ordinals) if (classesAt(o).contains(classPath)) out.add(o);
+        for (int o : ordinals) {
+            for (String c : classesAt(o)) {
+                if (same(o, c, classPath)) {
+                    out.add(o);
+                    break;
+                }
+            }
+        }
         return out;
     }
 
@@ -201,7 +226,7 @@ public final class HostSnapshot {
             List<Path> cp = new ArrayList<>();
             for (Path p : s.classPath) cp.add(done.resolve(s.root.relativize(p)));
             ok = true;
-            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes, s.versioned, s.multiRelease);
+            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes, s.versioned, s.multiRelease, s.directories);
         } finally {
             if (!ok) delete(root);
         }
@@ -214,6 +239,7 @@ public final class HostSnapshot {
         Map<Integer, java.util.Set<String>> classes = new LinkedHashMap<>();
         Map<Integer, Map<String, java.util.Set<Integer>>> versioned = new LinkedHashMap<>();
         java.util.Set<Integer> multiRelease = new java.util.HashSet<>();
+        java.util.Set<Integer> directories = new java.util.HashSet<>();
         long[] total = {0, 0};
         long[] classCount = {0};
         for (HostSpec.Entry e : spec.launch()) {
@@ -232,6 +258,7 @@ public final class HostSnapshot {
                     throw new HostSpec.Invalid("a class-path directory is missing or a link; run the build again");
                 }
                 Path dir = root.resolve(String.valueOf(o));
+                directories.add(o);
                 createPrivateDir(dir);
                 List<String> rels = new ArrayList<>(e.files().keySet());
                 rels.sort(HostSnapshot::compareUtf8);
@@ -259,7 +286,7 @@ public final class HostSnapshot {
         Map<Integer, java.util.Set<String>> frozen = new LinkedHashMap<>();
         classes.forEach((k, v) -> frozen.put(k, Collections.unmodifiableSet(v)));
         return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors), Collections.unmodifiableMap(frozen),
-                Collections.unmodifiableMap(versioned), java.util.Set.copyOf(multiRelease));
+                Collections.unmodifiableMap(versioned), java.util.Set.copyOf(multiRelease), java.util.Set.copyOf(directories));
     }
 
     /**

@@ -29,16 +29,11 @@ public final class JoustSigningGate {
      */
     public static Gate evaluate(List<JoustVersionPolicy.ReviewedSet> sets, HostSpec spec, HostSnapshot snapshot, JsonNode initialize,
                                 int networkId, int javaFeature) {
-        List<String> contracts = new ArrayList<>();
-        for (var e : snapshot.firstByPath().entrySet()) {
-            String path = e.getKey();
-            if (!path.startsWith("META-INF/joust/") || !path.endsWith(".json")) continue;
-            try {
-                if (com.bloxbean.intelliada.idea.joust.host.HostJson.parse(e.getValue().bytes()).path("x-joust").isMissingNode()) continue;
-            } catch (com.bloxbean.intelliada.idea.joust.host.HostJson.Malformed m) {
-                return new Gate(false, "read-only: " + path + " is not valid JSON", Map.of());
-            }
-            contracts.add(path.substring("META-INF/joust/".length(), path.length() - 5));
+        List<String> contracts;
+        try {
+            contracts = JoustAnchors.describedContracts(snapshot);
+        } catch (JoustAnchors.Refused r) {
+            return new Gate(false, "read-only: " + r.getMessage(), Map.of());
         }
         if (contracts.isEmpty()) return new Gate(false, "read-only: the build describes no contract", Map.of());
         Map<String, JoustAnchors.Anchors> anchors = new LinkedHashMap<>();

@@ -281,7 +281,9 @@ public final class JoustChecker {
                 } catch (RuntimeException listingFailed) {
                     // the root is still ended below
                 }
-                p.destroyForcibly();
+                // Signals only, through ProcessHandle: Process.destroyForcibly closes the pipes synchronously and can
+                // wait on a descendant that holds them (M33A-CDX-27). The root, then each descendant, then the streams.
+                p.toHandle().destroyForcibly();
                 for (ProcessHandle c : children) {
                     try {
                         c.destroyForcibly();
@@ -291,9 +293,18 @@ public final class JoustChecker {
                 }
                 boolean interrupted = Thread.interrupted();
                 try {
-                    p.waitFor(5, TimeUnit.SECONDS);
+                    p.toHandle().onExit().get(5, TimeUnit.SECONDS);
                 } catch (InterruptedException again) {
                     interrupted = true;
+                } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
+                    // reported by the refusal already returned
+                }
+                for (java.io.Closeable c : new java.io.Closeable[]{p.getOutputStream(), p.getInputStream(), p.getErrorStream()}) {
+                    try {
+                        c.close();
+                    } catch (IOException ignored) {
+                        // closing after the signals
+                    }
                 }
                 if (interrupted) Thread.currentThread().interrupt();
             }
