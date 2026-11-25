@@ -60,42 +60,81 @@ public final class HostSnapshot {
     private final List<Anchor> anchors;
     /** The class files of each class-path entry, by ordinal (ADR-005 D13 anchors: which entry holds a class). */
     private final Map<Integer, java.util.Set<String>> classes;
+    /** Versioned class copies ({@code META-INF/versions/N/}) by entry, with their versions. */
+    private final Map<Integer, Map<String, java.util.Set<Integer>>> versioned;
+    /** The jars whose manifest says {@code Multi-Release: true}. */
+    private final java.util.Set<Integer> multiRelease;
     static final int MAX_CLASS_NAMES = 1_000_000;
 
-    private HostSnapshot(Path root, List<Path> classPath, String digest, List<Anchor> anchors, Map<Integer, java.util.Set<String>> classes) {
+    private HostSnapshot(Path root, List<Path> classPath, String digest, List<Anchor> anchors, Map<Integer, java.util.Set<String>> classes,
+                         Map<Integer, Map<String, java.util.Set<Integer>>> versioned, java.util.Set<Integer> multiRelease) {
         this.root = root;
         this.classPath = classPath;
         this.digest = digest;
         this.anchors = anchors;
         this.classes = classes;
+        this.versioned = versioned;
+        this.multiRelease = multiRelease;
     }
 
-    /** The class files ({@code pkg/Name.class}) of the entry with this ordinal; a versioned copy counts as its class. */
+    /**
+     * Every class file physically in the entry with this ordinal ({@code pkg/Name.class}), a versioned copy under its
+     * plain name: for the duplicate and shadowing checks (D12, D13).
+     */
     public java.util.Set<String> classesAt(int ordinal) {
-        return classes.getOrDefault(ordinal, java.util.Set.of());
+        java.util.Set<String> all = new java.util.LinkedHashSet<>(classes.getOrDefault(ordinal, java.util.Set.of()));
+        all.addAll(versioned.getOrDefault(ordinal, Map.of()).keySet());
+        return all;
     }
 
-    /** The first entry, in class-path order (ordinals follow the launch order), holding {@code classPath} ({@code pkg/Name.class}), or -1. */
-    public int firstWithClass(String classPath) {
-        for (Map.Entry<Integer, java.util.Set<String>> e : classes.entrySet()) {
-            if (e.getValue().contains(classPath)) return e.getKey();
+    /**
+     * The first entry, in class-path order, from which a JVM of feature version {@code javaFeature} loads
+     * {@code classPath}: a base entry, or a versioned copy of at most that version in a multi-release jar (never in a
+     * directory, never in a jar without {@code Multi-Release: true}; M33A-CDX-8). -1 when none.
+     */
+    public int firstWithClass(String classPath, int javaFeature) {
+        java.util.TreeSet<Integer> ordinals = new java.util.TreeSet<>(classes.keySet());
+        ordinals.addAll(versioned.keySet());
+        for (int o : ordinals) {
+            if (classes.getOrDefault(o, java.util.Set.of()).contains(classPath)) return o;
+            if (multiRelease.contains(o)) {
+                java.util.Set<Integer> vs = versioned.getOrDefault(o, Map.of()).get(classPath);
+                if (vs != null && vs.stream().anyMatch(v -> v >= 9 && v <= javaFeature)) return o;
+            }
         }
         return -1;
     }
 
-    /** A class file name as the class loader sees it: a multi-release copy under its plain name, or null if not a class. */
-    static String className(String entry) {
-        if (!entry.endsWith(".class") || entry.endsWith("module-info.class") || entry.endsWith("package-info.class")) return null;
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("META-INF/versions/\\d{1,3}/(.+)").matcher(entry);
-        return m.matches() ? m.group(1) : entry;
+    /** Every entry holding {@code classPath}, as a base or a versioned copy, in class-path order (D13; M33A-SEC-1). */
+    public List<Integer> entriesHolding(String classPath) {
+        java.util.TreeSet<Integer> ordinals = new java.util.TreeSet<>(classes.keySet());
+        ordinals.addAll(versioned.keySet());
+        List<Integer> out = new ArrayList<>();
+        for (int o : ordinals) if (classesAt(o).contains(classPath)) out.add(o);
+        return out;
     }
 
-    private static void addClass(Map<Integer, java.util.Set<String>> classes, int ordinal, String entry, long[] count)
-            throws HostSpec.Invalid {
+    private static final java.util.regex.Pattern VERSIONED = java.util.regex.Pattern.compile("META-INF/versions/(\\d{1,3})/(.+)");
+
+    /** A class file's plain name, or null if not a class. */
+    static String className(String entry) {
+        if (!entry.endsWith(".class") || entry.endsWith("module-info.class") || entry.endsWith("package-info.class")) return null;
+        java.util.regex.Matcher m = VERSIONED.matcher(entry);
+        return m.matches() ? m.group(2) : entry;
+    }
+
+    private static void addClass(Map<Integer, java.util.Set<String>> classes, Map<Integer, Map<String, java.util.Set<Integer>>> versioned,
+                                 int ordinal, String entry, long[] count) throws HostSpec.Invalid {
         String c = className(entry);
         if (c == null) return;
         if (++count[0] > MAX_CLASS_NAMES) throw new HostSpec.Invalid("the launch set has too many classes");
-        classes.computeIfAbsent(ordinal, k -> new java.util.LinkedHashSet<>()).add(c);
+        java.util.regex.Matcher m = VERSIONED.matcher(entry);
+        if (m.matches()) {
+            versioned.computeIfAbsent(ordinal, k -> new LinkedHashMap<>()).computeIfAbsent(c, k -> new java.util.TreeSet<>())
+                    .add(Integer.parseInt(m.group(1)));
+        } else {
+            classes.computeIfAbsent(ordinal, k -> new java.util.LinkedHashSet<>()).add(c);
+        }
     }
 
     /** The snapshot directory ({@code build.snapshot} in {@code initialize}). */
@@ -162,7 +201,7 @@ public final class HostSnapshot {
             List<Path> cp = new ArrayList<>();
             for (Path p : s.classPath) cp.add(done.resolve(s.root.relativize(p)));
             ok = true;
-            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes);
+            return new HostSnapshot(done, List.copyOf(cp), s.digest, s.anchors, s.classes, s.versioned, s.multiRelease);
         } finally {
             if (!ok) delete(root);
         }
@@ -173,6 +212,8 @@ public final class HostSnapshot {
         List<Path> cp = new ArrayList<>();
         List<Anchor> anchors = new ArrayList<>();
         Map<Integer, java.util.Set<String>> classes = new LinkedHashMap<>();
+        Map<Integer, Map<String, java.util.Set<Integer>>> versioned = new LinkedHashMap<>();
+        java.util.Set<Integer> multiRelease = new java.util.HashSet<>();
         long[] total = {0, 0};
         long[] classCount = {0};
         for (HostSpec.Entry e : spec.launch()) {
@@ -183,7 +224,7 @@ public final class HostSnapshot {
                 String h = copyFile(e.path(), dst, total);
                 if (!h.equals(e.sha256())) throw new HostSpec.Invalid("a class-path jar changed since joustHostSpec ran (ordinal " + o + ")");
                 lines.append(h).append(' ').append(o).append(" jar \n");
-                jarAnchors(dst, o, anchors, total, classes, classCount);
+                if (jarAnchors(dst, o, anchors, total, classes, versioned, classCount)) multiRelease.add(o);
                 cp.add(dst);
             } else {
                 // The declared root must be a real directory (not a link), even when it lists no files (M31A-CDX-12).
@@ -207,7 +248,7 @@ public final class HostSnapshot {
                         if (!h.equals(e.files().get(rel))) throw new HostSpec.Invalid("a class-path file changed since joustHostSpec ran: " + rel);
                         lines.append(h).append(' ').append(o).append(" dir ").append(rel).append('\n');
                         if (isAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
-                        addClass(classes, o, rel, classCount);
+                        addClass(classes, versioned, o, rel, classCount);
                     }
                 }
                 cp.add(dir);
@@ -217,7 +258,8 @@ public final class HostSnapshot {
         if (!digest.equals(spec.digest())) throw new HostSpec.Invalid("the launch set's digest does not match the launch spec");
         Map<Integer, java.util.Set<String>> frozen = new LinkedHashMap<>();
         classes.forEach((k, v) -> frozen.put(k, Collections.unmodifiableSet(v)));
-        return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors), Collections.unmodifiableMap(frozen));
+        return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors), Collections.unmodifiableMap(frozen),
+                Collections.unmodifiableMap(versioned), java.util.Set.copyOf(multiRelease));
     }
 
     /**
@@ -356,8 +398,10 @@ public final class HostSnapshot {
      * The anchors of a copied jar, read through {@link java.util.jar.JarFile}, the central directory the JVM itself uses
      * (M31A-CDX-13); a manifest adding a {@code Class-Path} is refused, as the host refuses it.
      */
-    private static void jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total, Map<Integer, java.util.Set<String>> classes,
-                                   long[] classCount) throws HostSpec.Invalid, IOException {
+    /** Records a jar's anchors and classes; true when its manifest makes it a multi-release jar. */
+    private static boolean jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total, Map<Integer, java.util.Set<String>> classes,
+                                      Map<Integer, Map<String, java.util.Set<Integer>>> versioned, long[] classCount)
+            throws HostSpec.Invalid, IOException {
         try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jar.toFile(), false)) {
             // The effective manifest, read through a bounded stream before it is parsed (M31A-CDX-25).
             // Exactly one entry may be named like the manifest, in any case: with several, IntelliAda could check one while
@@ -398,6 +442,10 @@ public final class HostSnapshot {
                     if (local.size() > 200_000) break;
                 }
             }
+            // A repeated name: IntelliAda and the JVM could read different entries under it (M33A-SEC-2).
+            if (new java.util.HashSet<>(central).size() != central.size() || new java.util.HashSet<>(local).size() != local.size()) {
+                throw new HostSpec.Invalid("a class-path jar repeats an entry name (ordinal " + ordinal + ")");
+            }
             local.sort(null);
             central.sort(null);
             if (!local.equals(central)) throw new HostSpec.Invalid("a class-path jar's entries read differently to the JVM (ordinal " + ordinal + ")");
@@ -405,7 +453,7 @@ public final class HostSnapshot {
             while (en.hasMoreElements()) {
                 ZipEntry ze = en.nextElement();
                 String name = ze.getName();
-                if (!ze.isDirectory() && HostSpec.safeRelative(name)) addClass(classes, ordinal, name, classCount);
+                if (!ze.isDirectory() && HostSpec.safeRelative(name)) addClass(classes, versioned, ordinal, name, classCount);
                 if (ze.isDirectory() || !isAnchor(name) || !HostSpec.safeRelative(name)) continue;
                 byte[] b;
                 try (InputStream in = jf.getInputStream(ze)) {
@@ -416,6 +464,7 @@ public final class HostSnapshot {
                 if (total[1] > MAX_ANCHORS_TOTAL) throw new HostSpec.Invalid("the descriptions and blueprints are too large");
                 anchors.add(new Anchor(ordinal, name, b));
             }
+            return mf != null && "true".equalsIgnoreCase(String.valueOf(mf.getMainAttributes().getValue("Multi-Release")).trim());
         } catch (java.util.zip.ZipException e) {
             throw new HostSpec.Invalid("a class-path jar is not a readable zip");
         }

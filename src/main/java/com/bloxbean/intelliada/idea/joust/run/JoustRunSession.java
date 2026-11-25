@@ -248,6 +248,110 @@ public final class JoustRunSession {
         return id.chainKey().endsWith("-" + h) ? null : "the devnet behind the node was recreated";
     }
 
+    // ---- D13: what IntelliAda derives itself, checked against the host (M33A-CDX-1, -CDX-2) ------------------------------
+
+    private final java.util.Map<String, com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors> anchors =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<String> deploymentChecked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** The feature version of the launch spec's java: classes are resolved as that JVM loads them. */
+    int javaFeature() throws NetworkIdentity.Refused {
+        try {
+            return com.bloxbean.intelliada.idea.joust.host.HostLauncher.javaVersion(running.spec().java());
+        } catch (java.io.IOException e) {
+            throw new NetworkIdentity.Refused("the launch spec's java could not be identified");
+        }
+    }
+
+    /** The contract's anchors, derived from the verified snapshot (never from the host). */
+    public com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors anchors(String contract) throws Exception {
+        var a = anchors.get(contract);
+        if (a == null) {
+            a = com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.derive(running.snapshot(), contract,
+                    binding.identity().networkId(), javaFeature());
+            anchors.put(contract, a);
+        }
+        return a;
+    }
+
+    void anchorsForTests(String contract, com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors a) {
+        anchors.put(contract, a);
+    }
+
+    /**
+     * The host's deployment for {@code contract} must equal the derived one before any prerequisites, publish or
+     * prepare; a difference stops the host and refuses (I24).
+     */
+    void checkDeployment(String contract) throws Exception {
+        if (deploymentChecked.contains(contract)) return;
+        var a = anchors(contract);
+        JsonNode dep = deployment(contract);
+        String why = com.bloxbean.intelliada.idea.joust.verifier.JoustDeployment.check(a, dep);
+        if (why != null) {
+            stopHost();
+            throw new NetworkIdentity.Refused(why + "; the host was stopped");
+        }
+        deploymentChecked.add(contract);
+    }
+
+    /**
+     * Checks {@code initialize}'s contract catalog against the snapshot (M33A-CDX-2): the same contracts as the
+     * snapshot's descriptions, each with the script hashes IntelliAda derives (the unapplied template hash for a
+     * parameterized one; a stake hash for {@code stakeSelf} or {@code purposes} contracts). A difference stops the host.
+     */
+    public void verifyCatalog() throws Exception {
+        String why = catalogDifference(running.initialize(), running.snapshot(), binding.identity().networkId(), javaFeature());
+        if (why != null) {
+            stopHost();
+            throw new NetworkIdentity.Refused(why + "; the host was stopped");
+        }
+    }
+
+    static @Nullable String catalogDifference(JsonNode initialize, com.bloxbean.intelliada.idea.joust.host.HostSnapshot snapshot,
+                                              int networkId, int javaFeature) {
+        java.util.Map<String, JsonNode> listed = new java.util.HashMap<>();
+        for (JsonNode c : initialize.path("contracts")) {
+            String n = c.path("name").textValue();
+            if (n == null || listed.put(n, c) != null) return "the host lists a contract twice or without a name";
+        }
+        java.util.Set<String> described = new java.util.HashSet<>();
+        for (String path : snapshot.firstByPath().keySet()) {
+            if (path.startsWith("META-INF/joust/") && path.endsWith(".json")) {
+                described.add(path.substring("META-INF/joust/".length(), path.length() - 5));
+            }
+        }
+        if (!listed.keySet().equals(described)) {
+            return "the host's contracts " + new java.util.TreeSet<>(listed.keySet()) + " are not the build's "
+                    + new java.util.TreeSet<>(described);
+        }
+        for (var e : listed.entrySet()) {
+            com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors a;
+            try {
+                a = com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.derive(snapshot, e.getKey(), networkId, javaFeature);
+            } catch (com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Refused r) {
+                return "the build's " + e.getKey() + " cannot be anchored: " + r.getMessage();
+            }
+            String h = a.contract().hash();
+            JsonNode x = a.description().path("x-joust");
+            ObjectNode want = HostJson.object();
+            if (x.has("params")) {
+                want.put("unapplied", h);
+            } else {
+                want.put("spend", h).put("mint", h);
+                if (x.path("stakeSelf").asBoolean(false) || x.has("purposes")) want.put("stake", h);
+            }
+            if (!want.equals(e.getValue().get("scriptHashes"))) {
+                return "the host reports " + e.getKey() + "'s script hashes as " + e.getValue().get("scriptHashes") + ", the build's are " + want;
+            }
+        }
+        return null;
+    }
+
+    private void stopHost() {
+        running.session().close();
+        running.started().stop();
+    }
+
     public JsonNode describe(String contract) throws Exception {
         return call("describe", HostJson.object().put("contract", contract), false);
     }
@@ -257,6 +361,7 @@ public final class JoustRunSession {
     }
 
     public JsonNode prerequisites(String contract) throws Exception {
+        checkDeployment(contract);   // D13: before any prerequisites, publish or prepare (M33A-CDX-1)
         return call("prerequisites", HostJson.object().put("contract", contract), true);
     }
 

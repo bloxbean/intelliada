@@ -202,7 +202,7 @@ public class JoustCheckerTest {
         assertTrue(((JoustChecker.Refused) v).why().contains("Java 25"));
     }
 
-    /** I19: the checker process opens no listening socket (its stdin held open, so it stays alive to be inspected). */
+    /** I19: the checker process, started by JoustChecker's own command, holds no network socket during a real check. */
     @Test
     public void theCheckerListensOnNoSocket() throws Exception {
         Tools t = tools("theCheckerListensOnNoSocket");
@@ -213,23 +213,95 @@ public class JoustCheckerTest {
             assertFalse("lsof is needed for I19", JoustTestTools.required());
             return;
         }
-        List<String> cp = new ArrayList<>();
-        for (String f : t.manifest().files().keySet()) cp.add(t.dir().resolve(f).toString());
-        Process p = new ProcessBuilder(t.java().toString(), "-cp", String.join(File.pathSeparator, cp), t.manifest().main())
-                .redirectErrorStream(true).start();
+        Path tool = lsof;
+        java.util.List<String> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        JoustChecker.startedForTests = p -> {
+            try {
+                Thread.sleep(1200);   // the JVM is up, blocked on its input
+                Process l = new ProcessBuilder(tool.toString(), "-nP", "-a", "-p", String.valueOf(p.pid()), "-i").redirectErrorStream(true).start();
+                seen.add(new String(l.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+                l.waitFor();
+            } catch (Exception e) {
+                seen.add("probe failed: " + e);
+            }
+        };
         try {
-            Thread.sleep(1500);   // the JVM is up and blocked reading stdin
-            assertTrue("the runner waits for its input", p.isAlive());
-            Process l = new ProcessBuilder(lsof.toString(), "-nP", "-a", "-p", String.valueOf(p.pid()), "-i").redirectErrorStream(true).start();
-            String sockets = new String(l.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            l.waitFor();
-            assertFalse("I19: the checker holds no network socket: " + sockets, sockets.contains("LISTEN") || sockets.contains("UDP")
-                    || sockets.contains("TCP"));
+            JsonNode v;
+            try (ZipFile z = new ZipFile(t.kitJar().toFile())) {
+                v = HostJson.MAPPER.readTree(z.getInputStream(z.getEntry("verifier/Bank-init.json")));
+            }
+            ObjectNode in = v.deepCopy();
+            in.remove("violations");
+            in.remove("source");
+            assertTrue("a real check, accepted", t.checker().check(in).accepted());
         } finally {
-            p.getOutputStream().close();
-            p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
-            p.destroyForcibly();
+            JoustChecker.startedForTests = null;
         }
+        assertEquals(1, seen.size());
+        String sockets = seen.get(0);
+        assertFalse("I19: the checker holds no network socket: " + sockets, sockets.contains("TCP") || sockets.contains("UDP")
+                || sockets.contains("probe failed"));
+    }
+
+    private static Path fakeJava(String script) throws Exception {
+        Path home = Files.createTempDirectory("fake-jdk");
+        Files.writeString(home.resolve("release"), "JAVA_VERSION=\"25.0.2\"\n");
+        Path bin = Files.createDirectory(home.resolve("bin"));
+        Path java = bin.resolve("java");
+        Files.writeString(java, "#!/bin/sh\n" + script + "\n");
+        java.toFile().setExecutable(true);
+        return java;
+    }
+
+    private static ObjectNode big() {
+        ObjectNode in = HostJson.object();
+        in.put("pad", "x".repeat(2 * 1024 * 1024));   // larger than any pipe
+        return in;
+    }
+
+    /** M33A-CDX-4: a checker that never reads a large input is cut off at the deadline; an interrupted check kills it. */
+    @Test
+    public void aStalledCheckerEndsAtItsDeadlineOrOnCancellation() throws Exception {
+        Tools t = tools("aStalledCheckerEndsAtItsDeadlineOrOnCancellation");
+        if (t == null || JoustTestTools.windows()) return;
+        Path pidFile = Files.createTempFile("checker", ".pid");
+        Path fake = fakeJava("echo $$ > " + pidFile + "; exec sleep 60");
+        long t0 = System.nanoTime();
+        JoustChecker.Verdict v = new JoustChecker(t.manifest(), t.dir(), fake, Duration.ofSeconds(2)).check(big());
+        assertFalse(v.accepted());
+        assertTrue(((JoustChecker.Refused) v).why(), ((JoustChecker.Refused) v).why().contains("did not finish"));
+        assertTrue("bounded by the deadline: " + (System.nanoTime() - t0) / 1_000_000 + " ms", System.nanoTime() - t0 < 10_000_000_000L);
+        long pid = Long.parseLong(Files.readString(pidFile).trim());
+        assertFalse("the stalled checker was ended", ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+        // Cancellation: the calling thread is interrupted while the checker runs.
+        Files.writeString(pidFile, "");
+        java.util.concurrent.CompletableFuture<Object> f = new java.util.concurrent.CompletableFuture<>();
+        Thread caller = new Thread(() -> {
+            try {
+                f.complete(new JoustChecker(t.manifest(), t.dir(), fake, Duration.ofSeconds(60)).check(big()));
+            } catch (InterruptedException e) {
+                f.complete(e);
+            }
+        });
+        caller.start();
+        long until = System.currentTimeMillis() + 10_000;
+        while (Files.readString(pidFile).isBlank() && System.currentTimeMillis() < until) Thread.sleep(50);
+        long pid2 = Long.parseLong(Files.readString(pidFile).trim());
+        caller.interrupt();
+        Object r = f.get(15, java.util.concurrent.TimeUnit.SECONDS);
+        assertTrue("never accepted: " + r, r instanceof InterruptedException || r instanceof JoustChecker.Refused);
+        Thread.sleep(300);
+        assertFalse("the cancelled checker was ended", ProcessHandle.of(pid2).map(ProcessHandle::isAlive).orElse(false));
+    }
+
+    /** M33A-CDX-5: [] after an input that was not delivered completely is refused. */
+    @Test
+    public void anUndeliveredInputIsNeverAccepted() throws Exception {
+        Tools t = tools("anUndeliveredInputIsNeverAccepted");
+        if (t == null || JoustTestTools.windows()) return;
+        Path fake = fakeJava("exec 0<&-; echo '[]'; exit 0");
+        JoustChecker.Verdict v = new JoustChecker(t.manifest(), t.dir(), fake, Duration.ofSeconds(10)).check(big());
+        assertFalse("[] without reading the input is not a verdict on it: " + v, v.accepted());
     }
 
     private static byte[] b(String s) {

@@ -25,7 +25,8 @@ final class SnapshotOf {
     }
 
     static Made create(List<Path> entries, Path base) throws Exception {
-        ObjectNode spec = HostJson.object().put("protocol", 1).put("mainClass", HostSpec.MAIN_CLASS).put("java", "/opt/jdk/bin/java");
+        ObjectNode spec = HostJson.object().put("protocol", 1).put("mainClass", HostSpec.MAIN_CLASS).put("java", Path.of(System.getProperty("java.home"), "bin",
+                System.getProperty("os.name", "").toLowerCase().startsWith("windows") ? "java.exe" : "java").toString());
         ArrayNode launch = spec.putArray("launch");
         StringBuilder lines = new StringBuilder();
         for (int o = 0; o < entries.size(); o++) {

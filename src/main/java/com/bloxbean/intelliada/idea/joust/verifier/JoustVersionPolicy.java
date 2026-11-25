@@ -41,9 +41,9 @@ public final class JoustVersionPolicy {
     }
 
     /** May the session sign or export; if not, why (plain text, naming the versions). */
-    public record Verdict(boolean maySign, String why, @Nullable String label) {
+    public record Verdict(boolean maySign, String why, @Nullable String label, Map<String, Integer> ordinals) {
         static Verdict no(String why) {
-            return new Verdict(false, why, null);
+            return new Verdict(false, why, null, Map.of());
         }
     }
 
@@ -70,7 +70,10 @@ public final class JoustVersionPolicy {
                 jars.put(a, h);
             }
             Set<Integer> xv = new java.util.HashSet<>();
-            s.path("xJoustVersions").forEach(v -> xv.add(v.intValue()));
+            for (JsonNode v : s.path("xJoustVersions")) {
+                if (!v.isIntegralNumber() || !v.canConvertToInt()) throw new IllegalStateException("a malformed reviewed version");
+                xv.add(v.intValue());
+            }
             String label = s.path("label").textValue();
             if (label == null || label.isBlank() || xv.isEmpty()) throw new IllegalStateException("a malformed reviewed set");
             out.add(new ReviewedSet(label, Map.copyOf(jars), Set.copyOf(xv)));
@@ -117,11 +120,12 @@ public final class JoustVersionPolicy {
             }
             for (JsonNode d : anchoredDescriptions) {
                 JsonNode v = d.path("x-joust").path("version");
-                if (!v.isIntegralNumber() || !set.xJoustVersions().contains(v.intValue())) {
+                // An exact int, never narrowed (4294967298 is not 2; M33A-CDX-6).
+                if (!v.isIntegralNumber() || !v.canConvertToInt() || !set.xJoustVersions().contains(v.intValue())) {
                     return Verdict.no("read-only: a description declares x-joust.version " + v + ", which " + set.label() + " was not reviewed with");
                 }
             }
-            return new Verdict(true, "JOUST " + set.label() + " (reviewed)", set.label());
+            return new Verdict(true, "JOUST " + set.label() + " (reviewed)", set.label(), Map.copyOf(ordinals));
         }
         return Verdict.no("read-only: " + declared + " is not a version this IntelliAda was reviewed against (its runtime jars "
                 + "differ from every reviewed set); views and listings still work");

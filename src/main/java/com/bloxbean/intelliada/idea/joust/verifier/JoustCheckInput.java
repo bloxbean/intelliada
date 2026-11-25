@@ -61,6 +61,7 @@ public final class JoustCheckInput {
     public static ObjectNode assemble(String method, ObjectNode request, JoustAnchors.Anchors anchors, int networkId, long maxFee,
                                       JsonNode result, Chain chain, @Nullable ObjectNode clock) throws Refused {
         if (!method.equals("prepare") && !method.equals("publish")) throw new Refused("only prepare and publish are signed");
+        if (anchors.networkId() != networkId) throw new Refused("the anchors are for another network");
         JsonNode plan = result.path("prepared").path("plan");
         Set<String> refs = new LinkedHashSet<>();
         for (String group : List.of("inputs", "referenceInputs", "collateral")) {
@@ -100,7 +101,9 @@ public final class JoustCheckInput {
                 for (String h : chain.scriptsAt(a)) arr.add(h);
             }
             ObjectNode regs = HostJson.object();
-            for (String v : List.of("outputVerifier", "mapVerifier")) {
+            // The contract's own stake credential too, when its deployment has one: a stakeRegistration publication of
+            // the contract needs its status (M33A-CDX-3).
+            for (String v : List.of("stake", "outputVerifier", "mapVerifier")) {
                 String h = expected.path("scriptHashes").path(v).textValue();
                 if (h == null) continue;
                 Boolean r = chain.registered(h);

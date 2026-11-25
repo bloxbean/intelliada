@@ -51,9 +51,16 @@ public final class JoustAnchors {
         }
     }
 
-    /** One contract's anchors: what the checker receives, and the reward address for the deployment check. */
-    public record Anchors(JsonNode description, Script contract, String rewardAddress, Script outputVerifier,
-                          @Nullable Script mapVerifier, int validatorEntry, int outputVerifierEntry) {
+    /**
+     * One contract's anchors for one network (0 or 1): what the checker receives, the reward address for the
+     * deployment check, and the launch entries the scripts came from (M33A-DES-3, -DES-10).
+     */
+    public record Anchors(JsonNode description, int networkId, Script contract, Script outputVerifier, @Nullable Script mapVerifier,
+                          int validatorEntry, int outputVerifierEntry, int mapVerifierEntry) {
+
+        public String rewardAddress() {
+            return contract.reward();
+        }
 
         /** The checker's {@code anchors} object (D13; the vectors' shape). */
         public ObjectNode toJson() {
@@ -68,16 +75,21 @@ public final class JoustAnchors {
 
     static final String OUTPUT_VERIFIER = "org/julclang/state/verifier/OutputVerifier.class";
     static final String MAP_VERIFIER = "org/julclang/state/verifier/MapVerifier.class";
-    private static final Pattern NAME = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]{0,200}");
+    /** A validator's simple name: no {@code $}, whose blueprint name the runtime would derive differently (M33A-SEC-2). */
+    private static final Pattern NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,200}");
     private static final Pattern PACKAGE = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]{0,100}(?:\\.[A-Za-z_$][A-Za-z0-9_$]{0,100}){0,30}");
     private static final Pattern HASH28 = Pattern.compile("[0-9a-f]{56}");
 
     private JoustAnchors() {
     }
 
-    /** Derives {@code contract}'s ({@code <pkg>.<Contract>}) anchors from the snapshot for network id 0 or 1. */
-    public static Anchors derive(HostSnapshot snapshot, String contract, int networkId) throws Refused {
+    /**
+     * Derives {@code contract}'s ({@code <pkg>.<Contract>}) anchors from the snapshot for network id 0 or 1, resolving
+     * classes as a JVM of feature version {@code javaFeature} (the launch spec's java) loads them.
+     */
+    public static Anchors derive(HostSnapshot snapshot, String contract, int networkId, int javaFeature) throws Refused {
         if (!PACKAGE.matcher(contract).matches()) throw new Refused("not a contract name: " + contract);
+        if (networkId != 0 && networkId != 1) throw new Refused("network id " + networkId + " is neither 0 nor 1");
         Network network = networkId == 1 ? Networks.mainnet() : Networks.testnet();
         // The description: every copy on the class path must be the same bytes.
         String descPath = "META-INF/joust/" + contract + ".json";
@@ -101,20 +113,22 @@ public final class JoustAnchors {
             throw new Refused("the description of " + contract + " does not name its package, contract and validator");
         }
         // The validator's script, from the entry holding its class.
-        Resolved v = resolve(snapshot, pkg.replace('.', '/') + "/" + validator + ".class", validator, false);
+        Resolved v = resolve(snapshot, pkg.replace('.', '/') + "/" + validator + ".class", validator, false, javaFeature);
         String address = x.path("stakeSelf").asBoolean(false)
                 ? AddressProvider.getBaseAddress(Credential.fromScript(HexFormat.of().parseHex(v.hash)),
                         Credential.fromScript(HexFormat.of().parseHex(v.hash)), network).toBech32()
                 : AddressProvider.getEntAddress(Credential.fromScript(HexFormat.of().parseHex(v.hash)), network).toBech32();
         String reward = AddressProvider.getRewardAddress(Credential.fromScript(HexFormat.of().parseHex(v.hash)), network).toBech32();
-        Resolved ov = resolve(snapshot, OUTPUT_VERIFIER, "OutputVerifier", true);
+        Resolved ov = resolve(snapshot, OUTPUT_VERIFIER, "OutputVerifier", true, javaFeature);
         Script map = null;
+        int mapEntry = -1;
         if (description.path("definitions").has("org.julclang.state.api.MerkleMap")) {
-            Resolved mv = resolve(snapshot, MAP_VERIFIER, "MapVerifier", true);
+            Resolved mv = resolve(snapshot, MAP_VERIFIER, "MapVerifier", true, javaFeature);
             map = verifierScript(mv.hash, network);
+            mapEntry = mv.entry;
         }
-        return new Anchors(description, new Script("PlutusScriptV3", v.hash, address, reward), reward,
-                verifierScript(ov.hash, network), map, v.entry, ov.entry);
+        return new Anchors(description, networkId, new Script("PlutusScriptV3", v.hash, address, reward),
+                verifierScript(ov.hash, network), map, v.entry, ov.entry, mapEntry);
     }
 
     private record Resolved(int entry, String hash) {
@@ -125,17 +139,28 @@ public final class JoustAnchors {
      * of that simple name and the blueprint {@code META-INF/plutus/<simple>.plutus.json}; for a verifier, no other entry
      * may hold a resource of that name.
      */
-    private static Resolved resolve(HostSnapshot snapshot, String classPath, String simple, boolean verifier) throws Refused {
-        int entry = snapshot.firstWithClass(classPath);
+    private static Resolved resolve(HostSnapshot snapshot, String classPath, String simple, boolean verifier, int javaFeature)
+            throws Refused {
+        int entry = snapshot.firstWithClass(classPath, javaFeature);
         if (entry < 0) throw new Refused("the class " + classPath.replace('/', '.').replace(".class", "") + " is not in the build");
+        // The class in exactly one launch entry: a dependency shipping the validator's class with a blueprint of its
+        // own would otherwise decide the contract (M33A-SEC-1).
+        List<Integer> holders = snapshot.entriesHolding(classPath);
+        if (holders.size() != 1) {
+            throw new Refused("the class " + classPath.replace('/', '.').replace(".class", "") + " is in " + holders.size()
+                    + " class-path entries; it must be in exactly one");
+        }
         long sameName = snapshot.classesAt(entry).stream()
                 .filter(c -> c.equals(simple + ".class") || c.endsWith("/" + simple + ".class")).count();
         if (sameName != 1) throw new Refused("the class-path entry holding " + simple + " holds " + sameName + " classes of that name");
         String blueprint = "META-INF/plutus/" + simple + ".plutus.json";
         List<HostSnapshot.Anchor> copies = new ArrayList<>();
         for (HostSnapshot.Anchor a : snapshot.anchors()) if (a.path().equals(blueprint)) copies.add(a);
-        HostSnapshot.Anchor own = copies.stream().filter(a -> a.ordinal() == entry).findFirst().orElse(null);
-        if (own == null) throw new Refused("no blueprint " + blueprint + " beside " + simple);
+        List<HostSnapshot.Anchor> owned = copies.stream().filter(a -> a.ordinal() == entry).toList();
+        if (owned.isEmpty()) throw new Refused("no blueprint " + blueprint + " beside " + simple);
+        // Exactly one in the owning entry: a merged jar with two entries of that name is ambiguous (M33A-CDX-7).
+        if (owned.size() > 1) throw new Refused("the class-path entry holding " + simple + " has " + owned.size() + " blueprints of that name");
+        HostSnapshot.Anchor own = owned.get(0);
         if (verifier && copies.size() > 1) throw new Refused("another class-path entry holds a blueprint named " + simple);
         JsonNode b;
         try {

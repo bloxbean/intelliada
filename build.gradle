@@ -229,12 +229,33 @@ def joustVerifierBundle = tasks.register('joustVerifierBundle') {
             return
         }
         def lines = []
+        def classOwner = [:]
+        new File(bundle, 'lib').mkdirs()
         joustVerifierLock.each { e ->
             File f = resolved[e.file]
-            String h = sha(f)
+            byte[] bytes = f.bytes
+            String h = java.security.MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString()
             if (h != e.sha) throw new GradleException("checker jar ${e.coord} has SHA-256 ${h}, the lock pins ${e.sha}")
-            project.copy { from f; into new File(bundle, 'lib') }
+            new File(bundle, "lib/${e.file}").bytes = bytes   // exactly the bytes hashed (M33A-SEC-7)
+            // No class in two locked jars: the class path's order must never decide a verdict (M33A-SEC-6).
+            new java.util.zip.ZipInputStream(new ByteArrayInputStream(bytes)).withCloseable { z ->
+                def ze
+                while ((ze = z.nextEntry) != null) {
+                    if (!ze.name.endsWith('.class') || ze.name.endsWith('module-info.class') || ze.name.startsWith('META-INF/')) continue
+                    def prior = classOwner.put(ze.name, e.file)
+                    if (prior != null && prior != e.file) throw new GradleException("checker jars ${prior} and ${e.file} both hold ${ze.name}")
+                }
+            }
             lines << "${h} lib/${e.file}"
+        }
+        // The reviewed set must be the bundled kit's: its label and its api and runtime hashes (M33A-SEC-4, -DES-4).
+        def reviewed = new groovy.json.JsonSlurper().parse(file('src/main/resources/joust/reviewed-sets.json'))
+        def lockSha = { String artifact -> joustVerifierLock.find { it.coord.split(':')[1] == artifact && it.coord.split(':').length == 3 }?.sha }
+        def kitLabel = joustVerifierLock.find { it.coord.contains(':julc-state-host:') }.coord.split(':')[2]
+        def matching = reviewed.sets.find { it.label == kitLabel && it.jars['julc-state-api'] == lockSha('julc-state-api')
+                && it.jars['julc-state-runtime'] == lockSha('julc-state-runtime') }
+        if (matching == null) {
+            throw new GradleException("no reviewed set in joust/reviewed-sets.json is the bundled kit ${kitLabel} (label, julc-state-api and julc-state-runtime hashes)")
         }
         File runner = joustVerifierRunnerJar.get().archiveFile.get().asFile
         project.copy { from runner; into bundle }
@@ -254,7 +275,9 @@ def checkJoustKit = tasks.register('checkJoustKit') {
     inputs.property('allowSnapshotKit', joustAllowSnapshotKit)
     doLast {
         def m = joustVerifierManifestDir.get().file('joust/joust-verifier.manifest').asFile.text
-        if (m.contains('snapshot=true') && !joustAllowSnapshotKit) {
+        def labels = new groovy.json.JsonSlurper().parse(file('src/main/resources/joust/reviewed-sets.json')).sets*.label
+        boolean snapshotLabel = labels.any { it ==~ /.*(-SNAPSHOT|-\d{8}\.\d{6}-\d+)$/ }
+        if ((m.contains('snapshot=true') || snapshotLabel) && !joustAllowSnapshotKit) {
             throw new GradleException("the bundled JOUST checker kit is a SNAPSHOT build; a distributable plugin needs a released, " +
                     "reviewed kit. For a local build only, pass -Pjoust.allowSnapshotKit=true on the command line.")
         }
@@ -267,27 +290,38 @@ tasks.matching { it.name in ['buildPlugin', 'signPlugin', 'publishPlugin'] }.con
 def verifyJoustPluginLayout = tasks.register('verifyJoustPluginLayout') {
     doLast {
         def zip = tasks.named('buildPlugin').get().archiveFile.get().asFile
+        def manifest = joustVerifierManifestDir.get().file('joust/joust-verifier.manifest').asFile
+        def expected = [:]
+        manifest.readLines().findAll { it.startsWith('file=') }.each { l ->
+            def p = l.substring(5).split(' ', 2)
+            expected[p[1]] = p[0]
+        }
+        def found = [:]
         def bad = []
         new java.util.zip.ZipFile(zip).withCloseable { z ->
             z.entries().each { e ->
-                if (!e.name.endsWith('.jar')) return
+                if (e.isDirectory()) return
                 boolean verifier = e.name.contains('/joust-verifier/')
-                boolean lib = e.name.matches('[^/]+/lib/[^/]+\\.jar')
+                boolean julcRuntime = e.name.contains('/julc-runtime/')   // IntelliAda's JuLC integration: its own class loader
+                if (e.name.endsWith('.class') && !verifier) bad << "a loose class ${e.name}"
+                if (verifier) {
+                    def rel = e.name.substring(e.name.indexOf('/joust-verifier/') + '/joust-verifier/'.length())
+                    found[rel] = java.security.MessageDigest.getInstance('SHA-256').digest(z.getInputStream(e).bytes).encodeHex().toString()
+                    println "joust-verifier ${found[rel]} ${rel}"
+                    return
+                }
+                if (!e.name.endsWith('.jar') || julcRuntime) return
                 new java.util.zip.ZipInputStream(z.getInputStream(e)).withCloseable { jar ->
                     def je
                     while ((je = jar.nextEntry) != null) {
-                        if (!je.name.endsWith('.class')) continue
-                        if (lib && je.name.startsWith('org/julclang/')) bad << "${e.name}: ${je.name}"
-                        if (!verifier && je.name.startsWith('org/julclang/state/')) bad << "${e.name}: ${je.name}"
+                        if (je.name.endsWith('.class') && je.name.startsWith('org/julclang/')) bad << "${e.name}: ${je.name}"
                     }
-                }
-                if (verifier) {
-                    def sha = java.security.MessageDigest.getInstance('SHA-256').digest(z.getInputStream(e).bytes).encodeHex().toString()
-                    println "joust-verifier ${sha} ${e.name.substring(e.name.lastIndexOf('/') + 1)}"
                 }
             }
         }
-        if (!bad.isEmpty()) throw new GradleException("I9: JOUST or JuLC classes on the plugin class path: ${bad.take(5)}")
+        // joust-verifier/ holds exactly the manifest's files with the manifest's hashes (M33A-SEC-7).
+        if (!expected.isEmpty() && found != expected) bad << "joust-verifier/ differs from the built-in manifest"
+        if (!bad.isEmpty()) throw new GradleException("I9: ${bad.take(5)}")
     }
 }
 tasks.named('buildPlugin') { finalizedBy(verifyJoustPluginLayout) }

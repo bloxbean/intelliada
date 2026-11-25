@@ -588,7 +588,13 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         List<CardanoAccount> out = new ArrayList<>();
         for (CardanoAccount c : all) {
             String a = c.getAddress();
-            if (a != null && c.getMnemonic() != null && !c.getMnemonic().isBlank() && fingerprint.equals(anyPaymentKeyHash(a))) out.add(c);
+            if (a == null || c.getMnemonic() == null || c.getMnemonic().isBlank() || !fingerprint.equals(anyPaymentKeyHash(a))) continue;
+            // Only when its phrase really is that key: a planted row naming someone's address holds nothing (M33A-SEC-5).
+            try {
+                if (fingerprint.equals(fingerprint(account(NetworkClass.TESTNET, c.getMnemonic())))) out.add(c);
+            } catch (Refused notAPhrase) {
+                // not a key
+            }
         }
         return out;
     }

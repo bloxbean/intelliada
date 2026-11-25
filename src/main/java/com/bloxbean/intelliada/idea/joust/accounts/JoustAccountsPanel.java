@@ -225,9 +225,19 @@ public final class JoustAccountsPanel {
         background("Removing an account", () -> JoustAccounts.getInstance().remove(e.id), r -> refresh());
     }
 
-    /** The legacy accounts that can be copied: testnet addresses with a recovery phrase (M32-SEC-1). Off the EDT. */
-    static List<CardanoAccount> migratable() {
-        return AccountService.getAccountService().getAccounts().stream()
+    /**
+     * The legacy accounts that can be copied: testnet addresses with a recovery phrase (M32-SEC-1), from the same
+     * two-location inventory the ownership check reads (a former temp-dir cache included; M33A-CDX-9), and not
+     * withheld. Off the EDT.
+     */
+    static List<CardanoAccount> migratable() throws JoustAccounts.Refused {
+        List<CardanoAccount> all;
+        try {
+            all = AccountService.getAccountService().getAllAccountsStrict();
+        } catch (java.io.IOException e) {
+            throw new JoustAccounts.Refused("the legacy IntelliAda account store could not be read");
+        }
+        return all.stream().filter(a -> !AccountService.withheld(a))
                 .filter(a -> a.getMnemonic() != null && !a.getMnemonic().isBlank() && a.getAddress() != null
                         && a.getAddress().startsWith("addr_test1"))
                 .toList();

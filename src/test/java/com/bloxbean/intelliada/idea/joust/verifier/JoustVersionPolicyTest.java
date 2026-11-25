@@ -64,6 +64,10 @@ public class JoustVersionPolicyTest {
         assertTrue(JoustVersionPolicy.check(sets, ok.spec(), ok.snapshot(), init(LABEL), 25, List.of(desc(2))).maySign());
         // I29: a bumped x-joust.version.
         assertFalse(JoustVersionPolicy.check(sets, ok.spec(), ok.snapshot(), init(LABEL), 25, List.of(desc(3))).maySign());
+        // M33A-CDX-6: a version that narrows to a reviewed one (4294967298 is 2 as an int) is not that version.
+        ObjectNode wide = HostJson.object();
+        wide.putObject("x-joust").put("version", 4294967298L);
+        assertFalse(JoustVersionPolicy.check(sets, ok.spec(), ok.snapshot(), init(LABEL), 25, List.of(wide)).maySign());
         // I29: the host reporting another engine version than the runtime jar's RuntimeVersion.
         assertFalse(JoustVersionPolicy.check(sets, ok.spec(), ok.snapshot(), init("0.1.0-other"), 25, List.of(desc(2))).maySign());
         // I29: a runtime jar whose hash is not reviewed.

@@ -56,7 +56,49 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
 
     private static String abbreviate(JsonNode n) {
         String t = String.valueOf(n);
-        return t.length() > 160 ? t.substring(0, 160) + "…" : t;
+        return t.length() > 400 ? t.substring(0, 400) + "…" : t;
+    }
+
+    /** M33A-CDX-3: a staking contract's own stake registration is read too (false and unknown preserved). */
+    public void testAStakingContractsRegistrationIsRead() throws Exception {
+        ObjectNode desc = HostJson.object();
+        desc.putObject("x-joust").put("stakeSelf", true);
+        desc.putObject("definitions");
+        String h = "ab".repeat(28);
+        JoustAnchors.Script s = new JoustAnchors.Script("PlutusScriptV3", h, "addr_test1x", "stake_test1x");
+        JoustAnchors.Script ov = new JoustAnchors.Script("PlutusScriptV3", "cd".repeat(28), "addr_test1w", "stake_test1w");
+        JoustAnchors.Anchors a = new JoustAnchors.Anchors(desc, 0, s, ov, null, 0, 1, -1);
+        ObjectNode request = HostJson.object();
+        request.put("address", "addr_test1payer");
+        ObjectNode result = HostJson.object();
+        result.putObject("prepared").putObject("plan");
+        for (Boolean status : new Boolean[]{false, null}) {
+            JoustCheckInput.Chain chain = new JoustCheckInput.Chain() {
+                @Override
+                public JsonNode output(String ref) {
+                    return null;
+                }
+
+                @Override
+                public List<String> scriptsAt(String address) {
+                    return List.of();
+                }
+
+                @Override
+                public Boolean registered(String scriptHash) {
+                    return scriptHash.equals(h) ? status : Boolean.TRUE;
+                }
+
+                @Override
+                public JsonNode protocolParams() {
+                    return HostJson.object();
+                }
+            };
+            ObjectNode in = JoustCheckInput.assemble("publish", request, a, 0, 3_000_000, result, chain);
+            JsonNode reg = in.at("/node/registrations/" + h);
+            if (status == null) assertEquals("unknown", reg.textValue());
+            else assertTrue(reg.isBoolean() && !reg.booleanValue());
+        }
     }
 
     public void testRecordedResultsThroughOurAssemblyGetTheVectorsVerdicts() throws Exception {
@@ -86,7 +128,7 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
             String name = "org.julclang.state.examples." + c[0] + "." + c[1];
             var s = SnapshotOf.create(List.of(Path.of(root, "examples/" + c[0] + "/build/classes/java/main"), verifierJar),
                     Files.createTempDirectory("assembly"));
-            anchors.put(name, JoustAnchors.derive(s.snapshot(), name, 0));
+            anchors.put(name, JoustAnchors.derive(s.snapshot(), name, 0, 25));
             s.snapshot().delete();
         }
         List<JsonNode> vectors = new ArrayList<>();
@@ -95,7 +137,7 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
                 if (e.getName().startsWith("verifier/") && e.getName().endsWith(".json")) vectors.add(HostJson.MAPPER.readTree(z.getInputStream(e)));
             }
         }
-        int accepted = 0, families = 0, assemblyRefusals = 0;
+        int accepted = 0, rejected = 0, assemblyRefusals = 0, mutatedFacts = 0;
         java.util.Set<String> seenFamilies = new java.util.HashSet<>();
         List<String> problems = new ArrayList<>();
         for (JsonNode v : vectors) {
@@ -106,7 +148,7 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
             List<String> want = new ArrayList<>();
             v.path("violations").forEach(x -> want.add(x.asText()));
             String family = want.isEmpty() ? null : want.get(0).split("/")[0];
-            if (family != null && !seenFamilies.add(family)) continue;   // one rejection per rule family
+            if (family != null) seenFamilies.add(family);   // every vector runs; families are counted (M33A-DES-1)
             ObjectNode in;
             try {
                 in = JoustCheckInput.assemble(v.path("method").asText(), (ObjectNode) v.get("request"), a,
@@ -116,7 +158,7 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
                 // The assembly itself refuses (an input the node does not have): fail-closed before the checker runs.
                 if (want.isEmpty()) problems.add(v.path("source").asText() + ": an accepted vector was refused by the assembly: " + r.getMessage());
                 else {
-                    families++;
+                    rejected++;
                     assemblyRefusals++;
                 }
                 continue;
@@ -135,6 +177,10 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
             for (var it = ours.fields(); it.hasNext(); ) {
                 var f = it.next();
                 subset &= f.getValue().equals(theirs.get(f.getKey()));
+            }
+            if ((!mine.equals(stripped) || !subset) && !want.isEmpty()) {
+                mutatedFacts++;   // a rejection whose recorded node facts were mutated: an honest assembly never produces them
+                continue;
             }
             if (!mine.equals(stripped) || !subset) {
                 List<String> diff = new ArrayList<>();
@@ -156,12 +202,13 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
                 problems.add(v.path("source").asText() + ": want " + want + ", got " + got);
             }
             if (want.isEmpty()) accepted++;
-            else families++;
+            else rejected++;
         }
         assertTrue(problems.size() + " problems, e.g. " + problems.stream().limit(4).toList(), problems.isEmpty());
-        assertTrue("accepted " + accepted, accepted >= 40);
-        assertTrue("rule families " + families, families >= 10);
-        System.out.println("I23: " + accepted + " accepted vectors and " + families + " rule families (" + assemblyRefusals
-                + " refused already by the assembly) through IntelliAda's assembly");
+        assertEquals("every accepted vector of the five contracts", 42, accepted);
+        assertTrue("rule families " + seenFamilies, seenFamilies.size() >= 10);
+        System.out.println("I23: " + accepted + " accepted and " + rejected + " rejected vectors (" + seenFamilies.size() + " rule families "
+                + new java.util.TreeSet<>(seenFamilies) + "; " + assemblyRefusals + " refused already by the assembly; " + mutatedFacts
+                + " with mutated node facts skipped)");
     }
 }

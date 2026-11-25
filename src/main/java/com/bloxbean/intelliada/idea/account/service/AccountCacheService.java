@@ -75,7 +75,10 @@ public class AccountCacheService {
         List<CardanoAccount> all = new java.util.ArrayList<>();
         synchronized (STORAGE) {
             for (java.nio.file.Path f : folders) {
-                if (java.nio.file.Files.notExists(f)) continue;
+                if (java.nio.file.Files.notExists(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                // The shared temp directory counts only when this user made it: a real directory, owned by this user,
+                // writable by no one else (anyone can create /tmp/.intelliada; M33A-SEC-5).
+                if (!f.startsWith(System.getProperty("user.home")) && !ownPrivateDirectory(f)) continue;
                 if (!java.nio.file.Files.isDirectory(f) || !java.nio.file.Files.isReadable(f)) {
                     throw new java.io.IOException("an account cache folder cannot be read");
                 }
@@ -84,6 +87,21 @@ public class AccountCacheService {
             }
         }
         return all;
+    }
+
+    private static boolean ownPrivateDirectory(java.nio.file.Path f) {
+        try {
+            if (!java.nio.file.Files.isDirectory(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
+            var owner = java.nio.file.Files.getOwner(f, java.nio.file.LinkOption.NOFOLLOW_LINKS).getName();
+            if (!owner.equals(System.getProperty("user.name"))) return false;
+            var perms = java.nio.file.Files.getPosixFilePermissions(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            return !perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
+                    && !perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE);
+        } catch (UnsupportedOperationException e) {
+            return true;   // Windows: the temp directory is the user's own
+        } catch (java.io.IOException e) {
+            return false;
+        }
     }
 
     public void storeAccount(CardanoAccount account) {

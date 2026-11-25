@@ -72,6 +72,8 @@ public final class JoustChecker {
     private static final Pattern FILE = Pattern.compile("(?:lib/)?[A-Za-z0-9._-]{1,200}\\.jar");
     /** Checker processes started (tests: a tampered file must refuse before any). */
     static final AtomicInteger STARTS = new AtomicInteger();
+    /** Tests: called with each checker process as soon as it starts. */
+    static volatile java.util.function.Consumer<Process> startedForTests;
 
     /** The built-in manifest: what the plugin was built with. */
     record Manifest(boolean bundled, @Nullable String kit, boolean snapshot, @Nullable String runner, @Nullable String main,
@@ -102,23 +104,25 @@ public final class JoustChecker {
             if (bundled && (runner == null || !files.containsKey(runner) || files.size() < 2 || kv.get("main") == null)) {
                 throw new IllegalStateException("an incomplete checker manifest");
             }
-            return new Manifest(bundled, kv.get("kit"), "true".equals(kv.get("snapshot")), runner, kv.get("main"), Map.copyOf(files));
+            // The manifest's order is the class path's order, the same on every run (M33A-DES-7, -SEC-6).
+            return new Manifest(bundled, kv.get("kit"), "true".equals(kv.get("snapshot")), runner, kv.get("main"),
+                    java.util.Collections.unmodifiableMap(new LinkedHashMap<>(files)));
         }
     }
 
     private final Manifest manifest;
     private final @Nullable Path dir;
-    private final Path java;
+    private final Path javaExe;
     private final Duration deadline;
 
-    JoustChecker(Manifest manifest, @Nullable Path dir, Path java) {
-        this(manifest, dir, java, DEADLINE);
+    JoustChecker(Manifest manifest, @Nullable Path dir, Path javaExe) {
+        this(manifest, dir, javaExe, DEADLINE);
     }
 
-    JoustChecker(Manifest manifest, @Nullable Path dir, Path java, Duration deadline) {
+    JoustChecker(Manifest manifest, @Nullable Path dir, Path javaExe, Duration deadline) {
         this.manifest = manifest;
         this.dir = dir;
-        this.java = java;
+        this.javaExe = javaExe;
         this.deadline = deadline;
     }
 
@@ -158,7 +162,7 @@ public final class JoustChecker {
     public Verdict check(ObjectNode input) throws InterruptedException {
         if (!isBundled()) return new Refused(List.of(), "the transaction checker is not bundled in this build of IntelliAda");
         try {
-            if (HostLauncher.javaVersion(java) < 25) throw new IOException("older");   // javaVersion refuses below 25 too
+            if (HostLauncher.javaVersion(javaExe) < 25) throw new IOException("older");   // javaVersion refuses below 25 too
         } catch (IOException e) {
             return new Refused(List.of(), "the transaction checker needs the IDE to run on Java 25 or later (IntelliJ 2026.1 or later)");
         }
@@ -173,7 +177,9 @@ public final class JoustChecker {
                 Path src = dir.resolve(f.getKey());
                 byte[] b = readVerified(src, f.getValue());
                 if (b == null) return new Refused(List.of(), "a bundled checker file is missing or was changed: " + f.getKey());
-                Path dst = cp.resolve(f.getKey().replace('/', '_'));
+                Path dst = cp.resolve(f.getKey());   // the bundle's own layout, so no two names collide (M33A-DES-7)
+                if (!dst.normalize().startsWith(cp)) return new Refused(List.of(), "a bundled checker file name leaves its folder");
+                Files.createDirectories(dst.getParent());
                 Files.write(dst, b);
                 classpath.add(dst.toString());
             }
@@ -197,7 +203,9 @@ public final class JoustChecker {
     }
 
     private Verdict run(List<String> classpath, Path cwd, byte[] stdin) throws IOException, InterruptedException {
-        List<String> cmd = List.of(java.toString(), "-Xmx1g", "-XX:+UseSerialGC", "-Xlog:disable", "-Xlog:all=warning:stderr",
+        // No attach mechanism and no shared perf data: nothing outside the process reaches into it (M33A-SEC-7).
+        List<String> cmd = List.of(javaExe.toString(), "-Xmx1g", "-XX:+UseSerialGC", "-XX:+DisableAttachMechanism", "-XX:-UsePerfData",
+                "-Xlog:disable", "-Xlog:all=warning:stderr",
                 "-Djava.io.tmpdir=" + cwd, "-cp", String.join(File.pathSeparator, classpath), manifest.main());
         ProcessBuilder pb = new ProcessBuilder(cmd).directory(cwd.toFile());
         Map<String, String> env = pb.environment();
@@ -206,8 +214,23 @@ public final class JoustChecker {
         env.putAll(allowed);
         pb.redirectError(ProcessBuilder.Redirect.DISCARD);
         STARTS.incrementAndGet();
+        long end = System.nanoTime() + deadline.toNanos();   // the deadline runs from launch (M33A-CDX-4)
         Process p = pb.start();
+        java.util.function.Consumer<Process> hook = startedForTests;
+        if (hook != null) hook.accept(p);   // tests inspect the live checker before its input is written (I19)
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+        java.util.concurrent.atomic.AtomicBoolean wrote = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicBoolean readToEnd = new java.util.concurrent.atomic.AtomicBoolean();
+        // stdin and stdout each on their own thread: a checker that stops reading never blocks the caller (M33A-CDX-4).
+        Thread writer = new Thread(() -> {
+            try (OutputStream in = p.getOutputStream()) {
+                in.write(stdin);
+                in.flush();
+                wrote.set(true);
+            } catch (IOException e) {
+                // not delivered: the verdict is refused below (M33A-CDX-5)
+            }
+        }, "JOUST checker stdin");
         Thread reader = new Thread(() -> {
             try (InputStream in = p.getInputStream()) {
                 byte[] buf = new byte[8192];
@@ -217,30 +240,43 @@ public final class JoustChecker {
                         if (out.size() <= MAX_STDOUT) out.write(buf, 0, Math.min(n, MAX_STDOUT + 1 - out.size()));
                     }
                 }
-            } catch (IOException ignored) {
-                // the process ended
+                readToEnd.set(true);
+            } catch (IOException e) {
+                // not read to its end: refused below (M33A-CDX-5)
             }
         }, "JOUST checker stdout");
+        writer.setDaemon(true);
         reader.setDaemon(true);
+        writer.start();
         reader.start();
-        try (OutputStream in = p.getOutputStream()) {
-            in.write(stdin);
-        } catch (IOException e) {
-            // the checker exited before reading everything: decided by its exit status and output below
+        boolean finished = false;
+        try {
+            boolean done = p.waitFor(Math.max(0, end - System.nanoTime()), TimeUnit.NANOSECONDS);
+            if (!done) return new Refused(List.of(), "the transaction checker did not finish within " + deadline.toSeconds() + " s");
+            writer.join(Math.max(1, (end - System.nanoTime()) / 1_000_000));
+            reader.join(Math.max(1, (end - System.nanoTime()) / 1_000_000));
+            if (writer.isAlive() || reader.isAlive() || !readToEnd.get()) {
+                return new Refused(List.of(), "the transaction checker's output could not be read completely");
+            }
+            if (!wrote.get()) return new Refused(List.of(), "the transaction checker did not read its whole input");
+            byte[] o;
+            synchronized (out) {
+                o = out.toByteArray();
+            }
+            finished = true;
+            return verdict(p.exitValue(), o);
+        } finally {
+            if (!finished) {
+                // Every unfinished exit, an interrupt included, ends the process tree and reaps it (M33A-CDX-4).
+                p.descendants().forEach(ProcessHandle::destroyForcibly);
+                p.destroyForcibly();
+                try {
+                    p.waitFor(5, TimeUnit.SECONDS);
+                } catch (InterruptedException again) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
-        boolean done = p.waitFor(deadline.toMillis(), TimeUnit.MILLISECONDS);
-        if (!done) {
-            p.descendants().forEach(ProcessHandle::destroyForcibly);
-            p.destroyForcibly();
-            p.waitFor(5, TimeUnit.SECONDS);
-            return new Refused(List.of(), "the transaction checker did not finish within " + deadline.toSeconds() + " s");
-        }
-        reader.join(5000);
-        byte[] o;
-        synchronized (out) {
-            o = out.toByteArray();
-        }
-        return verdict(p.exitValue(), o);
     }
 
     /** The verdict for an exit status and stdout, strictly (I27). */

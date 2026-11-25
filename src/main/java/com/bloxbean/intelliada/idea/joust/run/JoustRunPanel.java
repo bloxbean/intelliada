@@ -281,7 +281,9 @@ public final class JoustRunPanel implements Disposable {
                                         b.key(), JoustRunSession.reads(b), why -> { });
                                 // New or reused, the panel observes the end of the host it adopts (M31B-CDX-36).
                                 r.session().onEnded(why -> ui(() -> ended(l, why)));
-                                return new JoustRunSession(b, r);
+                                JoustRunSession made = new JoustRunSession(b, r);
+                                made.verifyCatalog();   // the host's catalog is the build's, or the host is stopped (M33A-CDX-2)
+                                return made;
                             },
                             started -> service.stop(started.running().moduleDir()),
                             indicator::isCanceled);

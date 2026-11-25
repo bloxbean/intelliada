@@ -101,7 +101,7 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         for (String[] c : contracts) {
             HostSnapshot s = snapshot(List.of(ex.classes(c[0]), ex.verifierJar()));
             String name = "org.julclang.state.examples." + c[0] + "." + c[1];
-            JoustAnchors.Anchors a = JoustAnchors.derive(s, name, 0);
+            JoustAnchors.Anchors a = JoustAnchors.derive(s, name, 0, 25);
             ObjectNode mine = a.toJson();
             int matched = 0;
             for (JsonNode v : vectors) {
@@ -159,13 +159,84 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         assertRefused(snapshot(List.of(t4, ex.verifierJar())), name, "classes of that name");
     }
 
+    /** M33A-SEC-1: a dependency shipping the validator's class and a consistent blueprint of its own is refused. */
+    public void testADependencyCannotBecomeTheContract() throws Exception {
+        Examples ex = examples("testADependencyCannotBecomeTheContract");
+        if (ex == null) return;
+        Path bank = ex.classes("bank");
+        Path evil = newFolder().resolve("evil-dep.jar");
+        String cls = "org/julclang/state/examples/bank/BankValidator.class";
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(evil))) {
+            out.putNextEntry(new java.util.zip.ZipEntry(cls));
+            out.write(Files.readAllBytes(bank.resolve(cls)));
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/plutus/BankValidator.plutus.json"));
+            out.write(Files.readAllBytes(ex.classes("counter").resolve("META-INF/plutus/CounterValidator.plutus.json")));
+            out.closeEntry();
+        }
+        assertRefused(snapshot(List.of(evil, bank, ex.verifierJar())), "org.julclang.state.examples.bank.Bank", "exactly one");
+    }
+
+    /** M33A-CDX-7: two blueprints of the validator's name in its own jar are ambiguous. */
+    public void testDuplicateBlueprintsInOneJarRefuse() throws Exception {
+        Examples ex = examples("testDuplicateBlueprintsInOneJarRefuse");
+        if (ex == null) return;
+        Path jar = newFolder().resolve("dup.jar");
+        try (var in = getClass().getResourceAsStream("/joust-m33a/duplicate-blueprint.jar")) {
+            Files.copy(in, jar);
+        }
+        HostSnapshot s;
+        try {
+            s = snapshot(List.of(jar, ex.verifierJar()));
+        } catch (HostSpec.Invalid refusedEarlier) {
+            return;   // the snapshot itself refuses the ambiguous jar: as good
+        }
+        assertRefused(s, "org.julclang.state.examples.bank.Bank", "blueprints of that name");
+    }
+
+    /** M33A-CDX-8: a versioned copy counts only where the launch JVM would load it. */
+    public void testMultiReleaseCopiesResolveForTheLaunchJdk() throws Exception {
+        Examples ex = examples("testMultiReleaseCopiesResolveForTheLaunchJdk");
+        if (ex == null) return;
+        Path bank = ex.classes("bank");
+        String cls = "org/julclang/state/examples/bank/BankValidator.class";
+        Path mr = newFolder().resolve("mr.jar");
+        java.util.jar.Manifest mf = new java.util.jar.Manifest();
+        mf.getMainAttributes().put(java.util.jar.Attributes.Name.MANIFEST_VERSION, "1.0");
+        mf.getMainAttributes().putValue("Multi-Release", "true");
+        ObjectNode forged = (ObjectNode) HostJson.MAPPER.readTree(Files.readAllBytes(bank.resolve("META-INF/plutus/BankValidator.plutus.json")));
+        forged.put("hash", "00".repeat(28));
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(mr), mf)) {
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/versions/26/" + cls));
+            out.write(Files.readAllBytes(bank.resolve(cls)));
+            out.closeEntry();
+            out.putNextEntry(new java.util.zip.ZipEntry("META-INF/plutus/BankValidator.plutus.json"));
+            out.write(HostJson.write(forged));
+            out.closeEntry();
+        }
+        String name = "org.julclang.state.examples.bank.Bank";
+        HostSnapshot s = snapshot(List.of(mr, bank, ex.verifierJar()));
+        assertEquals("on Java 25 the base class in the next entry is used", 1, s.firstWithClass(cls, 25));
+        assertEquals("on Java 26 the jar's copy wins", 0, s.firstWithClass(cls, 26));
+        // The validator's class is now in two entries, which refuses under any JDK (M33A-SEC-1).
+        for (int feature : new int[]{25, 26}) {
+            try {
+                JoustAnchors.derive(s, name, 0, feature);
+                fail("a validator class in two entries was anchored");
+            } catch (JoustAnchors.Refused expected) {
+                assertTrue(expected.getMessage(), expected.getMessage().contains("exactly one"));
+            }
+        }
+        s.delete();
+    }
+
     /** I24: the recomputed Counter hash equals the host's (the fixture's real launch spec, F38). */
     public void testTheFixtureCounterHashIsTheHosts() throws Exception {
         String fixture = JoustTestTools.env("JOUST_HOST_FIXTURE", "theFixtureCounterHashIsTheHosts");
         if (fixture == null) return;
         HostSpec spec = HostSpec.read(Path.of(fixture));
         HostSnapshot s = HostSnapshot.create(spec, newFolder());
-        JoustAnchors.Anchors a = JoustAnchors.derive(s, "org.example.counter.Counter", 0);
+        JoustAnchors.Anchors a = JoustAnchors.derive(s, "org.example.counter.Counter", 0, 25);
         assertEquals("5de2e73fb4674a846230cb548335f0e095c3997043fcedfc7fc9c4ed", a.contract().hash());
         assertTrue(a.contract().address().startsWith("addr_test1w"));
         s.delete();
@@ -173,7 +244,7 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
 
     private static void assertRefused(HostSnapshot s, String contract, String why) {
         try {
-            JoustAnchors.derive(s, contract, 0);
+            JoustAnchors.derive(s, contract, 0, 25);
             fail("derived anchors from an ambiguous or tampered build (" + why + ")");
         } catch (JoustAnchors.Refused e) {
             assertTrue(e.getMessage(), e.getMessage().contains(why));

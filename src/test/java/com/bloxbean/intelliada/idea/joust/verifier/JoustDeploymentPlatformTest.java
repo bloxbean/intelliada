@@ -53,7 +53,7 @@ public class JoustDeploymentPlatformTest extends BasePlatformTestCase {
             String contract = r.initialize().path("contracts").get(0).path("name").textValue();
             JsonNode dep = PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread(() ->
                     launched.deployment(contract)), 60_000);
-            JoustAnchors.Anchors a = JoustAnchors.derive(r.snapshot(), contract, 0);
+            JoustAnchors.Anchors a = JoustAnchors.derive(r.snapshot(), contract, 0, 25);
             assertNull("the host's deployment is the derived one: " + dep, JoustDeployment.check(a, dep));
             // Every field the check compares refuses when changed.
             for (String ptr : new String[]{"/addresses/contract", "/policies/contract", "/scriptHashes/spend", "/scriptHashes/mint"}) {
@@ -90,7 +90,7 @@ public class JoustDeploymentPlatformTest extends BasePlatformTestCase {
         desc.putObject("x-joust").put("stakeSelf", false).putArray("actions").addObject().putObject("returns").put("sends", false);
         desc.putObject("definitions");
         JoustAnchors.Script s = new JoustAnchors.Script("PlutusScriptV3", "ab".repeat(28), "addr_test1w", "stake_test1u");
-        JoustAnchors.Anchors a = new JoustAnchors.Anchors(desc, s, "stake_test1u", s, null, 0, 1);
+        JoustAnchors.Anchors a = new JoustAnchors.Anchors(desc, 0, s, s, null, 0, 1, -1);
         ObjectNode e = JoustDeployment.expected(a);
         assertFalse(e.get("addresses").has("reward"));
         assertFalse(e.get("scriptHashes").has("stake"));

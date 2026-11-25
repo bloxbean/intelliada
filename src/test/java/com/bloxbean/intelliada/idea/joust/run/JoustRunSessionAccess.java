@@ -17,6 +17,8 @@ public final class JoustRunSessionAccess {
         JoustRunSession.Binding b = JoustRunSession.bind(node);
         JoustHostService.Running r = JoustHostService.getInstance(project).launch(guard, moduleDir,
                 JoustRunSession.initParams(b.identity()), b.key(), JoustRunSession.reads(b), e -> { });
-        return new JoustRunSession(b, r);
+        JoustRunSession s = new JoustRunSession(b, r);
+        s.verifyCatalog();
+        return s;
     }
 }
