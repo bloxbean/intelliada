@@ -111,4 +111,88 @@ public class JoustRunLaunchTest {
             }
         }
     }
+
+    @Test
+    public void aHostThatEndedIsNeverPublishedWhicheverCallbackComesFirst() {
+        JoustRunLaunch endedFirst = new JoustRunLaunch();
+        endedFirst.markEnded("exited");                     // ended(why) reached the EDT before the completion
+        assertFalse(endedFirst.publishable(null));
+        JoustRunLaunch completedFirst = new JoustRunLaunch();
+        assertFalse("the session itself reports the end (M31B-CDX-31)", completedFirst.publishable("exited"));
+        assertTrue(new JoustRunLaunch().publishable(null));
+        JoustRunLaunch stopped = new JoustRunLaunch();
+        stopped.cancel();
+        assertFalse(stopped.publishable(null));
+    }
+
+    @Test
+    public void aMalformedTipSlotWithholdsTheCallAndLeavesTheFloor() throws Exception {
+        java.util.concurrent.atomic.AtomicLong floor = new java.util.concurrent.atomic.AtomicLong(50);
+        for (String bad : new String[]{"{\"slot\":1.5}", "{\"slot\":-1}", "{\"slot\":\"7\"}", "{}"}) {
+            try {
+                JoustRunSession.monotone(floor, JoustRunSession.tipSlot(HostJson.MAPPER.readTree(bad)));
+                fail("accepted " + bad + " (M31B-CDX-33)");
+            } catch (com.bloxbean.intelliada.idea.joust.host.chain.BlockfrostApi.Failed expected) {
+                assertEquals(50, floor.get());
+            }
+        }
+        assertEquals(60, JoustRunSession.tipSlot(HostJson.MAPPER.readTree("{\"slot\":60}")));
+    }
+
+    @Test
+    public void anEditDuringTheIdentityReadsRefusesTheBinding() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger adminCalls = new java.util.concurrent.atomic.AtomicInteger();
+        CountDownLatch secondAsked = new CountDownLatch(1), release = new CountDownLatch(1);
+        String h = "ab".repeat(32);
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.createContext("/", ex -> {
+            String p = ex.getRequestURI().getPath();
+            String body = switch (p) {
+                case "/local-cluster/api/admin/devnet" -> {
+                    if (adminCalls.incrementAndGet() == 2) {   // the second bind's identity read is held open
+                        secondAsked.countDown();
+                        try {
+                            release.await(10, TimeUnit.SECONDS);
+                        } catch (InterruptedException ignored) {
+                        }
+                    }
+                    yield "{\"protocolMagic\":42,\"startTime\":1000}";
+                }
+                case "/api/v1/genesis" -> "{\"network_magic\":42,\"system_start\":1000,\"slot_length\":1,\"security_param\":100,\"active_slots_coefficient\":1.0}";
+                case "/api/v1/blocks/1" -> "{\"hash\":\"" + h + "\"}";
+                default -> null;
+            };
+            byte[] b = (body == null ? "{}" : body).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(body == null ? 404 : 200, b.length);
+            ex.getResponseBody().write(b);
+            ex.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            RemoteNode n = new RemoteNode();
+            n.setId("n1");
+            n.setNodeType(NodeType.LocalYaciDevKit);
+            n.setApiEndpoint(base + "/api/v1");
+            n.setProtocolMagic("42");
+            assertEquals("unchanged: bound", "devnet-42-" + h, JoustRunSession.bind(n, base, () -> List.of(n)).identity().chainKey());
+            CompletableFuture<Object> f = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return JoustRunSession.bind(n, base, () -> List.of(n));
+                } catch (Exception e) {
+                    return e;
+                }
+            });
+            assertTrue(secondAsked.await(10, TimeUnit.SECONDS));
+            n.setApiEndpoint("http://localhost:9999/api/v1");   // edited in place while the identity read is pending
+            release.countDown();
+            Object r = f.get(15, TimeUnit.SECONDS);
+            assertTrue("bound one endpoint under another's values (M31B-CDX-28): " + r,
+                    r instanceof Exception && ((Exception) r).getMessage().contains("changed"));
+        } finally {
+            release.countDown();
+            server.stop(0);
+        }
+    }
 }

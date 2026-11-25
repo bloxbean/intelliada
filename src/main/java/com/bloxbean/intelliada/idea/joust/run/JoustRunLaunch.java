@@ -24,6 +24,24 @@ final class JoustRunLaunch {
     }
 
     private volatile boolean cancelled;
+    private volatile String ended;
+
+    /**
+     * The host of this launch ended (its end callback, M31B-CDX-31). The callback may reach the EDT before or after
+     * the launch completes; a launch whose host already ended is never published as running.
+     */
+    void markEnded(String why) {
+        ended = why;
+    }
+
+    @Nullable String ended() {
+        return ended;
+    }
+
+    /** Whether a completed launch may be shown as running: neither stopped nor already ended. */
+    boolean publishable(@Nullable String sessionEnded) {
+        return !cancelled && ended == null && sessionEnded == null;
+    }
 
     void cancel() {
         cancelled = true;

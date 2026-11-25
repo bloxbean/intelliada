@@ -38,7 +38,7 @@ public final class ChainReads implements HostSession.Reads {
     static final int PAGE = 100;
     static final int MAX_PAGES = 2000;
     static final long READ_DEADLINE_NANOS = 10_000_000_000L;
-    /** The JSON-RPC envelope around a result: {@code {"jsonrpc":"2.0","id":"<gen>.<seq>","result":}}, generously. */
+    /** Room for the JSON-RPC envelope when sizing chunks; charges use the exact encoded response. */
     static final int ENVELOPE_BYTES = 96;
     private static final JsonNodeFactory F = JsonNodeFactory.instance;
 
@@ -56,12 +56,20 @@ public final class ChainReads implements HostSession.Reads {
     private String call = "";
     /** The last chain point handed to the host in this call: later points must not go back from it (M31B-CDX-22). */
     private ObjectNode lastSent;
+    /** Every block hash handed out in this call: a hash names one point (the host's rule). */
+    private final java.util.Set<String> sentHashes = new java.util.HashSet<>();
+    /** Room kept in the budget for a terminal {@code failed} answer, so one can always be sent (M31B-CDX-32). */
+    static final int FAILURE_RESERVE = 1024;
     private long callProviderBytes0;
     private long callAnswerBytes;
     private final Map<String, Pending> pending = new HashMap<>();
 
-    private record Pending(String kind, String selector, ObjectNode tip, List<JsonNode> rest) {
+    /** A list's remaining chunks, and the budget reserved for them when the cursor was installed (M31B-SEC-9). */
+    private record Pending(String kind, String selector, ObjectNode tip, List<JsonNode> rest, long reserve) {
     }
+
+    /** Budget held for pending chunks, so other reads cannot spend it before the continuations come. */
+    private long reserved;
 
     public ChainReads(BlockfrostApi api, int networkId, long bytesPerCall) {
         this.api = api;
@@ -82,6 +90,8 @@ public final class ChainReads implements HostSession.Reads {
         if (!generation.equals(call)) {
             call = generation;
             lastSent = null;
+            sentHashes.clear();
+            reserved = 0;
             callProviderBytes0 = api.bytesRead();
             callAnswerBytes = 0;
             pending.clear();
@@ -89,27 +99,53 @@ public final class ChainReads implements HostSession.Reads {
         String kind = params.path("kind").textValue();
         if (kind == null) throw new IllegalArgumentException("a read with no kind");
         ObjectNode answer = params.has("cursor") ? continuation(kind, params) : fresh(kind, params);
-        return charge(answer);
+        // Every outgoing chain point obeys the host's rule, continuations included (M31B-CDX-29).
+        if (answer.get("tip") instanceof ObjectNode t && !usable(t)) {
+            if (lastSent == null) throw new IllegalStateException("no usable chain point");
+            answer = failed(lastSent, "the chain point of this answer is behind this call's last one");
+        }
+        return charge(id, answer);
+    }
+
+    /** What one provider request may read: the remaining budget less the failure reserve, so a failure always fits. */
+    private long requestCap() {
+        return Math.max(0, remaining() - FAILURE_RESERVE);
     }
 
     /** What this call may still read from the provider and answer (M31B-SEC-6). */
     private long remaining() {
-        return Math.max(0, bytesPerCall - (api.bytesRead() - callProviderBytes0) - callAnswerBytes);
+        return Math.max(0, bytesPerCall - (api.bytesRead() - callProviderBytes0) - callAnswerBytes - reserved);
     }
 
     /**
      * Charges the serialized response against what the call has left (provider bytes and answers together); an answer
      * over it becomes {@code failed}, which is charged in turn (M31B-CDX-16). Records the chain point handed out.
      */
-    private ObjectNode charge(ObjectNode answer) {
-        long n = HostJson.write(answer).length + ENVELOPE_BYTES;
-        if (n > remaining()) {
+    private ObjectNode charge(String id, ObjectNode answer) {
+        long n = encoded(id, answer);
+        boolean terminal = answer.has("failed");
+        // An answer may use the budget only up to the reserve; a failure may use the reserve (M31B-CDX-32).
+        if (n > remaining() - (terminal ? 0 : FAILURE_RESERVE)) {
             answer = failed(answer.has("tip") ? (ObjectNode) answer.get("tip") : lastSent, "the answer exceeds this call's read budget");
-            n = HostJson.write(answer).length + ENVELOPE_BYTES;
+            n = encoded(id, answer);
+            if (n > remaining()) {
+                // No legal response fits: the call is cancelled instead (HostSession cancels on an exception).
+                throw new IllegalStateException("this call's read budget is exhausted");
+            }
         }
         callAnswerBytes += n;
-        if (answer.get("tip") instanceof ObjectNode t) lastSent = t;
+        if (answer.get("tip") instanceof ObjectNode t) {
+            lastSent = t;
+            sentHashes.add(t.path("hash").textValue());
+        }
         return answer;
+    }
+
+    /** The exact bytes of the JSON-RPC response HostSession sends for this answer. */
+    private static long encoded(String id, ObjectNode answer) {
+        ObjectNode resp = F.objectNode().put("jsonrpc", "2.0").put("id", id);
+        resp.set("result", answer);
+        return HostJson.write(resp).length;
     }
 
     /**
@@ -117,10 +153,12 @@ public final class ChainReads implements HostSession.Reads {
      * conflicting point would read as a moved chain to the host (M31B-CDX-22).
      */
     private boolean usable(ObjectNode tip) {
-        if (lastSent == null) return true;
-        long h = tip.path("height").longValue(), h0 = lastSent.path("height").longValue();
-        if (h != h0) return h > h0 && tip.path("slot").longValue() >= lastSent.path("slot").longValue();
-        return tip.equals(lastSent);
+        // The host's rule (Reads.answer): the same point again, or a later one in both slot and height whose hash was
+        // not seen in this call (M31B-CDX-29).
+        if (lastSent == null || tip.equals(lastSent)) return true;
+        return tip.path("slot").longValue() > lastSent.path("slot").longValue()
+                && tip.path("height").longValue() > lastSent.path("height").longValue()
+                && !sentHashes.contains(tip.path("hash").textValue());
     }
 
     private ObjectNode continuation(String kind, JsonNode q) {
@@ -131,6 +169,7 @@ public final class ChainReads implements HostSession.Reads {
             throw new IllegalArgumentException("an unknown cursor, or one of another query");
         }
         pending.remove(cursor);
+        reserved -= p.reserve();   // released to pay for this chunk (and to reserve what still follows)
         return chunk(p.kind(), p.selector(), p.tip(), p.rest(), true);
     }
 
@@ -226,10 +265,10 @@ public final class ChainReads implements HostSession.Reads {
             case "tip":
                 return Answer.of(with(tip, "value", tip.deepCopy()));
             case "protocolParams": {
-                JsonNode e = api.get("/epochs/latest", deadline, remaining());
+                JsonNode e = api.get("/epochs/latest", deadline, requestCap());
                 if (e == null || !e.path("epoch").canConvertToLong()) throw new ReadFailed("the provider has no current epoch");
-                JsonNode pp = api.get("/epochs/" + e.path("epoch").asLong() + "/parameters", deadline, remaining());
-                if (pp == null) pp = api.get("/epochs/latest/parameters", deadline, remaining());
+                JsonNode pp = api.get("/epochs/" + e.path("epoch").asLong() + "/parameters", deadline, requestCap());
+                if (pp == null) pp = api.get("/epochs/latest/parameters", deadline, requestCap());
                 if (pp == null || !pp.isObject() || !pp.has("min_fee_a")) throw new ReadFailed("the provider has no protocol parameters");
                 return Answer.of(with(tip, "value", pp));
             }
@@ -240,7 +279,7 @@ public final class ChainReads implements HostSession.Reads {
             }
             case "output": {
                 String[] ref = q.path("ref").textValue().split("#");
-                JsonNode t = api.get("/txs/" + ref[0] + "/utxos", deadline, remaining());
+                JsonNode t = api.get("/txs/" + ref[0] + "/utxos", deadline, requestCap());
                 if (t == null) return Answer.of(absent(tip));
                 if (!t.path("outputs").isArray()) throw new ReadFailed("the provider's transaction outputs are malformed");
                 int index = Integer.parseInt(ref[1]);
@@ -257,9 +296,9 @@ public final class ChainReads implements HostSession.Reads {
             }
             case "script": {
                 String hash = q.path("hash").textValue();
-                JsonNode t = api.get("/scripts/" + hash, deadline, remaining());
+                JsonNode t = api.get("/scripts/" + hash, deadline, requestCap());
                 if (t == null) return Answer.of(absent(tip));
-                JsonNode c = api.get("/scripts/" + hash + "/cbor", deadline, remaining());
+                JsonNode c = api.get("/scripts/" + hash + "/cbor", deadline, requestCap());
                 if (c == null) return Answer.of(absent(tip));
                 if (!c.path("cbor").isTextual() || !HEX.matcher(c.path("cbor").textValue()).matches()) {
                     throw new ReadFailed("the provider's script CBOR is malformed");
@@ -278,7 +317,7 @@ public final class ChainReads implements HostSession.Reads {
                 String cred = q.path("credential").textValue();
                 boolean unknown = false;
                 for (boolean script : new boolean[]{true, false}) {
-                    JsonNode a = api.get("/accounts/" + StakeAddresses.reward(cred, script, networkId), deadline, remaining());
+                    JsonNode a = api.get("/accounts/" + StakeAddresses.reward(cred, script, networkId), deadline, requestCap());
                     if (a == null) continue;
                     if (!a.isObject()) throw new ReadFailed("the provider's account is malformed");
                     JsonNode active = a.get("active");
@@ -301,12 +340,12 @@ public final class ChainReads implements HostSession.Reads {
             }
             case "redeemers": {
                 String tx = q.path("txHash").textValue();
-                JsonNode list = api.get("/txs/" + tx + "/redeemers", deadline, remaining());
+                JsonNode list = api.get("/txs/" + tx + "/redeemers", deadline, requestCap());
                 if (list == null) return Answer.of(absent(tip));
                 if (!list.isArray()) throw new ReadFailed("the provider's redeemers are malformed");
                 if (list.isEmpty()) {
                     // Yaci Store answers [] for an unknown transaction too: [] is for a known one only (M31B-CDX-13).
-                    if (api.get("/txs/" + tx, deadline, remaining()) == null) return Answer.of(absent(tip));
+                    if (api.get("/txs/" + tx, deadline, requestCap()) == null) return Answer.of(absent(tip));
                 }
                 ArrayNode out = F.arrayNode();
                 for (JsonNode r : list) {
@@ -324,7 +363,7 @@ public final class ChainReads implements HostSession.Reads {
                 return Answer.of(with(tip, "value", out));
             }
             case "datum": {
-                JsonNode d = api.get("/scripts/datum/" + q.path("hash").textValue() + "/cbor", deadline, remaining());
+                JsonNode d = api.get("/scripts/datum/" + q.path("hash").textValue() + "/cbor", deadline, requestCap());
                 if (d == null) return Answer.of(absent(tip));
                 if (!d.path("cbor").isTextual() || !HEX.matcher(d.path("cbor").textValue()).matches()) {
                     throw new ReadFailed("the provider's datum CBOR is malformed");
@@ -341,7 +380,7 @@ public final class ChainReads implements HostSession.Reads {
         List<JsonNode> all = new ArrayList<>();
         String sep = path.contains("?") ? "&" : "?";
         for (int page = 1; page <= MAX_PAGES; page++) {
-            JsonNode p = api.get(path + sep + "count=" + PAGE + "&page=" + page, deadline, remaining());
+            JsonNode p = api.get(path + sep + "count=" + PAGE + "&page=" + page, deadline, requestCap());
             if (api.bytesRead() - callProviderBytes0 + callAnswerBytes > bytesPerCall) {
                 throw new ReadFailed("the answer exceeds this call's read budget");
             }
@@ -374,7 +413,7 @@ public final class ChainReads implements HostSession.Reads {
                 chunkFill += n;
                 total += n;
             }
-            if (total + (long) chunks * base > remaining()) return failed(tip, "the answer exceeds this call's read budget");
+            if (total + (long) chunks * base > remaining() - FAILURE_RESERVE) return failed(tip, "the answer exceeds this call's read budget");
         }
         ArrayNode value = F.arrayNode();
         int bytes = base, i;
@@ -390,10 +429,29 @@ public final class ChainReads implements HostSession.Reads {
         ObjectNode r = with(tip, "value", value);
         if (i < items.size()) {
             String cursor = UUID.randomUUID().toString();
-            pending.put(cursor, new Pending(kind, selector, tip, new ArrayList<>(items.subList(i, items.size()))));
+            List<JsonNode> rest = new ArrayList<>(items.subList(i, items.size()));
+            long reserve = deliverable(rest, base);
+            reserved += reserve;
+            pending.put(cursor, new Pending(kind, selector, tip, rest, reserve));
             r.put("more", cursor);
         }
         return r;
+    }
+
+    /** An upper bound on the bytes of the chunks that deliver {@code items}, each with {@code base} overhead. */
+    private static long deliverable(List<JsonNode> items, int base) {
+        long total = 0;
+        int fill = base, chunks = 1;
+        for (JsonNode it : items) {
+            int n = HostJson.write(it).length + 1;
+            if (fill + n > CHUNK_BYTES) {
+                chunks++;
+                fill = base;
+            }
+            fill += n;
+            total += n;
+        }
+        return total + (long) chunks * base;
     }
 
     /** The query a continuation must repeat: the kind's selector field. */
@@ -432,7 +490,7 @@ public final class ChainReads implements HostSession.Reads {
     }
 
     private ObjectNode tip(long deadline) throws Exception {
-        JsonNode b = api.get("/blocks/latest", deadline, remaining());
+        JsonNode b = api.get("/blocks/latest", deadline, requestCap());
         if (b == null || !b.path("hash").isTextual() || !HASH32.matcher(b.path("hash").textValue()).matches()) {
             throw new BlockfrostApi.Failed("the provider has no readable tip");
         }

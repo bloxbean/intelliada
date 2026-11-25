@@ -97,23 +97,38 @@ public final class JoustRunSession {
      * configuration has its own admin field). Public networks come in M3.5; Yano once its read coverage is settled (G3.4).
      */
     public static Binding bind(RemoteNode node) throws NetworkIdentity.Refused, InterruptedException {
-        NodeType t = node.getNodeType();
+        return bind(node, null, () -> com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance().getRemoteNodes());
+    }
+
+    /**
+     * Binds from the configuration values copied <b>before any request</b> (M31B-CDX-28): every client and identity
+     * parameter comes from that copy, and the stored configuration is checked against it again once the identity reads
+     * are done, so an edit made meanwhile refuses rather than binding one endpoint under another's values.
+     * {@code adminBase} overrides DevKit's admin endpoint (tests).
+     */
+    static Binding bind(RemoteNode node, @Nullable String adminBase, java.util.function.Supplier<java.util.List<RemoteNode>> stored)
+            throws NetworkIdentity.Refused, InterruptedException {
+        Bound bound = Bound.of(node);
+        NodeType t = bound.type();
         if (t != NodeType.YaciDevKit && t != NodeType.LocalYaciDevKit) {
             throw new NetworkIdentity.Refused(t == NodeType.Yano
                     ? "Yano devnets are not served by the run panel yet (ADR-005 G3.4)"
                     : "the run panel serves Yaci DevKit devnets in this version; public testnets come later");
         }
-        String endpoint = node.getApiEndpoint();
+        String endpoint = bound.endpoint();
         if (endpoint == null || endpoint.isBlank()) throw new NetworkIdentity.Refused("the node configuration has no API endpoint");
         URI u = URI.create(endpoint.trim());
         String host = u.getHost();
         if (host == null || !(host.equals("localhost") || host.equals("127.0.0.1") || host.equals("::1") || host.equals("[::1]"))) {
             throw new NetworkIdentity.Refused("a devnet endpoint must be on this machine (loopback)");
         }
+        long magic = configuredMagic(bound.magic());
         BlockfrostApi api = new BlockfrostApi(endpoint.trim(), null, Duration.ofSeconds(10));
-        JsonNode admin = adminDevnet(u.getScheme() + "://" + host + ":10000");
-        long magic = configuredMagic(node.getProtocolMagic());
-        return new Binding(node, NetworkIdentity.devKit(api, admin, magic), api);
+        JsonNode admin = adminDevnet(adminBase != null ? adminBase : u.getScheme() + "://" + host + ":10000");
+        NetworkIdentity.Identity id = NetworkIdentity.devKit(api, admin, magic);
+        String changed = configChange(bound, stored.get());
+        if (changed != null) throw new NetworkIdentity.Refused(changed + " while it was being bound; start again");
+        return new Binding(node, bound, id, api);
     }
 
     /** The devnet magic recorded in the node configuration; required, never defaulted (M31B-CDX-9). */
@@ -160,9 +175,19 @@ public final class JoustRunSession {
 
     /** {@code max(previous now, the bound node's tip slot)}: never decreasing within the session (I28). */
     long now() throws BlockfrostApi.Failed, InterruptedException {
-        JsonNode t = binding.api().get("/blocks/latest");
-        if (t == null || !t.path("slot").canConvertToLong()) throw new BlockfrostApi.Failed("the node has no readable tip");
-        return monotone(lastNow, t.path("slot").asLong());
+        return monotone(lastNow, tipSlot(binding.api().get("/blocks/latest")));
+    }
+
+    /**
+     * The tip's slot, validated as reverse reads validate it (a non-negative JSON integer) before it can raise the
+     * floor; anything else withholds the call (M31B-CDX-33).
+     */
+    static long tipSlot(@Nullable JsonNode tip) throws BlockfrostApi.Failed {
+        JsonNode slot = tip == null ? null : tip.get("slot");
+        if (slot == null || !slot.isIntegralNumber() || !slot.canConvertToLong() || slot.longValue() < 0) {
+            throw new BlockfrostApi.Failed("the node has no readable tip");
+        }
+        return slot.longValue();
     }
 
     /** {@code max(floor, tip)}, raising the floor: an older tip yields the previous {@code now} (I28). */
