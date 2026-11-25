@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r11). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r12). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -777,7 +777,22 @@ invariant.
   depends on these reads (M3.3b), the checker re-validates against IntelliAda's own reads. (M31B-SEC-8, M31B-DES-14.)
 - **E1a. Chain points only go forward within a call (protocol 1).** A tip behind the last chain point handed to the
   host in the same call (a lagging backend) is read again under the read's deadline, and finally answered `failed` at
-  that last point, never a lower one. (M31B-CDX-22, M31B-DES-11.)
+  that last point, never a lower one. (M31B-CDX-22, M31B-DES-11.) A continuation whose list was read at a point the
+  call has since passed (another read came in between) is `failed` too, so an interleaved read costs the rest of a
+  chunked set; JOUST's host reads chunks back to back. bloxbean/joust#192 covers making the order normative.
+  (M31B-CDX-29, M31B-DES-17.)
+- **E7. The checker's files are pinned by a lock, not by Gradle dependency verification (L37; D13).** The closure is the
+  21 jars that pass all 333 vectors (measured by removing each jar of the full 64-jar, 93 MB closure in turn; 19 MB),
+  listed in `gradle/joust-verifier.lock` by exact coordinate and SHA-256 and resolved with `transitive=false`; the build
+  requires exactly that set and fails on any mismatch, and the plugin's built-in manifest is generated from the verified
+  files and the runner. This is equivalent to verification metadata **for the checker's files only**; it is
+  trust-on-first-use until a released, PGP-signed kit exists. Not covered (known gaps, outside D13): the plugin's own
+  runtime class path, the buildscript and Gradle plugins, and `mavenLocal()` listed first in the repositories. The build
+  is strict by default: an unresolvable kit fails it unless `-Pjoust.checkerOptional=true` is given on the command line,
+  which builds a plugin that refuses every check (signing and export); `buildPlugin`, `signPlugin` and `publishPlugin`
+  refuse a SNAPSHOT kit (including timestamped versions) unless `-Pjoust.allowSnapshotKit=true` is given on the command
+  line, and such a build's manifest says `snapshot=true`, which the panel names. Before each check the files are read
+  without following links, hashed, copied into a private directory and run from the copy.
 - **E2. Yano is not bound in M3.1b (L36).** Yano lacks four reads the run panel needs (`/txs/{h}/redeemers`,
   `/scripts/datum/{h}/cbor`, `/assets/{u}/transactions`, `/genesis`; bloxbean/yano#269), so its positive identity
   (D14) cannot be established the way DevKit's is. The run panel binds Yaci DevKit only until Yano serves them or an
@@ -799,6 +814,7 @@ invariant.
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
+| L37 | Pin the checker closure by a checked-in SHA-256 lock; strict build by default; command-line-only overrides for a checker-less or SNAPSHOT-kit build (E7) | delegated | 2026-11-26 | two advisors (maintainer, supply chain); D13 |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -958,3 +974,4 @@ Security and design approved round 8.
   advanced state (D17, I32); registration evidence re-read before replay (D15).
 - **r10** (2026-11-26): §12 implementation refinements E1–E6 from M3.1a (#29) and M3.1b (#31); L36 (delegated).
 - **r11** (2026-11-26): §12 E1 states its no-revert assumption; E1a (forward-only chain points). From M3.1b round 2.
+- **r12** (2026-11-26): §12 E1a continuations; E7 and L37 (the checker lock, delegated). From M3.1b round 4 and M3.3a.
