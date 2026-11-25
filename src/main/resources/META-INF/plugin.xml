@@ -32,6 +32,8 @@
                     factoryClass="com.bloxbean.intelliada.idea.toolwindow.CardanoLogToolWindowFactory"/>
         <projectService serviceImplementation="com.bloxbean.intelliada.idea.toolwindow.CardanoConsole"/>
 
+        <!-- JOUST ADR-005 D13a (M3.2): the run panel's class-tagged account store (mnemonics in PasswordSafe) -->
+        <applicationService serviceImplementation="com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts"/>
         <applicationService serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState"/>
         <applicationService
                 serviceImplementation="com.bloxbean.intelliada.idea.configuration.service.CLIProvidersState"/>

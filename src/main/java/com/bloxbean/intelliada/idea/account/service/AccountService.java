@@ -47,6 +47,22 @@ public class AccountService {
     public boolean importAccount(CardanoAccount account) {
         if (account == null)
             return false;
+        // ADR-005 I12: the ownership check and the write are one step for both stores (M32-CDX-17); off the EDT.
+        Object keys = keysLock();
+        synchronized (keys) {
+            return importChecked(account);
+        }
+    }
+
+    private boolean importChecked(CardanoAccount account) {
+        synchronized (AccountCacheService.STORAGE) {   // key lock, then storage lock (M32-CDX-30)
+            return importLocked(account);
+        }
+    }
+
+    private boolean importLocked(CardanoAccount account) {
+        if (heldByJoust(account.getAddress()))
+            return false;   // a key the JOUST run panel holds is never also a legacy account (M32-CDX-2)
 
         CardanoAccount existingAcc = getAccountByAddress(account.getAddress());
         if (existingAcc != null) {
@@ -57,8 +73,35 @@ public class AccountService {
         return true;
     }
 
+    /** The monitor both account stores take for an ownership check and its write (the JOUST store's). */
+    private static Object keysLock() {
+        com.intellij.openapi.application.Application app = com.intellij.openapi.application.ApplicationManager.getApplication();
+        return app == null ? AccountService.class : com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance();
+    }
+
+    /** Whether the JOUST run panel's store holds this address's payment key (lock-free; never reads a secret). */
+    public static boolean heldByJoust(String address) {
+        if (address == null) return false;
+        String fp = com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.anyPaymentKeyHash(address);
+        if (fp == null) return false;
+        com.intellij.openapi.application.Application app = com.intellij.openapi.application.ApplicationManager.getApplication();
+        return app != null && com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance().holdsKey(fp);
+    }
+
+    /**
+     * The legacy accounts IntelliAda offers: every chooser and the account list come here. An account whose payment key
+     * the JOUST store holds (a migrated copy) is hidden, so a key is selectable under one class only (ADR-005 L39).
+     */
     public List<CardanoAccount> getAccounts() {
-        return accountCacheService.getAccounts();
+        // A watch-only entry holds no key: it stays listed (M32-DES-18).
+        return accountCacheService.getAccounts().stream()
+                .filter(a -> a.getMnemonic() == null || a.getMnemonic().isBlank() || !heldByJoust(a.getAddress()))
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    /** Every legacy account, hidden ones included; an IOException when the store cannot be read (for ownership checks). */
+    public List<CardanoAccount> getAllAccountsStrict() throws java.io.IOException {
+        return accountCacheService.getAccountsStrict();
     }
 
     public CardanoAccount getAccountByAddress(String address) {

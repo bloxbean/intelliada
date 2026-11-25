@@ -98,13 +98,18 @@ public final class ChainReads implements HostSession.Reads {
         }
         String kind = params.path("kind").textValue();
         if (kind == null) throw new IllegalArgumentException("a read with no kind");
-        ObjectNode answer = params.has("cursor") ? continuation(kind, params) : fresh(kind, params);
+        boolean continuation = params.has("cursor");
+        ObjectNode answer = continuation ? continuation(kind, params) : fresh(kind, params);
         // Every outgoing chain point obeys the host's rule, continuations included (M31B-CDX-29).
         if (answer.get("tip") instanceof ObjectNode t && !usable(t)) {
             if (lastSent == null) throw new IllegalStateException("no usable chain point");
             answer = failed(lastSent, "the chain point of this answer is behind this call's last one");
         }
-        return charge(id, answer);
+        return charge(id, answer, continuation);
+    }
+
+    long reservedForTests() {
+        return reserved;
     }
 
     /** What one provider request may read: the remaining budget less the failure reserve, so a failure always fits. */
@@ -121,11 +126,12 @@ public final class ChainReads implements HostSession.Reads {
      * Charges the serialized response against what the call has left (provider bytes and answers together); an answer
      * over it becomes {@code failed}, which is charged in turn (M31B-CDX-16). Records the chain point handed out.
      */
-    private ObjectNode charge(String id, ObjectNode answer) {
+    private ObjectNode charge(String id, ObjectNode answer, boolean continuation) {
         long n = encoded(id, answer);
-        boolean terminal = answer.has("failed");
-        // An answer may use the budget only up to the reserve; a failure may use the reserve (M31B-CDX-32).
-        if (n > remaining() - (terminal ? 0 : FAILURE_RESERVE)) {
+        // An answer may use the budget only up to the failure reserve; a failure may use the reserve (M31B-CDX-32),
+        // and so may a continuation, which spends the reservation released for it (M31B-SEC-10).
+        boolean mayUseReserve = answer.has("failed") || continuation;
+        if (n > remaining() - (mayUseReserve ? 0 : FAILURE_RESERVE)) {
             answer = failed(answer.has("tip") ? (ObjectNode) answer.get("tip") : lastSent, "the answer exceeds this call's read budget");
             n = encoded(id, answer);
             if (n > remaining()) {
@@ -170,6 +176,8 @@ public final class ChainReads implements HostSession.Reads {
         }
         pending.remove(cursor);
         reserved -= p.reserve();   // released to pay for this chunk (and to reserve what still follows)
+        // A list read at a point the call has since passed is refused before any successor is built (M31B-CDX-37).
+        if (!usable(p.tip())) return failed(lastSent, "the chain point of this answer is behind this call's last one");
         return chunk(p.kind(), p.selector(), p.tip(), p.rest(), true);
     }
 

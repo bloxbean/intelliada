@@ -104,6 +104,37 @@ public class GlobalCache {
         }
     }
 
+    /**
+     * The account cache, or an IOException when an existing cache cannot be read: never an empty cache in its place
+     * (ADR-005 M32-CDX-18: the JOUST store must not mistake an unreadable legacy store for one without the key).
+     */
+    public AccountCache getAccountCacheStrict() throws java.io.IOException {
+        File file = getAccountCacheFile();
+        // Empty only when the file is known not to exist: an unreadable or untraversable folder is an error (M32-CDX-31).
+        java.nio.file.Path path = file.toPath();
+        if (java.nio.file.Files.notExists(path)) return new AccountCache();
+        if (!java.nio.file.Files.exists(path) || !java.nio.file.Files.isReadable(path)) {
+            throw new java.io.IOException("the account cache cannot be read");
+        }
+        try {
+            if (getAccountCacheKeyFile().exists()) {
+                SecretKey secretKey = getSecretKeyFromFile();
+                if (secretKey == null) throw new java.io.IOException("the account cache key could not be read");
+                String content = new FileEncrypterDecrypter(secretKey).decrypt(file);
+                AccountCache c = objectMapper.readValue(content, AccountCache.class);
+                if (c == null) throw new java.io.IOException("the account cache is empty");
+                return c;
+            }
+            AccountCache c = objectMapper.readValue(file, AccountCache.class);
+            if (c == null) throw new java.io.IOException("the account cache is empty");
+            return c;
+        } catch (java.io.IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new java.io.IOException("the account cache could not be read", e);
+        }
+    }
+
     private AccountCache readAccountCacheFromJson(String content) {
         AccountCache accountCache = null;
 

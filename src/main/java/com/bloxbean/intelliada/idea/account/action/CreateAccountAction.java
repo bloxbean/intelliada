@@ -72,7 +72,8 @@ public class CreateAccountAction extends AnAction {
 
             console.clearAndshow();
             console.showInfoMessage(String.format("Address: %s", account.getAddress()));
-            console.showInfoMessage(String.format("Mnemonic: %s", account.getMnemonic()));
+            // ADR-004 R7 / ADR-005 D13a: a recovery phrase is never written to a console, notification or log (I10).
+            console.showInfoMessage("The recovery phrase is not printed; use Copy Mnemonic in the account list's context menu (Cardano | Accounts).");
             console.showSuccessMessage("New account created successfully");
 
             IdeaUtil.showNotification(project, "Account Create",

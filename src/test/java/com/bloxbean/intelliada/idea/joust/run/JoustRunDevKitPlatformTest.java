@@ -50,10 +50,13 @@ public class JoustRunDevKitPlatformTest extends BasePlatformTestCase {
         Path sentinel = java.nio.file.Files.createTempDirectory("joust-i14").resolve("started");
         var nodes = com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance();
         JoustRunSession s = null;
+        boolean created = false;
         try {
             nodes.addRemoteNode(node);   // a stored configuration, as the panel binds one
+            // Claimed atomically: CREATE_NEW fails if another run owns the file, and only this run deletes it (M31B-CDX-38).
             java.nio.file.Files.writeString(config, "{\"network\":\"x\",\"networks\":{\"x\":{\"kind\":\"devkit\","
-                    + "\"url\":\"http://127.0.0.1:1/api/v1\",\"start\":\"touch " + sentinel + "\"}}}");
+                    + "\"url\":\"http://127.0.0.1:1/api/v1\",\"start\":\"touch " + sentinel + "\"}}}", java.nio.file.StandardOpenOption.CREATE_NEW);
+            created = true;
             JoustRunGuard guard = JoustRunGuard.capture(getProject());
             s = PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread(() -> {
                 JoustRunSession.Binding b = JoustRunSession.bind(node);
@@ -87,7 +90,7 @@ public class JoustRunDevKitPlatformTest extends BasePlatformTestCase {
             assertFalse("the project's start command never ran (I14)", java.nio.file.Files.exists(sentinel));
         } finally {
             // Every setup step is undone, whichever failed (M31B-CDX-34).
-            java.nio.file.Files.deleteIfExists(config);
+            if (created) java.nio.file.Files.deleteIfExists(config);
             nodes.removeRemoteNode(node);
             if (s != null) {
                 JoustHostService.getInstance(getProject()).stop(Path.of(fixture));
