@@ -59,6 +59,12 @@ public class AccountCacheService {
         }
     }
 
+    /** Every legacy account, or an IOException when the store exists but cannot be read (M32-CDX-18). */
+    public List<CardanoAccount> getAccountsStrict() throws java.io.IOException {
+        List<CardanoAccount> a = new GlobalCache(getAccountCacheFolder()).getAccountCacheStrict().getAccounts();
+        return a == null ? List.of() : a;
+    }
+
     public void storeAccount(CardanoAccount account) {
 
         GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());

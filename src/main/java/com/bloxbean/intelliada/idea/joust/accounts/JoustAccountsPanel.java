@@ -35,6 +35,10 @@ public final class JoustAccountsPanel {
     private final JPanel root = new JPanel(new BorderLayout());
     private final JComboBox<NetworkClass> cls = new JComboBox<>(OFFERED);
     private final JBLabel bound = new JBLabel();
+    /** Mainnet accounts kept while mainnet is not offered: named here, never selectable (M32-CDX-24). */
+    private final JBLabel kept = new JBLabel();
+    /** The latest refresh; an older one's result is discarded (M32-CDX-20). */
+    private long refreshSeq;
     private final DefaultListModel<JoustAccounts.Entry> model = new DefaultListModel<>();
     private final JBList<JoustAccounts.Entry> list = new JBList<>(model);
     private final JButton create = new JButton("Create fresh");
@@ -48,7 +52,8 @@ public final class JoustAccountsPanel {
         this.project = project;
         list.setCellRenderer((l, e, i, sel, focus) -> {
             JBLabel c = new JBLabel(PlainText.label(e.name, 60) + "  " + PlainText.label(e.address, 120)
-                    + (e.origin.equals("GENESIS") ? "  (devnet genesis)" : ""));
+                    + (e.origin.equals("GENESIS") ? "  (devnet genesis)" : "")
+                    + (e.unconfirmed() ? "  (unconfirmed: back up its recovery phrase)" : ""));
             c.setOpaque(sel);
             if (sel) {
                 c.setBackground(l.getSelectionBackground());
@@ -63,10 +68,12 @@ public final class JoustAccountsPanel {
         row1.add(new JBLabel("Network class:"));
         row1.add(cls);
         row1.add(bound);
-        JPanel row2 = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        // A grid: its preferred height counts every row, so no button is cut off at any width (M32-CDX-23).
+        JPanel row2 = new JPanel(new GridLayout(0, 2, 4, 4));
         for (JButton b : new JButton[]{create, importBtn, reveal, remove, migrate}) row2.add(b);
         rows.add(row1);
         rows.add(row2);
+        rows.add(kept);
         root.add(rows, BorderLayout.NORTH);
         root.add(new JBScrollPane(list), BorderLayout.CENTER);
         cls.addActionListener(e -> refresh());
@@ -76,10 +83,16 @@ public final class JoustAccountsPanel {
         remove.addActionListener(e -> removeSelected());
         migrate.addActionListener(e -> migrateLegacy());
         refresh();
-        // Finish any move an interruption left half done, and name mainnet accounts kept from elsewhere (L38).
-        background("Checking accounts", () -> new int[]{JoustAccounts.getInstance().completePendingMoves(),
-                JoustAccounts.getInstance().mainnetCount()}, r -> {
-            if (r[1] > 0) bound.setText(r[1] + " mainnet account(s) kept; usable once mainnet support exists");
+        // Confirm phrases stored in an earlier session, and name mainnet accounts kept from elsewhere (L38, L39).
+        background("Checking accounts", () -> {
+            JoustAccounts.getInstance().confirmPending();
+            return JoustAccounts.getInstance().mainnetEntries();
+        }, mainnet -> {
+            if (!mainnet.isEmpty()) {
+                kept.setText(PlainText.label("Kept, usable once mainnet support exists: "
+                        + String.join(", ", mainnet.stream().map(e -> e.name).toList()), 300));
+            }
+            refresh();
         });
     }
 
@@ -108,9 +121,12 @@ public final class JoustAccountsPanel {
         NetworkClass c = selectedClass();
         importBtn.setEnabled(c != NetworkClass.DEVNET);   // devnet accounts are fresh only
         migrate.setEnabled(c == NetworkClass.TESTNET);
+        // Cleared now, on the EDT: no row of another class stays visible or selected while the new list loads (M32-CDX-20).
+        list.clearSelection();
+        model.clear();
+        long seq = ++refreshSeq;
         background("Listing accounts", () -> JoustAccounts.getInstance().list(c), entries -> {
-            if (selectedClass() != c) return;
-            model.clear();
+            if (seq != refreshSeq || selectedClass() != c) return;   // superseded
             entries.forEach(model::addElement);
         });
     }
@@ -139,7 +155,15 @@ public final class JoustAccountsPanel {
         NetworkClass c = selectedClass();
         String name = Messages.showInputDialog(project, "Account name", "New " + label(c) + " Account", null);
         if (name == null) return;
-        background("Creating an account", () -> JoustAccounts.getInstance().createFresh(name, c), e -> refresh());
+        background("Creating an account", () -> JoustAccounts.getInstance().createFresh(name, c), e -> {
+            refresh();
+            // Until a later session confirms the safe kept it, the user's own backup is the only proof (M32-CDX-12).
+            if (e.unconfirmed() && Messages.showYesNoDialog(project, "Show the new account's recovery phrase now, to write it down? "
+                    + "IntelliAda confirms the password safe kept it only after the IDE restarts.", "Back Up the Recovery Phrase",
+                    Messages.getQuestionIcon()) == Messages.YES) {
+                showPhrase(e.id);
+            }
+        });
     }
 
     private void importMnemonic() {
@@ -159,7 +183,11 @@ public final class JoustAccountsPanel {
         int ok = Messages.showYesNoDialog(project, "Show the recovery phrase of \"" + PlainText.label(e.name, 60)
                 + "\"? Anyone who sees it controls the account.", "Show Recovery Phrase", Messages.getWarningIcon());
         if (ok != Messages.YES) return;
-        background("Reading the recovery phrase", () -> JoustAccounts.getInstance().revealMnemonic(e.id), m -> {
+        showPhrase(e.id);
+    }
+
+    private void showPhrase(String id) {
+        background("Reading the recovery phrase", () -> JoustAccounts.getInstance().revealMnemonic(id), m -> {
             // Shown in a modal only: never a console, a notification or the log (I10).
             JTextArea area = new JTextArea(m, 3, 60);
             area.setEditable(false);
@@ -177,7 +205,7 @@ public final class JoustAccountsPanel {
         background("Removing an account", () -> JoustAccounts.getInstance().remove(e.id), r -> refresh());
     }
 
-    /** The legacy accounts that can move: testnet addresses with a recovery phrase (M32-SEC-1). */
+    /** The legacy accounts that can be copied: testnet addresses with a recovery phrase (M32-SEC-1). Off the EDT. */
     static List<CardanoAccount> migratable() {
         return AccountService.getAccountService().getAccounts().stream()
                 .filter(a -> a.getMnemonic() != null && !a.getMnemonic().isBlank() && a.getAddress() != null
@@ -186,22 +214,26 @@ public final class JoustAccountsPanel {
     }
 
     private void migrateLegacy() {
-        List<CardanoAccount> eligible = migratable();
+        // The legacy store is read and decrypted off the EDT (M32-CDX-21).
+        background("Reading legacy accounts", JoustAccountsPanel::migratable, this::chooseLegacy);
+    }
+
+    private void chooseLegacy(List<CardanoAccount> eligible) {
         if (eligible.isEmpty()) {
             Messages.showInfoMessage(project, "No legacy testnet account with a recovery phrase to migrate.", "JOUST Accounts");
             return;
         }
         String[] names = eligible.stream().map(a -> PlainText.label(a.getName() + " " + a.getAddress(), 120)).toArray(String[]::new);
-        int i = Messages.showChooseDialog(project, "Move a legacy IntelliAda testnet account into the JOUST accounts. It is removed "
-                + "from the legacy account list once its recovery phrase is safely stored here. Removing it does not erase older "
-                + "copies in backups or synced settings.", "Migrate Legacy Account", null, names, names[0]);
+        int i = Messages.showChooseDialog(project, "Copy a legacy IntelliAda testnet account into the JOUST accounts. It then no "
+                + "longer appears in IntelliAda's legacy account lists. Its recovery phrase also stays in the old account store, "
+                + "which protects it less well than the password safe.", "Migrate Legacy Account", null, names, names[0]);
         if (i < 0) return;
         CardanoAccount chosen = eligible.get(i);
         background("Migrating an account", () -> JoustAccounts.getInstance().migrateLegacy(chosen), e -> {
             cls.setSelectedItem(NetworkClass.TESTNET);
             refresh();
-            Messages.showInfoMessage(project, "Moved \"" + PlainText.label(e.name, 60) + "\": it is now a JOUST testnet account and "
-                    + "no longer in the legacy account list.", "JOUST Accounts");
+            Messages.showInfoMessage(project, "Copied \"" + PlainText.label(e.name, 60) + "\": it is now a JOUST testnet account and "
+                    + "no longer offered in the legacy account lists. The old store still holds its recovery phrase.", "JOUST Accounts");
         });
     }
 

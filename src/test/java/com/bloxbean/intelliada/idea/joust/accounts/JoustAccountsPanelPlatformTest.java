@@ -46,6 +46,7 @@ public class JoustAccountsPanelPlatformTest extends BasePlatformTestCase {
             cls.setSelectedItem(NetworkClass.TESTNET);
             waitFor(() -> contains(list, t.id));
             p.bindSession(NetworkClass.DEVNET);
+            assertFalse("no testnet row stays while the devnet list loads (M32-CDX-20)", contains(list, t.id));
             assertFalse("the class cannot be switched while a session is bound", cls.isEnabled());
             assertFalse("devnet accounts are fresh only", importBtn.isEnabled());
             waitFor(() -> list.getModel().getSize() >= JoustAccounts.GENESIS_ACCOUNTS);

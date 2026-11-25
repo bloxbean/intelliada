@@ -72,6 +72,10 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         /** Hex Blake2b-224 of the payment verification key: the payment key hash, the same on every network. */
         public String fingerprint;
         public String origin;
+        /** False until a later IDE session read its phrase back from the safe (a read in the writing session may be cached). */
+        public boolean confirmed;
+        /** The IDE session that stored it (to tell a later session's confirming read from a cached one). */
+        public String createdIn;
 
         public NetworkClass cls() {
             return NetworkClass.valueOf(networkClass);
@@ -85,7 +89,14 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
             e.address = address;
             e.fingerprint = fingerprint;
             e.origin = origin;
+            e.confirmed = confirmed;
+            e.createdIn = createdIn;
             return e;
+        }
+
+        /** Whether its phrase is not yet known to survive a restart (never for the public genesis or worthless devnet keys). */
+        public boolean unconfirmed() {
+            return !confirmed && !"GENESIS".equals(origin) && !"DEVNET".equals(networkClass);
         }
     }
 
@@ -126,6 +137,11 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
             return PasswordSafe.getInstance().get(a);
         }
     };
+
+    /** This IDE session (a write and a read in one session prove nothing about durability; M32-CDX-12). */
+    static final String PROCESS = UUID.randomUUID().toString();
+    /** The held payment keys, published after every change: the legacy store's filter reads it without the lock. */
+    private volatile Set<String> held = Set.of();
 
     private StateBean state = new StateBean();
     private Safe safe = PASSWORD_SAFE;
@@ -178,13 +194,21 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         StateBean clean = new StateBean();
         for (Entry e : valid) if (ids.get(e.id) == 1 && fps.get(e.fingerprint) == 1) clean.accounts.add(e);
         state = clean;
+        publish();
+    }
+
+    private void publish() {
+        Set<String> h = new java.util.HashSet<>();
+        for (Entry e : state.accounts) h.add(e.fingerprint);
+        held = Set.copyOf(h);
     }
 
     private static boolean wellFormed(Entry e) {
         try {
             if (e.id == null || !UUID_ID.matcher(e.id).matches() || e.name == null || e.name.length() > MAX_NAME
                     || e.name.chars().anyMatch(Character::isISOControl) || e.address == null || e.address.length() > 200
-                    || e.fingerprint == null || !e.fingerprint.matches("[0-9a-f]{56}")) return false;
+                    || e.fingerprint == null || !e.fingerprint.matches("[0-9a-f]{56}")
+                    || (e.createdIn != null && e.createdIn.length() > 64)) return false;
             NetworkClass cls = NetworkClass.valueOf(e.networkClass);
             Origin origin = Origin.valueOf(e.origin);
             if (origin == Origin.GENESIS) return false;
@@ -203,6 +227,10 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         if (!address.startsWith(prefix)) return null;
         try {
             Address a = new Address(address);
+            byte[] b = a.getBytes();
+            // The decoded header, not only the prefix: its network id, and a base address's exact length (M32-CDX-19).
+            int network = b[0] & 0x0f;
+            if (network != (cls == NetworkClass.MAINNET ? 1 : 0) || b.length != 57) return null;
             if (a.getAddressType() != AddressType.Base || !a.isPubKeyHashInPaymentPart()) return null;
             return a.getPaymentCredentialHash().map(HexFormat.of()::formatHex).orElse(null);
         } catch (RuntimeException e) {
@@ -259,7 +287,7 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
     /** A fresh account of {@code cls}: a new 24-word phrase, kept in the safe. */
     public synchronized Entry createFresh(String name, NetworkClass cls) throws Refused {
         mainnetGate(cls);
-        return store(name, cls, new Account(network(cls)), Origin.FRESH, null);
+        return store(name, cls, new Account(network(cls)), Origin.FRESH, null, null);
     }
 
     /** Imports {@code mnemonic} as a testnet or mainnet account; refused for devnets, across classes and for legacy keys. */
@@ -269,70 +297,77 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         }
         mainnetGate(cls);
         Account a = account(cls, mnemonic);
-        if (legacyHolds(fingerprint(a)) != null) {
+        if (!legacyHolding(fingerprint(a)).isEmpty()) {
             throw new Refused("this key is a legacy IntelliAda account; use \"Migrate a legacy account\" (testnet keys only)");
         }
-        return store(name, cls, a, Origin.IMPORTED, null);
+        return store(name, cls, a, Origin.IMPORTED, null, null);
     }
 
     /**
-     * Moves a legacy IntelliAda account into the store as a testnet account, then removes it from the legacy store
-     * (M32-CDX-3, -SEC-1, -SEC-2, -DES-2, -DES-8). Only a testnet ({@code addr_test}) base address whose payment key is
-     * the phrase's first key moves; a mainnet account is refused (import it as mainnet). A move interrupted after its
-     * entry was stored completes when repeated.
+     * Copies a legacy IntelliAda testnet account into the store (ADR-005 L39). The legacy store is never written: the
+     * copied key is hidden from every legacy chooser by its payment key ({@code AccountService.getAccounts}), so it is
+     * selectable under one class only, and the legacy copy is left for the user and #10. Only a testnet base address that
+     * is exactly its phrase's first address copies; a key any other legacy entry also holds (a mainnet address of the
+     * same phrase, an enterprise variant) is refused as ambiguous. The entry's id is derived from the key, so a retry
+     * after an interruption reuses it, and its phrase is verified, or written again from the legacy copy, on every try.
      */
     public synchronized Entry migrateLegacy(CardanoAccount legacy) throws Refused {
         String addr = legacy.getAddress(), phrase = legacy.getMnemonic();
         if (phrase == null || phrase.isBlank()) throw new Refused("this legacy account has no recovery phrase");
         if (addr == null || !addr.startsWith("addr_test1")) {
-            throw new Refused("a mainnet account is not migrated as testnet; import it as a mainnet account instead");
+            throw new Refused("legacy mainnet accounts do not enter the JOUST accounts (they are never offered on mainnet here) "
+                    + "until IntelliAda's mainnet support and the legacy-store fix (#10) decide how");
         }
         Account a = account(NetworkClass.TESTNET, phrase);
         String fp = fingerprint(a);
-        if (!fp.equals(paymentKeyHash(addr, NetworkClass.TESTNET))) {
+        if (!a.baseAddress().equals(addr) || !fp.equals(paymentKeyHash(addr, NetworkClass.TESTNET))) {
             throw new Refused("this legacy account's address is not the first address of its recovery phrase; it is not migrated");
         }
-        Entry done = null;
-        for (Entry e : state.accounts) if (e.fingerprint.equals(fp)) done = e;
-        if (done != null && !(done.cls() == NetworkClass.TESTNET && Origin.valueOf(done.origin) == Origin.MIGRATED)) {
-            throw new Refused("this key is already held as a " + done.cls().name().toLowerCase() + " account");
+        List<CardanoAccount> sharing = legacyHolding(fp);
+        if (sharing.size() != 1 || !addr.equals(sharing.get(0).getAddress())) {
+            throw new Refused("another legacy account holds the same key (for example its mainnet address); it is not migrated");
         }
         if (safe.memoryOnly()) {
-            throw new Refused("IntelliJ is set to forget passwords on restart; the legacy copy is kept (a move would lose the phrase)");
+            throw new Refused("IntelliJ is set to forget passwords on restart; a copy kept that way would be lost");
         }
-        Entry e = done != null ? done.copy() : store(legacy.getName(), NetworkClass.TESTNET, a, Origin.MIGRATED, fp);
-        // The phrase is durably in the safe (read back); now it leaves the legacy store.
-        AccountService.getAccountService().removeAccount(legacy);
-        return e;
+        String id = UUID.nameUUIDFromBytes(("intelliada-joust-migrated:" + fp).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        Entry done = null;
+        for (Entry e : state.accounts) if (e.fingerprint.equals(fp)) done = e;
+        if (done != null) {
+            if (!(done.id.equals(id) && done.cls() == NetworkClass.TESTNET && Origin.valueOf(done.origin) == Origin.MIGRATED)) {
+                throw new Refused("this key is already held as a " + done.cls().name().toLowerCase() + " account");
+            }
+            writeVerified(id, NetworkClass.TESTNET, a.mnemonic());   // a retry repairs a missing or different phrase from the legacy copy
+            return done.copy();
+        }
+        return store(legacy.getName(), NetworkClass.TESTNET, a, Origin.MIGRATED, fp, id);
     }
 
     /**
-     * Completes moves an interruption left half done: a migrated entry whose phrase is in the safe, while the legacy
-     * store still holds the same key, loses the legacy copy. Run when the Accounts tab opens; never with a memory-only
-     * safe. Returns how many moves were completed.
+     * Confirms entries stored in an earlier IDE session whose phrase now reads back as their key: the phrase survived a
+     * restart (M32-CDX-12). Run when the Accounts tab opens. Returns the entries still unconfirmed.
      */
-    public synchronized int completePendingMoves() {
-        if (safe.memoryOnly()) return 0;
-        int n = 0;
+    public synchronized List<Entry> confirmPending() {
+        List<Entry> still = new ArrayList<>();
         for (Entry e : state.accounts) {
-            if (Origin.valueOf(e.origin) != Origin.MIGRATED) continue;
-            CardanoAccount legacy = legacyHolds(e.fingerprint);
-            if (legacy == null) continue;
-            try {
-                if (revealMnemonic(e.id).equals(String.join(" ", String.valueOf(legacy.getMnemonic()).trim().split("\\s+")))) {
-                    AccountService.getAccountService().removeAccount(legacy);
-                    n++;
+            if (!e.unconfirmed()) continue;
+            if (!PROCESS.equals(e.createdIn)) {
+                try {
+                    revealMnemonic(e.id);
+                    e.confirmed = true;
+                    continue;
+                } catch (Refused ignored) {
+                    // not readable: stays unconfirmed
                 }
-            } catch (Refused ignored) {
-                // the phrase is not verifiably here: the legacy copy stays
             }
+            still.add(e.copy());
         }
-        return n;
+        return still;
     }
 
-    /** How many mainnet entries the store keeps (shown as a note while mainnet is not offered). */
-    public synchronized int mainnetCount() {
-        return (int) state.accounts.stream().filter(e -> e.cls() == NetworkClass.MAINNET).count();
+    /** The mainnet entries kept while mainnet is not offered (named, read-only; M32-CDX-24). */
+    public synchronized List<Entry> mainnetEntries() {
+        return state.accounts.stream().filter(e -> e.cls() == NetworkClass.MAINNET).map(Entry::copy).toList();
     }
 
     private static Account account(NetworkClass cls, String mnemonic) throws Refused {
@@ -352,7 +387,8 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
      * when the safe keeps it: never a memory-only safe, and the phrase read back must be the one written
      * (M32-CDX-1, -SEC-4, -DES-6).
      */
-    private Entry store(String name, NetworkClass cls, Account a, Origin origin, @Nullable String migrating) throws Refused {
+    private Entry store(String name, NetworkClass cls, Account a, Origin origin, @Nullable String migrating, @Nullable String fixedId)
+            throws Refused {
         String clean = name == null || name.isBlank() ? "Account" : name.strip();
         if (clean.split("\\s+").length >= 12) throw new Refused("this name looks like a recovery phrase; names are stored in plain text");
         if (clean.length() > MAX_NAME || clean.chars().anyMatch(Character::isISOControl)) throw new Refused("the name is too long or has control characters");
@@ -363,7 +399,7 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
                     + e.cls().name().toLowerCase() + " account; a key is held under one network class only");
         }
         if (genesisFingerprints().contains(fp)) throw new Refused("this is a public devnet genesis key; it is offered on devnets only");
-        if (!fp.equals(migrating) && legacyHolds(fp) != null) {
+        if (!fp.equals(migrating) && !legacyHolding(fp).isEmpty()) {
             throw new Refused("this key is a legacy IntelliAda account; use \"Migrate a legacy account\" (testnet keys only)");
         }
         if (safe.memoryOnly()) {
@@ -371,21 +407,37 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
                     + "Passwords); a recovery phrase kept that way would be lost");
         }
         Entry e = new Entry();
-        e.id = UUID.randomUUID().toString();
+        e.id = fixedId != null ? fixedId : UUID.randomUUID().toString();
         e.name = clean;
         e.networkClass = cls.name();
         e.address = a.baseAddress();
         e.fingerprint = fp;
         e.origin = origin.name();
-        CredentialAttributes attr = attributes(e.id);
-        safe.set(attr, new Credentials(e.id, a.mnemonic()));
+        e.createdIn = PROCESS;
+        e.confirmed = false;
+        writeVerified(e.id, cls, a.mnemonic());
+        state.accounts.add(e);
+        publish();
+        return e.copy();
+    }
+
+    /** The credential's user name: the id and the class, so the class is bound to the secret, not only to metadata. */
+    static String holder(String id, NetworkClass cls) {
+        return id + "|" + cls.name();
+    }
+
+    /**
+     * Writes a phrase, with its class, and reads it back; a mismatch removes it and refuses. (Durability is confirmed only
+     * in a later session; M32-CDX-12.)
+     */
+    private void writeVerified(String id, NetworkClass cls, String phrase) throws Refused {
+        CredentialAttributes attr = attributes(id);
+        safe.set(attr, new Credentials(holder(id, cls), phrase));
         Credentials back = safe.get(attr);
-        if (back == null || !a.mnemonic().equals(back.getPasswordAsString())) {
+        if (back == null || !phrase.equals(back.getPasswordAsString()) || !holder(id, cls).equals(back.getUserName())) {
             safe.set(attr, null);
             throw new Refused("the password safe did not keep the recovery phrase; nothing was stored");
         }
-        state.accounts.add(e);
-        return e.copy();
     }
 
     /** The recovery phrase of {@code id}, for an explicit user request only: re-derived and checked against its entry. */
@@ -399,6 +451,10 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         Credentials c = safe.get(attributes(id));
         String phrase = c == null ? null : c.getPasswordAsString();
         if (phrase == null) throw new Refused("the recovery phrase is not in the password safe");
+        // The class stored with the secret must be the entry's: a re-tagged entry is never served (M32-SEC-11).
+        if (!holder(id, e.cls()).equals(c.getUserName())) {
+            throw new Refused("the password safe holds this account under another network class; it is not shown");
+        }
         if (!fingerprint(account(e.cls(), phrase)).equals(e.fingerprint)) {
             throw new Refused("the password safe holds another key for this account; it is not shown");
         }
@@ -408,7 +464,10 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
     /** Removes an account and its secret. */
     public synchronized boolean remove(String id) {
         boolean removed = state.accounts.removeIf(e -> e.id.equals(id));
-        if (removed) safe.set(attributes(id), null);
+        if (removed) {
+            safe.set(attributes(id), null);
+            publish();
+        }
         return removed;
     }
 
@@ -416,9 +475,8 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
      * Whether this store holds the key with payment key hash {@code fingerprint} (the legacy store asks, M32-CDX-2). The
      * public genesis keys are not "held": legacy DevKit workflows may import them.
      */
-    public synchronized boolean holdsKey(String fingerprint) {
-        for (Entry e : state.accounts) if (e.fingerprint.equals(fingerprint)) return true;
-        return false;
+    public boolean holdsKey(String fingerprint) {
+        return held.contains(fingerprint);   // lock-free: the legacy choosers call it on the EDT (M32-CDX-21)
     }
 
     /** The payment key hash of any key-payment address (base or enterprise, either network), or null. */
@@ -432,13 +490,24 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         }
     }
 
-    /** The legacy account holding the key with this payment key hash, or null. */
-    private static @Nullable CardanoAccount legacyHolds(String fingerprint) {
-        for (CardanoAccount c : AccountService.getAccountService().getAccounts()) {
-            String a = c.getAddress();
-            if (a != null && fingerprint.equals(anyPaymentKeyHash(a))) return c;
+    /**
+     * The legacy accounts holding the key with this payment key hash (hidden ones included): only entries with a recovery
+     * phrase hold a key; a watch-only entry does not (M32-DES-13). An unreadable legacy store refuses rather than counting
+     * as one without the key (M32-CDX-18).
+     */
+    private static List<CardanoAccount> legacyHolding(String fingerprint) throws Refused {
+        List<CardanoAccount> all;
+        try {
+            all = AccountService.getAccountService().getAllAccountsStrict();
+        } catch (java.io.IOException e) {
+            throw new Refused("the legacy IntelliAda account store could not be read, so this key's ownership is unknown; nothing was stored");
         }
-        return null;
+        List<CardanoAccount> out = new ArrayList<>();
+        for (CardanoAccount c : all) {
+            String a = c.getAddress();
+            if (a != null && c.getMnemonic() != null && !c.getMnemonic().isBlank() && fingerprint.equals(anyPaymentKeyHash(a))) out.add(c);
+        }
+        return out;
     }
 
     static CredentialAttributes attributes(String id) {

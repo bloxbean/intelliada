@@ -32,7 +32,7 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
     private String home;
 
     /** A durable in-memory safe (the test platform's own safe is memory-only, which the store refuses). */
-    static final class MapSafe implements JoustAccounts.Safe {
+    static class MapSafe implements JoustAccounts.Safe {
         final Map<String, Credentials> m = new HashMap<>();
         boolean memoryOnly;
         boolean drops;
@@ -61,7 +61,9 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
         super.setUp();
         home = System.getProperty("user.home");
         System.setProperty("user.home", Files.createTempDirectory("intelliada-home").toString());   // never the real legacy store
-        store = new JoustAccounts();
+        // The application's store: the legacy filter asks it. Emptied before and after each test.
+        store = JoustAccounts.getInstance();
+        store.loadState(new JoustAccounts.StateBean());
         safe = new MapSafe();
         store.safeForTests(safe);
         JoustAccounts.mainnetForTests(true);   // the store's mainnet support is tested; the gate has its own test
@@ -70,6 +72,8 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
     @Override
     protected void tearDown() throws Exception {
         try {
+            store.loadState(new JoustAccounts.StateBean());
+            store.safeForTests(JoustAccounts.PASSWORD_SAFE);
             JoustAccounts.mainnetForTests(false);
             System.setProperty("user.home", home);
         } finally {
@@ -163,8 +167,11 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
         }
         assertFalse(xml.contains(mnemonic));
         // The safe holding another key for the entry is never shown as its phrase.
-        safe.set(JoustAccounts.attributes(e.id), new Credentials(e.id, phrase()));
+        safe.set(JoustAccounts.attributes(e.id), new Credentials(JoustAccounts.holder(e.id, NetworkClass.TESTNET), phrase()));
         assertRefused(() -> store.revealMnemonic(e.id), "another key");
+        // M32-SEC-11: the class is bound to the secret; an entry re-tagged in metadata is never served.
+        safe.set(JoustAccounts.attributes(e.id), new Credentials(JoustAccounts.holder(e.id, NetworkClass.DEVNET), mnemonic));
+        assertRefused(() -> store.revealMnemonic(e.id), "another network class");
         assertTrue(store.remove(e.id));
         assertRefused(() -> store.revealMnemonic(e.id), "no such account");
         assertRefused(() -> store.revealMnemonic("genesis-99"), "no such account");
@@ -223,8 +230,8 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
         }
     }
 
-    /** M32-CDX-3, -SEC-1, -SEC-2, -DES-2, -DES-8: migration moves a legacy testnet key, and only that. */
-    public void testMigrationMovesALegacyTestnetAccount() throws Exception {
+    /** L39 (M32-CDX-3, -13..16, -SEC-1, -SEC-9, -SEC-10, -DES-12): migration copies and hides; the legacy store is never written. */
+    public void testMigrationCopiesAndHides() throws Exception {
         Account k = new Account(Networks.testnet());
         CardanoAccount legacy = new CardanoAccount(k.baseAddress(), k.mnemonic());
         legacy.setName("legacy");
@@ -233,15 +240,126 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
         assertEquals("TESTNET", e.networkClass);
         assertEquals("MIGRATED", e.origin);
         assertEquals(k.baseAddress(), e.address);
-        assertTrue("it left the legacy store", AccountService.getAccountService().getAccounts().stream()
-                .noneMatch(c -> c.getAddress().equals(k.baseAddress())));
         assertEquals(k.mnemonic(), store.revealMnemonic(e.id));
-        // A mainnet legacy account is not migrated as testnet.
+        assertTrue("the legacy copy is kept", AccountService.getAccountService().getAllAccountsStrict().stream()
+                .anyMatch(c -> c.getAddress().equals(k.baseAddress())));
+        assertTrue("and hidden from every legacy chooser", AccountService.getAccountService().getAccounts().stream()
+                .noneMatch(c -> c.getAddress().equals(k.baseAddress())));
+        // A legacy mainnet account is refused, and an address that is not the phrase's first address.
         Account mk = new Account(Networks.mainnet());
-        assertRefused(() -> store.migrateLegacy(new CardanoAccount(mk.baseAddress(), mk.mnemonic())), "mainnet");
-        // An address that is not the phrase's first address is refused.
+        assertRefused(() -> store.migrateLegacy(new CardanoAccount(mk.baseAddress(), mk.mnemonic())), "legacy mainnet");
         Account other = new Account(Networks.testnet());
         assertRefused(() -> store.migrateLegacy(new CardanoAccount(other.baseAddress(), k.mnemonic())), "not the first address");
+    }
+
+    /** M32-CDX-14, -SEC-9: a retry after the safe lost the phrase writes it again from the legacy copy, under the same id. */
+    public void testARetryRepairsTheSafeFromTheLegacyCopy() throws Exception {
+        Account k = new Account(Networks.testnet());
+        CardanoAccount legacy = new CardanoAccount(k.baseAddress(), k.mnemonic());
+        AccountService.getAccountService().importAccount(legacy);
+        var first = store.migrateLegacy(legacy);
+        safe.m.clear();   // a keychain reset
+        assertRefused(() -> store.revealMnemonic(first.id), "not in the password safe");
+        var again = store.migrateLegacy(legacy);
+        assertEquals("the same id", first.id, again.id);
+        assertEquals(k.mnemonic(), store.revealMnemonic(first.id));
+        assertTrue(AccountService.getAccountService().getAllAccountsStrict().stream().anyMatch(c -> c.getAddress().equals(k.baseAddress())));
+    }
+
+    /** M32-CDX-15, -SEC-10: a key also held as another legacy account (its mainnet address) is not migrated. */
+    public void testAKeyHeldTwiceInTheLegacyStoreIsNotMigrated() throws Exception {
+        String m = phrase();
+        Account t = new Account(Networks.testnet(), m), mn = new Account(Networks.mainnet(), m);
+        CardanoAccount lt = new CardanoAccount(t.baseAddress(), m), lm = new CardanoAccount(mn.baseAddress(), m);
+        AccountService.getAccountService().importAccount(lt);
+        AccountService.getAccountService().importAccount(lm);
+        assertRefused(() -> store.migrateLegacy(lt), "another legacy account holds the same key");
+        assertEquals(2, AccountService.getAccountService().getAllAccountsStrict().size());
+    }
+
+    /** M32-DES-13: a watch-only legacy entry holds no key and does not block an import. */
+    public void testAWatchOnlyLegacyEntryHoldsNoKey() throws Exception {
+        Account k = new Account(Networks.testnet());
+        AccountService.getAccountService().importAccount(new CardanoAccount(k.baseAddress()));
+        assertEquals("TESTNET", store.importMnemonic("x", NetworkClass.TESTNET, k.mnemonic()).networkClass);
+    }
+
+    /** M32-CDX-18: an unreadable legacy store refuses an import instead of counting as one without the key. */
+    public void testAnUnreadableLegacyStoreRefusesAnImport() throws Exception {
+        Account k = new Account(Networks.testnet());
+        AccountService.getAccountService().importAccount(new CardanoAccount(k.baseAddress(), k.mnemonic()));
+        try (var w = java.nio.file.Files.walk(java.nio.file.Path.of(System.getProperty("user.home")))) {
+            for (var f : (Iterable<java.nio.file.Path>) w.filter(java.nio.file.Files::isRegularFile)::iterator) {
+                if (!f.getFileName().toString().endsWith(".key")) java.nio.file.Files.writeString(f, "not an account cache");
+            }
+        }
+        assertRefused(() -> store.importMnemonic("x", NetworkClass.TESTNET, phrase()), "could not be read");
+    }
+
+    /** M32-CDX-17: the ownership check and the write are one step across both stores. */
+    public void testConcurrentImportsCannotPutAKeyInBothStores() throws Exception {
+        JoustAccounts real = JoustAccounts.getInstance();
+        java.util.concurrent.CountDownLatch writing = new java.util.concurrent.CountDownLatch(1), release = new java.util.concurrent.CountDownLatch(1);
+        MapSafe slow = new MapSafe() {
+            @Override
+            public void set(CredentialAttributes a, @Nullable Credentials c) {
+                writing.countDown();
+                try {
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {
+                }
+                super.set(a, c);
+            }
+        };
+        real.safeForTests(slow);
+        String m = phrase();
+        Account a = new Account(Networks.testnet(), m);
+        try {
+            var joust = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try {
+                    return real.importMnemonic("j", NetworkClass.TESTNET, m);
+                } catch (JoustAccounts.Refused e) {
+                    return null;
+                }
+            });
+            assertTrue(writing.await(10, java.util.concurrent.TimeUnit.SECONDS));   // the JOUST import is between check and commit
+            var legacy = java.util.concurrent.CompletableFuture.supplyAsync(() ->
+                    AccountService.getAccountService().importAccount(new CardanoAccount(a.baseAddress(), m)));
+            Thread.sleep(200);
+            assertFalse("the legacy import waits for the JOUST one", legacy.isDone());
+            release.countDown();
+            assertNotNull(joust.get(10, java.util.concurrent.TimeUnit.SECONDS));
+            assertFalse("then sees the key held and is refused", legacy.get(10, java.util.concurrent.TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
+            for (var e : real.list(NetworkClass.TESTNET)) real.remove(e.id);
+            real.safeForTests(JoustAccounts.PASSWORD_SAFE);
+        }
+    }
+
+    /** M32-CDX-12: an account stays unconfirmed until a later IDE session reads its phrase back. */
+    public void testAccountsAreConfirmedOnlyByALaterSession() throws Exception {
+        var e = store.createFresh("t", NetworkClass.TESTNET);
+        assertTrue(store.list(NetworkClass.TESTNET).get(0).unconfirmed());
+        store.confirmPending();
+        assertTrue("a read in the writing session proves nothing", store.list(NetworkClass.TESTNET).get(0).unconfirmed());
+        var state = store.getState();
+        state.accounts.get(0).createdIn = "an earlier session";
+        store.loadState(state);
+        assertTrue(store.confirmPending().isEmpty());
+        assertFalse(store.list(NetworkClass.TESTNET).get(0).unconfirmed());
+        assertFalse("devnet keys are never unconfirmed", store.createFresh("d", NetworkClass.DEVNET).unconfirmed());
+        assertEquals(e.id, store.list(NetworkClass.TESTNET).get(0).id);
+    }
+
+    /** M32-CDX-19: the decoded network id counts, not only the prefix. */
+    public void testAnAddressIsCheckedByItsDecodedNetwork() {
+        Account main = new Account(Networks.mainnet());
+        byte[] mainBytes = new com.bloxbean.cardano.client.address.Address(main.baseAddress()).getBytes();
+        String disguised = com.bloxbean.cardano.client.crypto.Bech32.encode(mainBytes, "addr_test");
+        assertTrue(disguised.startsWith("addr_test1"));
+        assertNull(JoustAccounts.paymentKeyHash(disguised, NetworkClass.TESTNET));
+        assertNotNull(JoustAccounts.paymentKeyHash(new Account(Networks.testnet()).baseAddress(), NetworkClass.TESTNET));
     }
 
     /** I10 (§4.0 M3.2): creating, importing, migrating and revealing log no recovery phrase anywhere. */
@@ -322,19 +440,6 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
         }
     }
 
-    /** An interrupted move (stored here, still in the legacy store) is completed; never with a memory-only safe. */
-    public void testAnInterruptedMoveIsCompleted() throws Exception {
-        Account k = new Account(Networks.testnet());
-        CardanoAccount legacy = new CardanoAccount(k.baseAddress(), k.mnemonic());
-        AccountService.getAccountService().importAccount(legacy);
-        store.migrateLegacy(legacy);
-        AccountService.getAccountService().importAccount(legacy);   // as if the delete had not happened
-        safe.memoryOnly = true;
-        assertEquals(0, store.completePendingMoves());
-        safe.memoryOnly = false;
-        assertEquals(1, store.completePendingMoves());
-        assertTrue(AccountService.getAccountService().getAccounts().stream().noneMatch(c -> c.getAddress().equals(k.baseAddress())));
-    }
 
     public void testSessionsSeeOnlyTheirClass() throws Exception {
         var t = store.createFresh("t", NetworkClass.TESTNET);
