@@ -134,15 +134,57 @@ public class ChainReadsTest {
     }
 
     @Test
-    public void aMovingTipIsRetriedThenFails() throws Exception {
+    public void aStableAnswerUnderAMovingTipIsReportedAtTheLaterTip() throws Exception {
         routes.put("/api/v1/epochs/latest", "{\"epoch\":7}");
         routes.put("/api/v1/epochs/7/parameters", "{\"min_fee_a\":44}");
-        assertEquals(44, reads.read("6.0", q("{\"kind\":\"protocolParams\"}")).path("value").path("min_fee_a").asInt());
         movingTip = true;
-        tipCalls.set(0);
         JsonNode r = reads.read("6.1", q("{\"kind\":\"protocolParams\"}"));
-        assertTrue(r.toString(), r.has("failed"));
-        assertTrue(tipCalls.get() >= 16);
+        assertEquals("the same answer before and after the later tip holds there (M31B-SEC-3)", 44, r.path("value").path("min_fee_a").asInt());
+        assertTrue(r.path("tip").path("slot").asLong() > 1001);
+    }
+
+    @Test
+    public void aChangingAnswerUnderAMovingTipFails() throws Exception {
+        AtomicInteger n = new AtomicInteger();
+        server.removeContext("/");
+        server.createContext("/", ex -> {
+            String path = ex.getRequestURI().toString();
+            String body = path.equals("/api/v1/blocks/latest")
+                    ? "{\"slot\":" + (2000 + n.incrementAndGet()) + ",\"height\":50,\"hash\":\"" + "ab".repeat(32) + "\"}"
+                    : path.startsWith("/api/v1/epochs/latest") && !path.contains("parameters") ? "{\"epoch\":7}"
+                    : "{\"min_fee_a\":" + n.get() + "}";
+            byte[] b = body.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, b.length);
+            ex.getResponseBody().write(b);
+            ex.close();
+        });
+        JsonNode r = reads.read("6.2", q("{\"kind\":\"protocolParams\"}"));
+        assertTrue("never a mixed chain point: " + r, r.has("failed"));
+    }
+
+    @Test
+    public void aDrippingBodyIsBoundedByTheReadDeadline() throws Exception {
+        server.removeContext("/");
+        server.createContext("/", ex -> {
+            ex.sendResponseHeaders(200, 0);
+            try {
+                for (int i = 0; i < 60; i++) {
+                    ex.getResponseBody().write(' ');
+                    ex.getResponseBody().flush();
+                    Thread.sleep(1000);
+                }
+            } catch (Exception ignored) {
+            }
+            ex.close();
+        });
+        long t0 = System.nanoTime();
+        try {
+            reads.read("6.3", q("{\"kind\":\"protocolParams\"}"));
+            fail("no chain point at all: the read is unanswerable");
+        } catch (BlockfrostApi.Failed expected) {
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue("the body is bounded by the deadline (M31B-SEC-1): " + ms + " ms", ms < 15_000);
+        }
     }
 
     @Test
@@ -185,6 +227,77 @@ public class ChainReadsTest {
         assertEquals("PlutusScriptV3", r.path("value").path("type").textValue());
         assertEquals("454401020304", r.path("value").path("cborHex").textValue());
         assertEquals("454401020304", PlutusScripts.doubleWrapped("454401020304"));
+    }
+
+    @Test
+    public void aCollateralReturnIsNeverAnOutput() throws Exception {
+        routes.put("/api/v1/txs/" + TX + "/utxos", "{\"outputs\":[" + utxo(0).replace("\"tx_index\":3,", "\"collateral\":true,") + "," + utxo(1) + "]}");
+        assertTrue("a flagged collateral return is skipped (M31B-CDX-12)",
+                reads.read("10.1", q("{\"kind\":\"output\",\"ref\":\"" + TX + "#0\"}")).path("absent").booleanValue());
+        assertEquals(1, reads.read("10.2", q("{\"kind\":\"output\",\"ref\":\"" + TX + "#1\"}")).path("value").path("output_index").intValue());
+    }
+
+    @Test
+    public void malformedSuccessBodiesAreFailuresNotAbsence() throws Exception {
+        routes.put("/api/v1/txs/" + TX + "/utxos", "{}");
+        assertTrue(reads.read("11.1", q("{\"kind\":\"output\",\"ref\":\"" + TX + "#0\"}")).has("failed"));
+        String dh = "ab".repeat(32);
+        routes.put("/api/v1/scripts/datum/" + dh + "/cbor", "{}");
+        assertTrue(reads.read("11.2", q("{\"kind\":\"datum\",\"hash\":\"" + dh + "\"}")).has("failed"));
+        routes.put("/api/v1/txs/" + TX + "/redeemers", "[{\"purpose\":\"spend\"}]");
+        assertTrue("a redeemer missing fields fails (M31B-CDX-5)", reads.read("11.3", q("{\"kind\":\"redeemers\",\"txHash\":\"" + TX + "\"}")).has("failed"));
+    }
+
+    @Test
+    public void anEmptyRedeemerListOfAnUnknownTransactionIsAbsent() throws Exception {
+        routes.put("/api/v1/txs/" + TX + "/redeemers", "[]");
+        assertTrue("[] for an unknown transaction is absent (M31B-CDX-13)",
+                reads.read("12.1", q("{\"kind\":\"redeemers\",\"txHash\":\"" + TX + "\"}")).path("absent").booleanValue());
+        routes.put("/api/v1/txs/" + TX, "{\"hash\":\"" + TX + "\"}");
+        assertEquals(0, reads.read("12.2", q("{\"kind\":\"redeemers\",\"txHash\":\"" + TX + "\"}")).path("value").size());
+    }
+
+    @Test
+    public void aContinuationServesOnlyTheQueryThatOpenedIt() throws Exception {
+        StringBuilder p1 = new StringBuilder("[");
+        String datum = "d8799f" + "41".repeat(20000) + "ff";
+        for (int i = 0; i < 99; i++) {
+            p1.append(i == 0 ? "" : ",").append(utxo(i).replace("\"inline_datum\":null", "\"inline_datum\":\"" + datum + "\""));
+        }
+        routes.put("/api/v1/addresses/" + A + "/utxos?count=100&page=1", p1.append("]").toString());
+        JsonNode first = reads.read("13.1", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\"}"));
+        String cursor = first.path("more").textValue();
+        String other = "addr_test1qrp6e300jwk22nphnklqx5j0wsj57qjcrfv4djf05xkuvug25n5yy";
+        try {
+            reads.read("13.2", q("{\"kind\":\"utxos\",\"address\":\"" + other + "\",\"cursor\":\"" + cursor + "\"}"));
+            fail("another address consumed the cursor (M31B-CDX-11)");
+        } catch (IllegalArgumentException expected) {
+            // refused, and the cursor is still the original query's
+        }
+        assertTrue(reads.read("13.3", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\",\"cursor\":\"" + cursor + "\"}")).has("value"));
+    }
+
+    @Test
+    public void anItemLargerThanAChunkFailsTheRead() throws Exception {
+        String datum = "d8799f" + "41".repeat(700_000) + "ff";
+        routes.put("/api/v1/addresses/" + A + "/utxos?count=100&page=1", "[" + utxo(0).replace("\"inline_datum\":null", "\"inline_datum\":\"" + datum + "\"") + "]");
+        JsonNode r = reads.read("14.1", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\"}"));
+        assertTrue("never above the 1 MiB chunk (M31B-CDX-3): " + r.toString().length(), r.has("failed"));
+    }
+
+    @Test
+    public void aProviderFailureAfterAChainPointIsFailedNotACancellation() throws Exception {
+        assertEquals(1000, reads.read("15.1", q("{\"kind\":\"tip\"}")).path("tip").path("slot").intValue());
+        status.put("/api/v1/blocks/latest", 503);
+        server.removeContext("/");
+        server.createContext("/", ex -> {
+            byte[] b = "{}".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(503, b.length);
+            ex.getResponseBody().write(b);
+            ex.close();
+        });
+        JsonNode r = reads.read("15.2", q("{\"kind\":\"tip\"}"));
+        assertTrue("failed with the call's last chain point (M31B-DES-8)", r.has("failed") && r.path("tip").path("slot").intValue() == 1000);
     }
 
     @Test

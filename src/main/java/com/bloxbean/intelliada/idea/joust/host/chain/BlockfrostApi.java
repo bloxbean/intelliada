@@ -12,12 +12,16 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
- * The Blockfrost REST shape (ADR-005 D18) that Yaci Store (DevKit), Yano and Blockfrost serve: GETs only for reads,
- * {@code POST /tx/submit} for submission. Strict: no redirects at all, a per-request timeout, a response size cap, and a
- * {@code project_id} sent only to the configured HTTPS host and never logged. A 404 is reported as {@code null}; every
- * other non-2xx answer, timeout or malformed body is a {@link Failed}, never an empty answer (T8).
+ * The Blockfrost REST shape (ADR-005 D18) that Yaci Store (DevKit), Yano and Blockfrost serve. Strict: no redirects at
+ * all, a monotonic deadline covering headers <b>and</b> body (M31B-CDX-2), a response size cap applied while receiving,
+ * and a {@code project_id} sent only to the configured HTTPS host and never logged. A 404 is reported as {@code null};
+ * every other non-2xx answer, timeout or malformed body is a {@link Failed}, never an empty answer (T8).
  */
 public final class BlockfrostApi {
 
@@ -29,6 +33,12 @@ public final class BlockfrostApi {
     }
 
     static final int MAX_RESPONSE = 16 * 1024 * 1024;
+    /** Daemon threads for the client and for body reads (never the shared common pool, whose threads a stall would hold). */
+    private static final java.util.concurrent.ExecutorService IO = java.util.concurrent.Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "JOUST chain reads");
+        t.setDaemon(true);
+        return t;
+    });
     private final URI base;
     private final @Nullable String projectId;
     private final HttpClient http;
@@ -38,6 +48,7 @@ public final class BlockfrostApi {
     /**
      * @param baseUrl   the API root, e.g. {@code http://localhost:8080/api/v1} or {@code https://cardano-preprod.blockfrost.io/api/v0}
      * @param projectId the Blockfrost project id, or null; refused over plain HTTP
+     * @param timeout   the default deadline of one request (headers and body)
      */
     public BlockfrostApi(String baseUrl, @Nullable String projectId, Duration timeout) {
         String b = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
@@ -49,7 +60,13 @@ public final class BlockfrostApi {
         }
         this.projectId = projectId == null || projectId.isEmpty() ? null : projectId;
         this.timeout = timeout;
-        this.http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).connectTimeout(timeout).build();
+        this.http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).connectTimeout(timeout)
+                .version(HttpClient.Version.HTTP_1_1).executor(IO).build();
+    }
+
+    /** The configured endpoint (for a binding's identity). */
+    public URI base() {
+        return base;
     }
 
     /** Bytes of response bodies read so far (for a call's byte budget). */
@@ -57,30 +74,65 @@ public final class BlockfrostApi {
         return bytesRead;
     }
 
-    /** GET {@code path} (already validated and encoded by the caller); null on 404. */
+    /** GET {@code path} within this API's default timeout; null on 404. */
     public @Nullable JsonNode get(String path) throws Failed, InterruptedException {
-        HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(base + path)).timeout(timeout).GET()
+        return get(path, System.nanoTime() + timeout.toNanos());
+    }
+
+    /**
+     * GET {@code path} (already validated and encoded by the caller) before the monotonic {@code deadlineNanos}: the
+     * headers and the whole body must arrive by then. Null on 404.
+     */
+    public @Nullable JsonNode get(String path, long deadlineNanos) throws Failed, InterruptedException {
+        return get(path, deadlineNanos, MAX_RESPONSE);
+    }
+
+    /** As {@link #get(String, long)}, reading at most {@code maxBytes} of body (a call's remaining budget; M31B-SEC-6). */
+    public @Nullable JsonNode get(String path, long deadlineNanos, long maxBytes) throws Failed, InterruptedException {
+        int cap = (int) Math.max(0, Math.min(MAX_RESPONSE, maxBytes));
+        long left = deadlineNanos - System.nanoTime();
+        if (left <= 0) throw new Failed("the read did not finish in time");
+        HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(base + path)).timeout(Duration.ofNanos(left)).GET()
                 .header("Accept", "application/json");
         if (projectId != null) rb.header("project_id", projectId);
+        CompletableFuture<HttpResponse<InputStream>> f = http.sendAsync(rb.build(), HttpResponse.BodyHandlers.ofInputStream());
         HttpResponse<InputStream> r;
         try {
-            r = http.send(rb.build(), HttpResponse.BodyHandlers.ofInputStream());
-        } catch (IOException e) {
-            throw new Failed("the provider could not be reached (" + e.getClass().getSimpleName() + ")");
+            r = f.get(Math.max(1, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            f.cancel(true);
+            throw new Failed("the provider did not answer " + kindOf(path) + " in time");
+        } catch (ExecutionException e) {
+            throw new Failed("the provider could not be reached (" + e.getCause().getClass().getSimpleName() + ")");
         }
-        byte[] body;
-        try (InputStream in = r.body()) {
-            body = in.readNBytes(MAX_RESPONSE + 1);
-        } catch (IOException e) {
+        InputStream in = r.body();
+        CompletableFuture<byte[]> body = CompletableFuture.supplyAsync(() -> {
+            try (in) {
+                return in.readNBytes(cap + 1);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }, IO);
+        byte[] b;
+        try {
+            b = body.get(Math.max(1, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            try {
+                in.close();
+            } catch (IOException ignored) {
+                // aborting a stalled body
+            }
+            throw new Failed("the provider's answer to " + kindOf(path) + " did not arrive in time");
+        } catch (ExecutionException e) {
             throw new Failed("the provider's answer was cut off");
         }
-        bytesRead += body.length;
+        bytesRead += b.length;
         int status = r.statusCode();
         if (status == 404) return null;
         if (status < 200 || status > 299) throw new Failed("the provider answered HTTP " + status + " for " + kindOf(path));
-        if (body.length > MAX_RESPONSE) throw new Failed("the provider's answer is larger than 16 MiB");
+        if (b.length > cap) throw new Failed(cap < MAX_RESPONSE ? "the answer exceeds this call's read budget" : "the provider's answer is larger than 16 MiB");
         try {
-            return HostJson.MAPPER.readTree(body);
+            return HostJson.MAPPER.readTree(b);
         } catch (IOException e) {
             throw new Failed("the provider's answer is not JSON");
         }
@@ -90,6 +142,8 @@ public final class BlockfrostApi {
     private static String kindOf(String path) {
         String p = path.startsWith("/") ? path.substring(1) : path;
         int i = p.indexOf('/');
-        return i < 0 ? p : p.substring(0, i);
+        int q = p.indexOf('?');
+        int end = i < 0 ? (q < 0 ? p.length() : q) : i;
+        return p.substring(0, end);
     }
 }
