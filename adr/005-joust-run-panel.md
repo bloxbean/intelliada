@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r14). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r15). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -832,8 +832,13 @@ invariant.
   the same key; the entry's id is derived from the key, so a retry reuses it and rewrites a lost phrase from the legacy
   copy; the legacy store is never written. Every legacy listing (`AccountService.getAccounts`, behind every chooser and the
   account list) hides an account whose payment key the JOUST store holds, read from a lock-free set of public
-  fingerprints, so the key is selectable under one class only. The legacy copy stays in the old store until the user or
-  #10 removes it; the dialog says the old store protects it less well. **Durability:** a new testnet or mainnet entry is
+  fingerprints, so the key is selectable under one class only. The legacy copy stays in the old store, hidden while the JOUST
+  copy exists; it can be deleted from IntelliAda only by #10's fix, or by removing the JOUST copy first (the legacy
+  account then reappears in the legacy list, and the Remove dialog says so). The migration dialog says the old store
+  protects it less well. A copy whose phrase was lost (a keychain reset) is offered for repair in the migration chooser,
+  found by its exact address in the unfiltered legacy store. Watch-only legacy entries hold no key and stay listed.
+  M3.3b's signing takes accounts only through `forSession`, which offers an entry only when the class stored with its
+  secret is the session's (M32-SEC-13, M32-SEC-14, M32-DES-18, M32-CDX-27, M32-CDX-29). **Durability:** a new testnet or mainnet entry is
   *unconfirmed* until a later IDE session reads its phrase back, and the user is offered a backup at creation. **Class
   binding:** the class is stored with the secret (the credential's user name), and an entry whose metadata class differs
   is never served. **One step across stores:** the ownership check and the write take one monitor for both stores; an
@@ -1008,3 +1013,4 @@ Security and design approved round 8.
 - **r12** (2026-11-26): §12 E1a continuations; E7 and L37 (the checker lock, delegated). From M3.1b round 4 and M3.3a.
 - **r13** (2026-11-26): §12 E8 and L38 (delegated). From M3.2 round 1.
 - **r14** (2026-11-26): §12 E8a and L39 (delegated). From M3.2 round 2.
+- **r15** (2026-11-26): §12 E8a wording (the hidden legacy copy, repair, watch-only entries, forSession). From M3.2 round 3.
