@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r15). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r16). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -845,6 +845,17 @@ invariant.
   unreadable legacy store refuses rather than counting as one without the key. (M32-CDX-12..19, M32-SEC-9..12,
   M32-DES-12..16.)
 
+- **E9. Anchor and checker rules refined in M3.3a (D13, I9, I24, I27).**
+  - **One entry per class.** A class an anchor rests on (the validator, `OutputVerifier`, `MapVerifier`) must be in exactly one launch entry. Otherwise a dependency shipping the validator's real class with a self-consistent blueprint of its own would decide the contract while the host agrees (M33A-SEC-1).
+  - **One blueprint, no repeated names.** The owning entry holds exactly one blueprint of the name, and a jar whose directory repeats an entry name is refused (M33A-SEC-2, -CDX-7).
+  - **Resolution for the launch JDK.** Classes resolve as the launch spec's JVM loads them: base entries, and versioned copies only in `Multi-Release` jars, at most that version (M33A-CDX-8).
+  - **Network.** Anchors carry their network.
+  - **Production gates.** The host's `initialize` catalog and each contract's `deployment` are checked in the live session (launch, and before the first `prerequisites`/`publish`/`prepare`); a difference stops the host (M33A-CDX-1, -CDX-2). `JoustSigningGate` composes D12 with the rule that the verifiers come from the reviewed `julc-state-verifier` jar's own entry (M33A-DES-3).
+  - **Checker process.** stdin and stdout are supervised and the deadline runs from launch; a verdict counts only after the whole input was delivered and the output read to its end; every unfinished exit kills and reaps the process tree; the JVM runs without the attach mechanism or perf data.
+  - **I9.** It holds as "no JuLC class on the plugin class path, no JOUST class outside `joust-verifier/`". IntelliAda's earlier JuLC integration keeps its compiler and VM in `julc-runtime/`, loaded by its own class loader, which is the one other place JuLC classes may be.
+  - **The reviewed set** (D12) must be the bundled kit's: the same label, `julc-state-api` hash and `julc-state-runtime` hash. The build checks this.
+  - **Deferred to M3.3b's end-to-end runs:** the verifier and staking deployment fields against a live host (Dex, Token).
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
@@ -1014,3 +1025,4 @@ Security and design approved round 8.
 - **r13** (2026-11-26): §12 E8 and L38 (delegated). From M3.2 round 1.
 - **r14** (2026-11-26): §12 E8a and L39 (delegated). From M3.2 round 2.
 - **r15** (2026-11-26): §12 E8a wording (the hidden legacy copy, repair, watch-only entries, forSession). From M3.2 round 3.
+- **r16** (2026-11-26): §12 E9, anchor and checker rules from M3.3a round 1.
