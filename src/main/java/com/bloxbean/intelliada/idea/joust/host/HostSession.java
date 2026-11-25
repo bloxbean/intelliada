@@ -65,6 +65,9 @@ public final class HostSession implements AutoCloseable {
     private final Runnable stop;
     private final Reads reads;
     private final Consumer<String> onEnd;
+    /** Further end listeners: a panel that adopts a running host observes its end too (M31B-CDX-36). */
+    private final java.util.List<Consumer<String>> endListeners = new java.util.ArrayList<>();
+    private String endMessage;
     private final ExecutorService readPool = Executors.newFixedThreadPool(2, daemon("JOUST host read"));
     private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(daemon("JOUST host watchdog"));
     private final Set<String> reverseIds = ConcurrentHashMap.newKeySet();
@@ -517,13 +520,36 @@ public final class HostSession implements AutoCloseable {
         }
     }
 
+    /** Tells {@code listener} why the session ended: when it ends, or at once if it already has. */
+    public void onEnded(Consumer<String> listener) {
+        String already;
+        synchronized (lock) {
+            already = endMessage;
+            if (already == null) endListeners.add(listener);
+        }
+        if (already != null) notify(listener, already);
+    }
+
+    private static void notify(Consumer<String> l, String why) {
+        try {
+            l.accept(why);
+        } catch (RuntimeException ignored) {
+            // a listener's failure does not keep the session alive
+        }
+    }
+
     private void end(String why, boolean violation) {
         Call c;
+        java.util.List<Consumer<String>> listeners;
+        String message = violation ? "protocol violation: " + why : why;
         synchronized (lock) {
             if (ended != null) return;
             violated = violation;
             ended = why;
+            endMessage = message;
             c = current;
+            listeners = java.util.List.copyOf(endListeners);
+            endListeners.clear();
         }
         try {
             stop.run();
@@ -533,11 +559,8 @@ public final class HostSession implements AutoCloseable {
             readPool.shutdownNow();
             watchdog.shutdownNow();
             cancelSender.shutdownNow();
-            try {
-                onEnd.accept(violation ? "protocol violation: " + why : why);
-            } catch (RuntimeException ignored) {
-                // a listener's failure does not keep the session alive
-            }
+            notify(onEnd, message);
+            for (Consumer<String> l : listeners) notify(l, message);
         }
     }
 

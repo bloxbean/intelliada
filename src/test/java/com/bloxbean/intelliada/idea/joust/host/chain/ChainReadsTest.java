@@ -381,6 +381,8 @@ public class ChainReadsTest {
         JsonNode cont = reads.read("30.3", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\",\"cursor\":\"" + first.path("more").textValue() + "\"}"));
         assertTrue("a cursor's older point is never sent after a later one (M31B-CDX-29): " + cont.path("tip"), cont.has("failed"));
         assertEquals(105, cont.path("tip").path("height").intValue());
+        assertFalse("no successor cursor for a stale list (M31B-CDX-37)", cont.has("more"));
+        assertEquals("its reservation is released", 0, reads.reservedForTests());
     }
 
     @Test
@@ -428,6 +430,14 @@ public class ChainReadsTest {
         assertTrue("the other read cannot spend the reserved chunks (M31B-SEC-9)", other.has("failed"));
         JsonNode cont = r.read("34.3", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\",\"cursor\":\"" + first.path("more").textValue() + "\"}"));
         assertTrue("the list is delivered whole: " + cont.path("failed"), cont.has("value"));
+        // M31B-SEC-10: an intervening read whose provider body hits the request cap fails into the failure reserve;
+        // the reserved continuation is still delivered.
+        routes.put("/api/v1/scripts/datum/" + dh + "/cbor", "{\"cbor\":\"" + "d8799f" + "42".repeat(200_000) + "ff" + "\"}");
+        ChainReads r2 = new ChainReads(new BlockfrostApi(base, null, Duration.ofSeconds(5)), 0, cost + 120_000);
+        JsonNode f2 = r2.read("35.1", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\"}"));
+        assertTrue(r2.read("35.2", q("{\"kind\":\"datum\",\"hash\":\"" + dh + "\"}")).has("failed"));
+        JsonNode c2b = r2.read("35.3", q("{\"kind\":\"utxos\",\"address\":\"" + A + "\",\"cursor\":\"" + f2.path("more").textValue() + "\"}"));
+        assertTrue("the reserved continuation is delivered (M31B-SEC-10): " + c2b.path("failed"), c2b.has("value"));
     }
 
     @Test

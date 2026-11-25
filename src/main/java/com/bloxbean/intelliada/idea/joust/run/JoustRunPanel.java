@@ -83,10 +83,10 @@ public final class JoustRunPanel implements Disposable {
         actions.add(button("Deployment", (s, c, i) -> s.deployment(c)));
         actions.add(button("Prerequisites", (s, c, i) -> s.prerequisites(c)));
         actions.add(button("Instances", (s, c, i) -> listInstances(s, c)));
-        actions.add(button("State of instance", (s, c, i) -> s.view(c, required(i), null, null)));
-        actions.add(button("Objects of instance", (s, c, i) -> listObjects(s, c, required(i))));
-        actions.add(button("Next page", (s, c, i) -> nextPage(s, c, i)));
-        actions.add(button("Named view…", (s, c, i) -> {
+        actions.add(button("State of instance", true, (s, c, i) -> s.view(c, required(i), null, null)));
+        actions.add(button("Objects of instance", true, (s, c, i) -> listObjects(s, c, required(i))));
+        actions.add(button("Next page", true, (s, c, i) -> nextPage(s, c, i)));
+        actions.add(button("Named view…", true, (s, c, i) -> {
             String[] in = ask("View name", "Arguments (JSON object in the description's encoding)", "{}");
             if (in == null) return null;
             JsonNode args = HostJson.parse(in[1].getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -272,8 +272,13 @@ public final class JoustRunPanel implements Disposable {
                     // Stop at any point cancels this launch: before the host starts it is never started, and a host
                     // that started meanwhile is stopped (M31B-CDX-17).
                     s = l.run(x -> JoustRunSession.bind(n.node()),
-                            b -> new JoustRunSession(b, service.start(guard, m.dir(), JoustRunSession.initParams(b.identity()),
-                                    b.key(), JoustRunSession.reads(b), why -> ui(() -> ended(l, why)))),
+                            b -> {
+                                JoustHostService.Running r = service.start(guard, m.dir(), JoustRunSession.initParams(b.identity()),
+                                        b.key(), JoustRunSession.reads(b), why -> { });
+                                // New or reused, the panel observes the end of the host it adopts (M31B-CDX-36).
+                                r.session().onEnded(why -> ui(() -> ended(l, why)));
+                                return new JoustRunSession(b, r);
+                            },
                             started -> service.stop(started.running().moduleDir()),
                             indicator::isCanceled);
                 } catch (InterruptedException e) {
@@ -294,7 +299,7 @@ public final class JoustRunPanel implements Disposable {
                             // running (M31B-CDX-31).
                             status.setText("Not running");
                             String e = l.ended() != null ? l.ended() : ok.running().session().ended();
-                            details.setText("The host ended: " + PlainText.literal(String.valueOf(e), 2000));
+                            details.setText(e == null ? "Stopped." : "The host ended: " + PlainText.literal(e, 2000));   // M31B-DES-18
                             listDescriptions();
                             updateButtons();
                         } else if (ok != null) {
@@ -368,6 +373,11 @@ public final class JoustRunPanel implements Disposable {
     }
 
     private JButton button(String label, ContractCall call) {
+        return button(label, false, call);
+    }
+
+    /** An action; {@code perInstance} results are shown only while their instance is still selected (M31B-CDX-35). */
+    private JButton button(String label, boolean perInstance, ContractCall call) {
         JButton b = new JButton(label);
         b.addActionListener(e -> {
             // The session, contract and instance are captured here, on the EDT (M31B-CDX-19).
@@ -386,7 +396,7 @@ public final class JoustRunPanel implements Disposable {
                     JsonNode result = call.apply(s, c, inst);
                     if (result == null) {
                         ui(() -> {
-                            if (owns(seq, s, c)) details.setText("");
+                            if (owns(seq, s, c, perInstance, inst)) details.setText("");
                         });
                         return;
                     }
@@ -398,7 +408,7 @@ public final class JoustRunPanel implements Disposable {
                 }
                 String shown = PlainText.literal(text, 200_000);
                 ui(() -> {
-                    if (owns(seq, s, c)) details.setText(shown);   // a stale result never replaces a newer one
+                    if (owns(seq, s, c, perInstance, inst)) details.setText(shown);   // a stale result never replaces a newer one
                 });
             });
         });
@@ -406,8 +416,9 @@ public final class JoustRunPanel implements Disposable {
     }
 
     /** Whether action {@code seq} still owns the result pane: the latest action, on the same session and contract. */
-    private boolean owns(long seq, JoustRunSession s, String contract) {
-        return seq == actionSeq && session == s && contract.equals(contractList.getSelectedValue());
+    private boolean owns(long seq, JoustRunSession s, String contract, boolean perInstance, @Nullable String instance) {
+        return seq == actionSeq && session == s && contract.equals(contractList.getSelectedValue())
+                && (!perInstance || java.util.Objects.equals(instance, instanceList.getSelectedValue()));
     }
 
     /** The first page of a contract's instances; the list and the continuation are replaced together on the EDT. */
