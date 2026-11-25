@@ -270,8 +270,12 @@ public final class JoustRunSession {
         }
     }
 
+    /** Tests: contracts whose anchors are made unavailable, to drive the read-only path live (M33A-DES-20). */
+    final java.util.Set<String> unanchorableForTests = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /** The contract's anchors, derived from the verified snapshot (never from the host). */
     public com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Anchors anchors(String contract) throws Exception {
+        if (unanchorableForTests.contains(contract)) throw new com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.Refused("made unavailable by a test");
         var a = anchors.get(contract);
         if (a == null) {
             a = com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.derive(running.snapshot(), contract,
@@ -368,8 +372,35 @@ public final class JoustRunSession {
         java.util.List<String> unanchored = new java.util.ArrayList<>();
         for (var e : listed.entrySet()) {
             JsonNode entry = e.getValue();
-            // Each fact as soon as its evidence exists: the contract's own script and description, even when a shared
-            // verifier cannot be anchored (M33A-CDX-28); full anchoring only decides whether signing is possible.
+            // Each fact as soon as its evidence exists (M33A-CDX-28, -CDX-37). First the status, from the description
+            // alone (as the host resolves it), before any script is resolved.
+            boolean params;
+            try {
+                var desc = snapshot.anchorsNamed("META-INF/joust/" + e.getKey() + ".json");
+                params = HostJson.parseResource(desc.get(0).bytes()).path("x-joust").has("params");
+            } catch (HostJson.Malformed | IndexOutOfBoundsException m) {
+                return new Catalog("the build's description of " + e.getKey() + " cannot be read", java.util.List.of());
+            }
+            JsonNode served = entry.get("served"), unsupported = entry.get("unsupported");
+            if (unsupported != null && (!unsupported.isTextual() || unsupported.textValue().isEmpty())) {
+                // Protocol 1: a non-empty string (M33A-CDX-38).
+                return new Catalog("the host reports " + e.getKey() + " with a malformed unsupported reason", java.util.List.of());
+            }
+            boolean both = served != null && unsupported != null;
+            if (params) {
+                if (served != null || unsupported == null || !"params".equals(unsupported.textValue())) {
+                    return new Catalog("the host reports parameterized " + e.getKey() + " as served=" + served + ", unsupported=" + unsupported,
+                            java.util.List.of());
+                }
+            } else if (both || (served == null && unsupported == null) || (served != null && !(served.isBoolean() && served.booleanValue()))) {
+                return new Catalog("the host reports " + e.getKey() + "'s status as served=" + served + ", unsupported=" + unsupported,
+                        java.util.List.of());
+            } else if (unsupported != null && "params".equals(unsupported.textValue())) {
+                return new Catalog("the host reports " + e.getKey() + " as parameterized; its description is not", java.util.List.of());
+            } else if (unsupported != null) {
+                unanchored.add(e.getKey() + " is not served by this host (" + unsupported.textValue() + ")");
+            }
+            // Then the script hash, from the contract's own script, even when a shared verifier cannot be anchored.
             com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.ContractScript cs;
             try {
                 cs = com.bloxbean.intelliada.idea.joust.verifier.JoustAnchors.contractScript(snapshot, e.getKey(), javaFeature);
@@ -383,36 +414,17 @@ public final class JoustRunSession {
                 unanchored.add(e.getKey() + " cannot be anchored: " + r.getMessage());
             }
             String h = cs.hash();
-            JsonNode x = cs.description().path("x-joust");
-            boolean params = x.has("params");
             ObjectNode want = HostJson.object();
             if (params) {
                 want.put("unapplied", h);
             } else {
                 want.put("spend", h).put("mint", h);
+                JsonNode x = cs.description().path("x-joust");
                 if (x.path("stakeSelf").asBoolean(false) || x.has("purposes")) want.put("stake", h);
             }
             if (!want.equals(entry.get("scriptHashes"))) {
                 return new Catalog("the host reports " + e.getKey() + "'s script hashes as " + entry.get("scriptHashes")
                         + ", the build's are " + want, java.util.List.of());
-            }
-            // The status (M33A-CDX-16): a parameterized contract is never served; a served one says so. Another contract-
-            // level reason a newer JOUST may give makes the contract read-only, not a conflict (M33A-DES-19).
-            JsonNode served = entry.get("served"), unsupported = entry.get("unsupported");
-            boolean both = served != null && unsupported != null;
-            if (params) {
-                if (served != null || unsupported == null || !"params".equals(unsupported.textValue())) {
-                    return new Catalog("the host reports parameterized " + e.getKey() + " as served=" + served + ", unsupported=" + unsupported,
-                            java.util.List.of());
-                }
-            } else if (both || (served == null && unsupported == null) || (served != null && !(served.isBoolean() && served.booleanValue()))) {
-                return new Catalog("the host reports " + e.getKey() + "'s status as served=" + served + ", unsupported=" + unsupported,
-                        java.util.List.of());
-            } else if (unsupported != null && "params".equals(unsupported.textValue())) {
-                // The description says it is not parameterized: an established fact the host contradicts.
-                return new Catalog("the host reports " + e.getKey() + " as parameterized; its description is not", java.util.List.of());
-            } else if (unsupported != null) {
-                unanchored.add(e.getKey() + " is not served by this host (" + unsupported.asText() + ")");
             }
         }
         return new Catalog(null, java.util.List.copyOf(unanchored));

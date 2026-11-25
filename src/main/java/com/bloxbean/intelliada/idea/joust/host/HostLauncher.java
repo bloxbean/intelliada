@@ -30,7 +30,7 @@ public final class HostLauncher {
      * A started host: its process, the drained stderr, and every descendant seen while it lived (M31A-CDX-22), so a
      * helper the host started is still ended after the host itself has exited.
      */
-    public record Started(Process process, HostStderr stderr, java.util.Set<ProcessHandle> owned) {
+    public record Started(Process process, HostStderr stderr, java.util.Set<ProcessHandle> owned, int javaFeature) {
         /** Ends the root and every owned descendant; true once all of them are gone. */
         public boolean stop() {
             HostLauncher.stop(process);
@@ -105,7 +105,7 @@ public final class HostLauncher {
     /** Starts the host. The caller has the user's trust decision and confirmation (D1, D11 step 5). */
     public static Started start(HostSpec spec, HostSnapshot snapshot, Path projectRoot, int stderrCapBytes) throws IOException {
         Path java = spec.java();
-        javaVersion(java);
+        int feature = javaVersion(java);   // read immediately before the start, and carried (M33A-CDX-40)
         if (!Files.isDirectory(projectRoot, LinkOption.NOFOLLOW_LINKS)) throw new IOException("the project directory is missing");
         ProcessBuilder pb = new ProcessBuilder(command(spec, snapshot));
         pb.directory(projectRoot.toFile());
@@ -118,7 +118,7 @@ public final class HostLauncher {
         STARTS.incrementAndGet();
         HostStderr err = new HostStderr(stderrCapBytes);
         drain(p.getErrorStream(), err);
-        return new Started(p, err, track(p));
+        return new Started(p, err, track(p), feature);
     }
 
     /**

@@ -117,12 +117,18 @@ public final class JoustAnchors {
      * function for the catalog check and the signing gate (M33A-DES-13).
      */
     public static java.util.List<String> describedContracts(HostSnapshot snapshot) throws Refused {
+        // Canonical names, as the host enumerates them; each resolved as its class loader resolves it: the first entry
+        // that can answer it, a directory in any casing (M33A-CDX-36).
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (HostSnapshot.Anchor a : snapshot.anchors()) {
+            String path = a.path();
+            if (path.startsWith("META-INF/joust/") && path.endsWith(".json") && path.indexOf('/', "META-INF/joust/".length()) < 0) names.add(path);
+        }
         java.util.List<String> out = new java.util.ArrayList<>();
-        for (var e : snapshot.firstByPath().entrySet()) {
-            String path = e.getKey();
-            if (!path.startsWith("META-INF/joust/") || !path.endsWith(".json")) continue;
+        for (String path : names) {
+            HostSnapshot.Anchor first = snapshot.anchorsNamed(path).get(0);
             try {
-                if (parseResource(e.getValue().bytes()).path("x-joust").isMissingNode()) continue;
+                if (parseResource(first.bytes()).path("x-joust").isMissingNode()) continue;
             } catch (HostJson.Malformed m) {
                 throw new Refused("the build's " + path + " is not valid JSON");
             }
@@ -144,8 +150,7 @@ public final class JoustAnchors {
         // The description: every copy on the class path must be the same bytes.
         String descPath = "META-INF/joust/" + contract + ".json";
         byte[] desc = null;
-        for (HostSnapshot.Anchor a : snapshot.anchors()) {
-            if (!a.path().equals(descPath)) continue;
+        for (HostSnapshot.Anchor a : snapshot.anchorsNamed(descPath)) {   // every copy that can answer the name (M33A-CDX-36)
             if (desc == null) desc = a.bytes();
             else if (!Arrays.equals(desc, a.bytes())) throw new Refused("two different descriptions of " + contract + " are on the class path");
         }
@@ -172,10 +177,7 @@ public final class JoustAnchors {
      * accepted, otherwise strict (M33A-CDX-29). Protocol frames keep their own strict parser.
      */
     public static JsonNode parseResource(byte[] b) throws HostJson.Malformed {
-        if (b.length >= 3 && (b[0] & 0xff) == 0xef && (b[1] & 0xff) == 0xbb && (b[2] & 0xff) == 0xbf) {
-            b = Arrays.copyOfRange(b, 3, b.length);
-        }
-        return HostJson.parse(b);
+        return HostJson.parseResource(b);   // the host's byte-stream reading (M33A-CDX-39)
     }
 
     private record Resolved(int entry, String hash) {
@@ -204,8 +206,7 @@ public final class JoustAnchors {
                         : c.equals(simple + ".class") || c.endsWith("/" + simple + ".class")).count();
         if (sameName != 1) throw new Refused("the class-path entry holding " + simple + " holds " + sameName + " classes of that name");
         String blueprint = "META-INF/plutus/" + simple + ".plutus.json";
-        List<HostSnapshot.Anchor> copies = new ArrayList<>();
-        for (HostSnapshot.Anchor a : snapshot.anchors()) if (a.path().equals(blueprint)) copies.add(a);
+        List<HostSnapshot.Anchor> copies = snapshot.anchorsNamed(blueprint);   // any casing in a directory (M33A-CDX-36)
         List<HostSnapshot.Anchor> owned = copies.stream().filter(a -> a.ordinal() == entry).toList();
         if (owned.isEmpty()) throw new Refused("no blueprint " + blueprint + " beside " + simple);
         // Exactly one in the owning entry: a merged jar with two entries of that name is ambiguous (M33A-CDX-7).

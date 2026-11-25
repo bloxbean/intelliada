@@ -67,8 +67,22 @@ public class JoustRunChecksPlatformTest extends BasePlatformTestCase {
             ObjectNode extra = init.deepCopy();
             ((ArrayNode) extra.get("contracts")).addObject().put("name", "org.evil.Extra").putObject("scriptHashes").put("unapplied", "11".repeat(28));
             assertNotNull(JoustRunSession.catalogDifference(extra, live.running().snapshot(), 0, java));
-            // A deployment that differs from the derived one stops the host before prerequisites (M33A-CDX-1).
             String contract = init.path("contracts").get(0).path("name").textValue();
+            // Read-only, live (M33A-DES-20): without anchors the deployment still answers, prerequisites refuse with the
+            // reason, and the host keeps running.
+            live.unanchorableForTests.add(contract);
+            JsonNode plain = PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread(() -> live.deployment(contract)), 60_000);
+            assertTrue(plain.has("addresses"));
+            try {
+                PlatformTestUtil.waitForFuture(ApplicationManager.getApplication().executeOnPooledThread(() -> live.prerequisites(contract)), 60_000);
+                fail("prerequisites were sent without anchors");
+            } catch (Throwable expected) {
+                assertTrue(String.valueOf(expected), String.valueOf(expected).contains("made unavailable by a test"));
+            }
+            assertNotNull(live.signingDisabled());
+            assertTrue("the host still runs", live.running().process().isAlive());
+            live.unanchorableForTests.clear();
+            // A deployment that differs from the derived one stops the host before prerequisites (M33A-CDX-1).
             JoustAnchors.Anchors real = live.anchors(contract);
             JoustAnchors.Script forged = new JoustAnchors.Script(real.contract().language(), "00".repeat(28), real.contract().address(),
                     real.contract().reward());

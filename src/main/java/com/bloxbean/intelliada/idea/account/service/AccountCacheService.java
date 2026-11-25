@@ -78,7 +78,9 @@ public class AccountCacheService {
                 if (java.nio.file.Files.notExists(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
                 // The shared temp directory counts only when this user made it: a real directory, owned by this user,
                 // writable by no one else (anyone can create /tmp/.intelliada; M33A-SEC-5).
-                if (!f.startsWith(System.getProperty("user.home")) && !ownPrivateDirectory(f)) {
+                // Only the exact home cache is exempt; any other folder, under the profile or not, is checked (M33A-CDX-42).
+                boolean homeCache = f.toAbsolutePath().normalize().equals(java.nio.file.Path.of(System.getProperty("user.home"), ".intelliada").toAbsolutePath().normalize());
+                if (!homeCache && !ownPrivateDirectory(f)) {
                     // Untrusted and not in use: skipped. Untrusted but the legacy store's active folder (its chooser
                     // and writer use it): the ownership decision is refused, never made without it (M33A-CDX-21).
                     String active = getAccountCacheFolder();
@@ -112,8 +114,8 @@ public class AccountCacheService {
             }
             if (!owner.equals(me)) return false;
             if (!java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
-                // Windows: trusted only inside the user's own profile (its per-user temp folder), whose ACL is the user's.
-                return f.toAbsolutePath().normalize().startsWith(java.nio.file.Path.of(System.getProperty("user.home")).toAbsolutePath().normalize());
+                // Without POSIX permissions the effective write access is not checked here, so a fallback is not trusted.
+                return false;
             }
             var perms = java.nio.file.Files.getPosixFilePermissions(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
             return !perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)

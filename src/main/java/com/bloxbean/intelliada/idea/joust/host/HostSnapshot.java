@@ -143,7 +143,11 @@ public final class HostSnapshot {
 
     /** A class file's plain name, or null if not a class. */
     static String className(String entry) {
-        if (!entry.endsWith(".class") || entry.endsWith("module-info.class") || entry.endsWith("package-info.class")) return null;
+        // Any casing of the suffix: a directory on a case-insensitive file system serves Foo.CLASS as Foo.class
+        // (M33A-CDX-35); a jar entry named so is never loaded, and over-reporting it fails closed.
+        String l = entry.toLowerCase(java.util.Locale.ROOT);
+        if (!l.endsWith(".class") || l.endsWith("module-info.class") || l.endsWith("package-info.class")) return null;
+        if (!entry.endsWith(".class")) entry = entry.substring(0, entry.length() - 6) + ".class";
         java.util.regex.Matcher m = VERSIONED.matcher(entry);
         return m.matches() ? m.group(2) : entry;
     }
@@ -274,7 +278,7 @@ public final class HostSnapshot {
                         String h = sds != null ? copySecure(sds, rel, dst, total) : copyFile(noLinkBelow(e.path(), rel), dst, total);
                         if (!h.equals(e.files().get(rel))) throw new HostSpec.Invalid("a class-path file changed since joustHostSpec ran: " + rel);
                         lines.append(h).append(' ').append(o).append(" dir ").append(rel).append('\n');
-                        if (isAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
+                        if (isDirectoryAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
                         addClass(classes, versioned, o, rel, classCount);
                     }
                 }
@@ -411,6 +415,39 @@ public final class HostSnapshot {
     static boolean isAnchor(String rel) {
         return (rel.startsWith("META-INF/joust/") && rel.endsWith(".json") && rel.indexOf('/', "META-INF/joust/".length()) < 0)
                 || (rel.startsWith("META-INF/plutus/") && rel.endsWith(".json"));
+    }
+
+    /**
+     * An anchor in a directory entry, whose file system may ignore case: a differently cased path can answer the canonical
+     * name the host's class loader asks for (M33A-CDX-36).
+     */
+    static boolean isDirectoryAnchor(String rel) {
+        return isAnchor(rel) || isAnchor(caseFolded(rel));
+    }
+
+    /** The anchor prefixes and suffix in their canonical case, the rest of the path as written. */
+    private static String caseFolded(String rel) {
+        String l = rel.toLowerCase(java.util.Locale.ROOT);
+        for (String prefix : new String[]{"META-INF/joust/", "META-INF/plutus/"}) {
+            if (l.startsWith(prefix.toLowerCase(java.util.Locale.ROOT))) {
+                String rest = rel.substring(prefix.length());
+                if (l.endsWith(".json")) rest = rest.substring(0, rest.length() - 5) + ".json";
+                return prefix + rest;
+            }
+        }
+        return rel;
+    }
+
+    /**
+     * The anchors that can answer {@code path}, in class-path order: an exact name in a jar; any casing of it in a
+     * directory (M33A-CDX-36).
+     */
+    public List<Anchor> anchorsNamed(String path) {
+        List<Anchor> out = new ArrayList<>();
+        for (Anchor a : anchors) {
+            if (directories.contains(a.ordinal()) ? a.path().equalsIgnoreCase(path) : a.path().equals(path)) out.add(a);
+        }
+        return out;
     }
 
     private static byte[] readCapped(Path p, long[] total) throws HostSpec.Invalid, IOException {

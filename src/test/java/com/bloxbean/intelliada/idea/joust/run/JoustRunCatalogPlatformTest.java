@@ -31,7 +31,13 @@ public class JoustRunCatalogPlatformTest extends BasePlatformTestCase {
                 if (p.getFileName().toString().matches("julc-state-verifier-0\\.1\\.0-pre3-01bad1f-SNAPSHOT\\.jar")) verifierJar = p;
             }
         }
-        return verifierJar != null;
+        if (verifierJar == null) {
+            Path libs = root.resolve("julc-state-verifier/build/libs");
+            if (JoustTestTools.required()) throw new AssertionError(test + " needs julc-state-verifier-0.1.0-pre3-01bad1f-SNAPSHOT.jar in " + libs);
+            System.out.println("JOUST-SKIPPED " + test + ": no verifier jar in " + libs);   // M33A-CDX-44
+            return false;
+        }
+        return true;
     }
 
     private static ObjectNode init(String status, String value) {

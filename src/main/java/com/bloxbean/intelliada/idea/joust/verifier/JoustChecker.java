@@ -299,13 +299,19 @@ public final class JoustChecker {
                 } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException ignored) {
                     // reported by the refusal already returned
                 }
-                for (java.io.Closeable c : new java.io.Closeable[]{p.getOutputStream(), p.getInputStream(), p.getErrorStream()}) {
-                    try {
-                        c.close();
-                    } catch (IOException ignored) {
-                        // closing after the signals
+                // The pipes are closed on a daemon thread: a write blocked on a full pipe never holds the caller past its
+                // deadline (M33A-CDX-41).
+                Thread closer = new Thread(() -> {
+                    for (java.io.Closeable c : new java.io.Closeable[]{p.getOutputStream(), p.getInputStream(), p.getErrorStream()}) {
+                        try {
+                            c.close();
+                        } catch (IOException ignored) {
+                            // closing after the signals
+                        }
                     }
-                }
+                }, "JOUST checker cleanup");
+                closer.setDaemon(true);
+                closer.start();
                 if (interrupted) Thread.currentThread().interrupt();
             }
         }

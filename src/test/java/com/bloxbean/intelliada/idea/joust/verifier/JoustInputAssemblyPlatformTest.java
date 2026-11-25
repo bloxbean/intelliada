@@ -180,16 +180,19 @@ public class JoustInputAssemblyPlatformTest extends BasePlatformTestCase {
             // The one rejection whose recorded node was mutated on purpose (its holder never queried): an honest
             // assembly always queries every holder, so it is named and counted, never silently skipped (M33A-CDX-23).
             if ((!mine.equals(stripped) || !subset) && "holder-not-queried".equals(v.path("mutation").asText())) {
-                // Its only difference: the recorded node lacks exactly one holder that the honest assembly queried (M33A-CDX-34).
-                ObjectNode mineButNode = mine.deepCopy(), theirsButNode = stripped.deepCopy();
-                JsonNode myNode = mineButNode.remove("node"), theirNode = theirsButNode.remove("node");
-                java.util.Set<String> mine2 = new java.util.HashSet<>(), theirs2 = new java.util.HashSet<>();
-                myNode.path("scriptsAt").fieldNames().forEachRemaining(mine2::add);
-                theirNode.path("scriptsAt").fieldNames().forEachRemaining(theirs2::add);
-                assertEquals("only node differs", theirsButNode, mineButNode);
-                assertTrue(mine2.containsAll(theirs2));
-                assertEquals("exactly one holder not queried", 1, mine2.size() - theirs2.size());
-                assertEquals(theirNode.path("registrations"), myNode.path("registrations"));
+                // Its only difference: the recorded node lacks exactly one holder that the honest assembly queried. With
+                // that holder removed from our copy, the whole inputs are equal (M33A-CDX-34, -CDX-43).
+                assertTrue("resolved agrees", subset);
+                ObjectNode trimmed = mine.deepCopy();
+                ObjectNode ourScripts = (ObjectNode) trimmed.path("node").path("scriptsAt");
+                java.util.List<String> extra = new ArrayList<>();
+                ourScripts.fieldNames().forEachRemaining(k -> {
+                    if (!stripped.path("node").path("scriptsAt").has(k)) extra.add(k);
+                });
+                assertEquals("exactly one holder not queried", 1, extra.size());
+                assertEquals("its recorded scripts were empty", 0, ourScripts.path(extra.get(0)).size());
+                ourScripts.remove(extra.get(0));
+                assertEquals("nothing else differs", stripped, trimmed);
                 mutatedFacts++;
                 continue;
             }

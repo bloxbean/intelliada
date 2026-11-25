@@ -177,6 +177,28 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         assertRefused(snapshot(List.of(evil, bank, ex.verifierJar())), "org.julclang.state.examples.bank.Bank", "exactly one");
     }
 
+    /**
+     * M33A-CDX-35, -CDX-36: in a directory, a differently cased class file or description is what a case-insensitive
+     * file system can serve under the canonical name; it counts as a copy.
+     */
+    public void testCaseVariantsInDirectoriesCount() throws Exception {
+        Examples ex = examples("testCaseVariantsInDirectoriesCount");
+        if (ex == null) return;
+        Path bank = ex.classes("bank");
+        String name = "org.julclang.state.examples.bank.Bank";
+        // A class file with an upper-case suffix in an earlier directory is a second copy of the validator.
+        Path upper = newFolder();
+        Path cls = upper.resolve("org/julclang/state/examples/bank/BankValidator.CLASS");
+        Files.createDirectories(cls.getParent());
+        Files.copy(bank.resolve("org/julclang/state/examples/bank/BankValidator.class"), cls);
+        assertRefused(snapshot(List.of(upper, bank, ex.verifierJar())), name, "exactly one");
+        // A differently cased, different description in an earlier directory is a second description.
+        Path lower = newFolder();
+        Files.createDirectories(lower.resolve("meta-inf/joust"));
+        Files.writeString(lower.resolve("meta-inf/joust/" + name + ".json"), "{\"x-joust\":{\"contract\":\"Other\"}}");
+        assertRefused(snapshot(List.of(lower, bank, ex.verifierJar())), name, "two different descriptions");
+    }
+
     /** M33A-CDX-7: two blueprints of the validator's name in its own jar are ambiguous. */
     public void testDuplicateBlueprintsInOneJarRefuse() throws Exception {
         Examples ex = examples("testDuplicateBlueprintsInOneJarRefuse");
