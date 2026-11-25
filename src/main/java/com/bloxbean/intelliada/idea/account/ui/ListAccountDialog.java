@@ -191,7 +191,9 @@ public class ListAccountDialog extends DialogWrapper {
                 return;
             }
 
-            // Off the EDT: the ownership check may wait for the JOUST store (M32-CDX-21).
+            // Off the EDT: the ownership check may wait for the JOUST store (M32-CDX-21). The result comes back in this
+            // dialog's modality, so it shows while the dialog is open (M32-DES-17).
+            com.intellij.openapi.application.ModalityState modality = com.intellij.openapi.application.ModalityState.current();
             ApplicationManager.getApplication().executeOnPooledThread(() -> {
                 AccountService accountService = AccountService.getAccountService();
                 boolean result = accountService.importAccount(account);
@@ -205,7 +207,7 @@ public class ListAccountDialog extends DialogWrapper {
                         Messages.showWarningDialog("Account could not be imported.\nIt may already exist here, or be held by the JOUST run panel's accounts.",
                                 "Import Account");
                     }
-                });
+                }, modality);
 
             });
         });
@@ -464,7 +466,15 @@ public class ListAccountDialog extends DialogWrapper {
         if (selectedRow == -1)
             return null;
         else if (selectedRow <= tableModel.getAccounts().size() - 1) {
-            return tableModel.getAccounts().get(selectedRow);
+            CardanoAccount a = tableModel.getAccounts().get(selectedRow);
+            // ADR-005 L39: an account migrated while this chooser was open is not returned (M32-CDX-33).
+            if (AccountService.heldByJoust(a.getAddress())) {
+                Messages.showWarningDialog("This account was copied to the JOUST run panel's accounts and is no longer offered here.",
+                        "Account Moved");
+                poulateAccounts();
+                return null;
+            }
+            return a;
         } else {
             return null;
         }

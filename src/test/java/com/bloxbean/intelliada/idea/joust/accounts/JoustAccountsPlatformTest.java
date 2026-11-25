@@ -102,6 +102,9 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
     /** M32-CDX-4, -DES-1: the genesis accounts are DevKit's funded account-index keys (pinned, independent of the code). */
     public void testGenesisAccountsAreTheFundedKeys() throws Exception {
         assertEquals(20, JoustAccounts.GENESIS_ACCOUNTS);
+        Set<String> derived = new HashSet<>();
+        for (int i = 0; i < 20; i++) derived.add(JoustAccounts.genesis(i).fingerprint);
+        assertEquals("the constant fingerprints are the derived keys' (M32-DES-19)", JoustAccounts.GENESIS_FINGERPRINTS, derived);
         assertEquals("addr_test1qryvgass5dsrf2kxl3vgfz76uhp83kv5lagzcp29tcana68ca5aqa6swlq6llfamln09tal7n5kvt4275ckwedpt4v7q48uhex",
                 JoustAccounts.genesis(0).address);
         assertTrue("#1 is account 1's key, not address 1's", JoustAccounts.genesis(1).address.startsWith("addr_test1qpqy3lufef8c3en9nrnzp2sv"));
@@ -440,6 +443,107 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
         }
     }
 
+
+    /** M32-CDX-25: the platform's own credential store (a durable adapter over it) round-trips the class-tagged writes. */
+    public void testThePlatformCredentialStoreKeepsTheClassTaggedSecret() throws Exception {
+        store.safeForTests(new JoustAccounts.Safe() {
+            @Override
+            public boolean memoryOnly() {
+                return false;
+            }
+
+            @Override
+            public void set(CredentialAttributes a, @Nullable Credentials c) {
+                com.intellij.ide.passwordSafe.PasswordSafe.getInstance().set(a, c);
+            }
+
+            @Override
+            public @Nullable Credentials get(CredentialAttributes a) {
+                return com.intellij.ide.passwordSafe.PasswordSafe.getInstance().get(a);
+            }
+        });
+        var e = store.createFresh("platform", NetworkClass.TESTNET);
+        assertEquals(24, store.revealMnemonic(e.id).split(" ").length);
+        assertTrue(store.remove(e.id));
+    }
+
+    /** M32-CDX-29: an entry re-tagged in metadata (testnet to devnet, both network id 0) is not offered to a devnet session. */
+    public void testAReTaggedEntryIsNotOfferedToASession() throws Exception {
+        var t = store.createFresh("t", NetworkClass.TESTNET);
+        var st = store.getState();
+        st.accounts.get(0).networkClass = "DEVNET";
+        store.loadState(st);
+        assertTrue("the row loads (its address is valid for devnets too)", store.list(NetworkClass.DEVNET).stream().anyMatch(e -> e.id.equals(t.id)));
+        var devnet = new com.bloxbean.intelliada.idea.joust.host.chain.NetworkIdentity.Identity(NetworkClass.DEVNET, 0, 42, 0, 0, 1000, 300, "devnet-42-x");
+        assertTrue("but a session never offers it", store.forSession(devnet).stream().noneMatch(e -> e.id.equals(t.id)));
+    }
+
+    /** M32-CDX-27, -CDX-28: a lost copy is listed for repair; a repair is confirmed only by a later session again. */
+    public void testARepairIsFoundAndReconfirmed() throws Exception {
+        Account k = new Account(Networks.testnet());
+        CardanoAccount legacy = new CardanoAccount(k.baseAddress(), k.mnemonic());
+        AccountService.getAccountService().importAccount(legacy);
+        var e = store.migrateLegacy(legacy);
+        var st = store.getState();
+        st.accounts.get(0).createdIn = "an earlier session";
+        store.loadState(st);
+        store.confirmPending();
+        assertFalse(store.list(NetworkClass.TESTNET).get(0).unconfirmed());
+        assertTrue(store.repairable().isEmpty());
+        safe.m.clear();   // a keychain reset
+        assertEquals("the legacy source is found by its exact address", k.baseAddress(), store.repairable().get(0).getAddress());
+        store.migrateLegacy(store.repairable().get(0));
+        assertTrue("a repaired copy is unconfirmed again", store.list(NetworkClass.TESTNET).get(0).unconfirmed());
+        store.confirmPending();
+        assertTrue("and not confirmed in the writing session", store.list(NetworkClass.TESTNET).get(0).unconfirmed());
+        assertEquals(e.id, store.list(NetworkClass.TESTNET).get(0).id);
+    }
+
+    /** M32-CDX-30: concurrent legacy imports and creations lose no account. */
+    public void testConcurrentLegacyWritesLoseNothing() throws Exception {
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            List<java.util.concurrent.Future<?>> fs = new java.util.ArrayList<>();
+            for (int i = 0; i < 12; i++) {
+                final int n = i;
+                fs.add(pool.submit(() -> {
+                    try {
+                        if (n % 2 == 0) {
+                            Account a = new Account(Networks.testnet());
+                            AccountService.getAccountService().importAccount(new CardanoAccount(a.baseAddress(), a.mnemonic()));
+                        } else {
+                            AccountService.getAccountService().createNewAccount("c" + n, Networks.testnet());
+                        }
+                    } catch (Exception ex) {
+                        throw new RuntimeException(ex);
+                    }
+                    return null;
+                }));
+            }
+            for (var f : fs) f.get(60, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertEquals(12, AccountService.getAccountService().getAllAccountsStrict().size());
+    }
+
+    /** M32-CDX-31: a legacy store in a folder that cannot be traversed refuses an import. */
+    public void testAnUntraversableLegacyFolderRefusesAnImport() throws Exception {
+        if (com.bloxbean.intelliada.idea.joust.JoustTestTools.windows()) return;
+        Account k = new Account(Networks.testnet());
+        AccountService.getAccountService().importAccount(new CardanoAccount(k.baseAddress(), k.mnemonic()));
+        List<java.nio.file.Path> dirs = new java.util.ArrayList<>();
+        try (var w = java.nio.file.Files.walk(java.nio.file.Path.of(System.getProperty("user.home")))) {
+            w.filter(java.nio.file.Files::isDirectory).forEach(dirs::add);
+        }
+        java.nio.file.Path home = dirs.get(0);
+        try {
+            for (var d : dirs) if (!d.equals(home)) java.nio.file.Files.setPosixFilePermissions(d, java.nio.file.attribute.PosixFilePermissions.fromString("---------"));
+            assertRefused(() -> store.importMnemonic("x", NetworkClass.TESTNET, phrase()), "could not be read");
+        } finally {
+            for (var d : dirs) java.nio.file.Files.setPosixFilePermissions(d, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        }
+    }
 
     public void testSessionsSeeOnlyTheirClass() throws Exception {
         var t = store.createFresh("t", NetworkClass.TESTNET);

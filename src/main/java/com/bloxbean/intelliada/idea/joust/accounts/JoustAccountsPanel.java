@@ -36,7 +36,7 @@ public final class JoustAccountsPanel {
     private final JComboBox<NetworkClass> cls = new JComboBox<>(OFFERED);
     private final JBLabel bound = new JBLabel();
     /** Mainnet accounts kept while mainnet is not offered: named here, never selectable (M32-CDX-24). */
-    private final JBLabel kept = new JBLabel();
+    private final com.intellij.ui.components.JBTextArea kept = new com.intellij.ui.components.JBTextArea();
     /** The latest refresh; an older one's result is discarded (M32-CDX-20). */
     private long refreshSeq;
     private final DefaultListModel<JoustAccounts.Entry> model = new DefaultListModel<>();
@@ -73,6 +73,10 @@ public final class JoustAccountsPanel {
         for (JButton b : new JButton[]{create, importBtn, reveal, remove, migrate}) row2.add(b);
         rows.add(row1);
         rows.add(row2);
+        kept.setEditable(false);
+        kept.setOpaque(false);
+        kept.setLineWrap(true);
+        kept.setVisible(false);
         rows.add(kept);
         root.add(rows, BorderLayout.NORTH);
         root.add(new JBScrollPane(list), BorderLayout.CENTER);
@@ -89,8 +93,11 @@ public final class JoustAccountsPanel {
             return JoustAccounts.getInstance().mainnetEntries();
         }, mainnet -> {
             if (!mainnet.isEmpty()) {
-                kept.setText(PlainText.label("Kept, usable once mainnet support exists: "
-                        + String.join(", ", mainnet.stream().map(e -> e.name).toList()), 300));
+                // Every name, one per line, in a read-only area (M32-CDX-35).
+                StringBuilder sb = new StringBuilder("Mainnet accounts kept, usable once mainnet support exists:");
+                for (var e : mainnet) sb.append("\n  ").append(PlainText.label(e.name, 100)).append("  ").append(PlainText.label(e.address, 120));
+                kept.setText(sb.toString());
+                kept.setVisible(true);
             }
             refresh();
         });
@@ -155,13 +162,14 @@ public final class JoustAccountsPanel {
         NetworkClass c = selectedClass();
         String name = Messages.showInputDialog(project, "Account name", "New " + label(c) + " Account", null);
         if (name == null) return;
-        background("Creating an account", () -> JoustAccounts.getInstance().createFresh(name, c), e -> {
+        background("Creating an account", () -> JoustAccounts.getInstance().createFreshForBackup(name, c), created -> {
             refresh();
-            // Until a later session confirms the safe kept it, the user's own backup is the only proof (M32-CDX-12).
-            if (e.unconfirmed() && Messages.showYesNoDialog(project, "Show the new account's recovery phrase now, to write it down? "
-                    + "IntelliAda confirms the password safe kept it only after the IDE restarts.", "Back Up the Recovery Phrase",
-                    Messages.getQuestionIcon()) == Messages.YES) {
-                showPhrase(e.id);
+            // Until a later session confirms the safe kept it, the user's own backup is the only proof (M32-CDX-12). The
+            // phrase offered is the one just generated, held in memory through this decision only (M32-CDX-32).
+            if (created.entry().unconfirmed() && Messages.showYesNoDialog(project, "Show the new account's recovery phrase now, to "
+                    + "write it down? IntelliAda confirms the password safe kept it only after the IDE restarts.",
+                    "Back Up the Recovery Phrase", Messages.getQuestionIcon()) == Messages.YES) {
+                phraseDialog(created.phrase());
             }
         });
     }
@@ -187,21 +195,27 @@ public final class JoustAccountsPanel {
     }
 
     private void showPhrase(String id) {
-        background("Reading the recovery phrase", () -> JoustAccounts.getInstance().revealMnemonic(id), m -> {
-            // Shown in a modal only: never a console, a notification or the log (I10).
-            JTextArea area = new JTextArea(m, 3, 60);
-            area.setEditable(false);
-            area.setLineWrap(true);
-            area.setWrapStyleWord(true);
-            JOptionPane.showMessageDialog(root, new JBScrollPane(area), "Recovery Phrase", JOptionPane.WARNING_MESSAGE);
-        });
+        background("Reading the recovery phrase", () -> JoustAccounts.getInstance().revealMnemonic(id), this::phraseDialog);
+    }
+
+    private void phraseDialog(String m) {
+        // Shown in a modal only: never a console, a notification or the log (I10).
+        JTextArea area = new JTextArea(m, 3, 60);
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        JOptionPane.showMessageDialog(root, new JBScrollPane(area), "Recovery Phrase", JOptionPane.WARNING_MESSAGE);
     }
 
     private void removeSelected() {
         JoustAccounts.Entry e = list.getSelectedValue();
         if (e == null || e.origin.equals("GENESIS")) return;
-        if (Messages.showYesNoDialog(project, "Remove \"" + PlainText.label(e.name, 60) + "\" and its recovery phrase from the IDE?",
-                "Remove Account", Messages.getWarningIcon()) != Messages.YES) return;
+        // A migrated copy's legacy original stays, and is offered in the legacy lists again once this copy goes (M32-CDX-34).
+        String what = e.origin.equals("MIGRATED")
+                ? "Remove the JOUST copy of \"" + PlainText.label(e.name, 60) + "\"? Its recovery phrase leaves the password safe, but "
+                        + "the legacy IntelliAda account it was copied from still holds the phrase and is offered in the legacy lists again."
+                : "Remove \"" + PlainText.label(e.name, 60) + "\" and its recovery phrase from the IDE?";
+        if (Messages.showYesNoDialog(project, what, "Remove Account", Messages.getWarningIcon()) != Messages.YES) return;
         background("Removing an account", () -> JoustAccounts.getInstance().remove(e.id), r -> refresh());
     }
 
@@ -215,7 +229,14 @@ public final class JoustAccountsPanel {
 
     private void migrateLegacy() {
         // The legacy store is read and decrypted off the EDT (M32-CDX-21).
-        background("Reading legacy accounts", JoustAccountsPanel::migratable, this::chooseLegacy);
+        background("Reading legacy accounts", () -> {
+            // Ordinary candidates, plus migrated copies whose phrase was lost and can be repaired (M32-CDX-27).
+            List<CardanoAccount> all = new java.util.ArrayList<>(migratable());
+            for (CardanoAccount r : JoustAccounts.getInstance().repairable()) {
+                if (all.stream().noneMatch(a -> a.getAddress().equals(r.getAddress()))) all.add(r);
+            }
+            return all;
+        }, this::chooseLegacy);
     }
 
     private void chooseLegacy(List<CardanoAccount> eligible) {

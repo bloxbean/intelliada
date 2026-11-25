@@ -238,9 +238,23 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         }
     }
 
-    /** The accounts a session bound to {@code id} may offer: its class only (I12). The only path for a caller chooser. */
-    public List<Entry> forSession(NetworkIdentity.Identity id) {
-        return list(id.networkClass());
+    /**
+     * The accounts a session bound to {@code id} may offer: its class only (I12), and of those only entries whose secret
+     * is stored under that class, so an entry re-tagged in metadata is never offered (M32-CDX-29). The only path for a
+     * caller chooser; off the EDT (it reads the safe).
+     */
+    public synchronized List<Entry> forSession(NetworkIdentity.Identity id) {
+        NetworkClass cls = id.networkClass();
+        List<Entry> out = new ArrayList<>();
+        for (Entry e : list(cls)) {
+            if ("GENESIS".equals(e.origin)) {
+                out.add(e);
+                continue;
+            }
+            Credentials c = safe.get(attributes(e.id));
+            if (c != null && holder(e.id, cls).equals(c.getUserName())) out.add(e);
+        }
+        return out;
     }
 
     /** The accounts of one class (for managing them), the devnet genesis accounts first on a devnet. */
@@ -274,10 +288,34 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         return g;
     }
 
+    /**
+     * The 20 genesis payment key hashes, as constants: loading the store never derives keys (it can run on the EDT when
+     * a legacy chooser first asks; M32-DES-19). {@code testGenesisAccountsAreTheFundedKeys} pins them to the derivation.
+     */
+    static final Set<String> GENESIS_FINGERPRINTS = Set.of(
+            "c8c47610a36034aac6fc58848bdae5c278d994ff502c05455e3b3ee8",
+            "4048ff89ca4f88e66598e620aa0c7128c2145d9a181ae9a4a81ca8e3",
+            "ca6e1b1f320d543a24adeabc0aa4627635c7349b639f86f74bdfdd78",
+            "07d781fe8e33883e371f9550c2f1087321fc32e06e80b65e349ccb02",
+            "627b2598dd71129167825160c564067d1d245e79cc237094815c5cb2",
+            "c6cf7bd50f37f7e4cc161fc00f07e9b2226ba5552ccaf30d315fa013",
+            "5164ab186715c86378020956d892cf72f67636b78967d67cfe736047",
+            "3dd38742e9848c6f12c13ddb1f9464fc0ce0bb92102768087975317e",
+            "88e7e670b45cab2322b518ef7b6f66d30aec0d923dc463e467091a79",
+            "c70b8421617802d3f23956cab1957e1d306cd4808589b41760e97927",
+            "c0933b8238f6f3332e48c34cf1a8e0555943b33cd4abc53aefb7d612",
+            "69f7d7289de2f01cd1e0265ac5be943b41775abae0ce6b3eac0edee0",
+            "709a7070005c652c27df73dbbde3319a90b127bea96aded1c5fb87a5",
+            "fc576df3a279885a7a4d0fc500372daa1d96f26c6763542ecd2ad855",
+            "3346a630e6972bf38cce87219db1d63061e7cd324cad88c18e504f29",
+            "28b862d001e6a64a02b3560cbc532eab4557593477c39cc523e0b9fc",
+            "5e0e57040b06e9d71e0f28f126262838a68db0b52b4fd1b3877dda22",
+            "367f65ab69b1e6715c8d5a14964214c9505ed17032266b3209a2c40d",
+            "c5c4ca287f3b53948b5468e5e23b1c87fe61ce52c0d9afd65d070795",
+            "ef198fb7c35e1968308a0b75cfee54a46e13e86dd3354283300831d6");
+
     static Set<String> genesisFingerprints() {
-        Set<String> s = new java.util.HashSet<>();
-        for (Entry e : genesisEntries()) s.add(e.fingerprint);
-        return s;
+        return GENESIS_FINGERPRINTS;
     }
 
     public static Entry genesis(int index) {
@@ -286,8 +324,21 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
 
     /** A fresh account of {@code cls}: a new 24-word phrase, kept in the safe. */
     public synchronized Entry createFresh(String name, NetworkClass cls) throws Refused {
+        return createFreshForBackup(name, cls).entry();
+    }
+
+    /** A new account and its phrase, held in memory only for the creation's backup decision (M32-CDX-32; I10: never logged). */
+    public record Created(Entry entry, String phrase) {
+        @Override
+        public String toString() {
+            return "Created[" + entry.id + "]";   // never the phrase
+        }
+    }
+
+    public synchronized Created createFreshForBackup(String name, NetworkClass cls) throws Refused {
         mainnetGate(cls);
-        return store(name, cls, new Account(network(cls)), Origin.FRESH, null, null);
+        Account a = new Account(network(cls));
+        return new Created(store(name, cls, a, Origin.FRESH, null, null), a.mnemonic());
     }
 
     /** Imports {@code mnemonic} as a testnet or mainnet account; refused for devnets, across classes and for legacy keys. */
@@ -338,6 +389,8 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
                 throw new Refused("this key is already held as a " + done.cls().name().toLowerCase() + " account");
             }
             writeVerified(id, NetworkClass.TESTNET, a.mnemonic());   // a retry repairs a missing or different phrase from the legacy copy
+            done.confirmed = false;          // a rewrite is confirmed only by a later session again (M32-CDX-28)
+            done.createdIn = PROCESS;
             return done.copy();
         }
         return store(legacy.getName(), NetworkClass.TESTNET, a, Origin.MIGRATED, fp, id);
@@ -363,6 +416,26 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
             still.add(e.copy());
         }
         return still;
+    }
+
+    /**
+     * Legacy accounts whose migrated copy here lost its phrase (a keychain reset): the strict, unfiltered legacy store is
+     * looked up by the entry's exact address, so the copy can be repaired from the Accounts tab (M32-CDX-27). Ordinary
+     * legacy choosers never see these accounts.
+     */
+    public synchronized List<CardanoAccount> repairable() throws Refused {
+        List<CardanoAccount> out = new ArrayList<>();
+        for (Entry e : state.accounts) {
+            if (Origin.valueOf(e.origin) != Origin.MIGRATED) continue;
+            try {
+                revealMnemonic(e.id);
+                continue;   // intact
+            } catch (Refused lost) {
+                // look for its legacy source
+            }
+            for (CardanoAccount c : legacyHolding(e.fingerprint)) if (e.address.equals(c.getAddress())) out.add(c);
+        }
+        return out;
     }
 
     /** The mainnet entries kept while mainnet is not offered (named, read-only; M32-CDX-24). */
@@ -450,7 +523,12 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         if (e == null) throw new Refused("no such account");
         Credentials c = safe.get(attributes(id));
         String phrase = c == null ? null : c.getPasswordAsString();
-        if (phrase == null) throw new Refused("the recovery phrase is not in the password safe");
+        if (phrase == null) {
+            throw new Refused(Origin.valueOf(e.origin) == Origin.MIGRATED
+                    ? "the recovery phrase is not in the password safe; use \"Migrate a legacy testnet account\" to restore it from the "
+                    + "legacy copy, or remove this JOUST account to see the legacy copy again (M32-SEC-13)"
+                    : "the recovery phrase is not in the password safe");
+        }
         // The class stored with the secret must be the entry's: a re-tagged entry is never served (M32-SEC-11).
         if (!holder(id, e.cls()).equals(c.getUserName())) {
             throw new Refused("the password safe holds this account under another network class; it is not shown");
@@ -510,8 +588,12 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         return out;
     }
 
+    /**
+     * The credential's attributes: by service only, so the stored user name (the id and class, {@link #holder}) is what
+     * a lookup returns on every backend (KeePass looks up by user name when one is given; M32-CDX-25).
+     */
     static CredentialAttributes attributes(String id) {
-        return new CredentialAttributes(CredentialAttributesKt.generateServiceName(SERVICE, id), id);
+        return new CredentialAttributes(CredentialAttributesKt.generateServiceName(SERVICE, id));
     }
 
     static Network network(NetworkClass cls) {

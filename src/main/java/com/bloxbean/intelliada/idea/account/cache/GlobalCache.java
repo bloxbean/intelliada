@@ -110,7 +110,12 @@ public class GlobalCache {
      */
     public AccountCache getAccountCacheStrict() throws java.io.IOException {
         File file = getAccountCacheFile();
-        if (!file.exists()) return new AccountCache();
+        // Empty only when the file is known not to exist: an unreadable or untraversable folder is an error (M32-CDX-31).
+        java.nio.file.Path path = file.toPath();
+        if (java.nio.file.Files.notExists(path)) return new AccountCache();
+        if (!java.nio.file.Files.exists(path) || !java.nio.file.Files.isReadable(path)) {
+            throw new java.io.IOException("the account cache cannot be read");
+        }
         try {
             if (getAccountCacheKeyFile().exists()) {
                 SecretKey secretKey = getSecretKeyFromFile();
