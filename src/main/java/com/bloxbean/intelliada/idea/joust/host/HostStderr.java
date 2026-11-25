@@ -44,8 +44,33 @@ public final class HostStderr {
             s = PlainText.clean(out.flip().toString(), n + 16);
             ls = List.copyOf(listeners);
         }
-        // Listeners run outside the lock, so a slow console cannot stall the drain of the host's stderr.
-        for (Consumer<String> l : ls) l.accept(s);
+        // Listeners run on their own thread with a bounded queue (dropping when full), and a failing listener is
+        // isolated: neither can stall or end the drain of the host's stderr (M31A-CDX-27).
+        try {
+            delivery.execute(() -> {
+                for (Consumer<String> l : ls) {
+                    try {
+                        l.accept(s);
+                    } catch (RuntimeException ignored) {
+                        // a console's failure is not the host's
+                    }
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // queue full: the text is still in the ring buffer
+        }
+    }
+
+    private final java.util.concurrent.ThreadPoolExecutor delivery = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0,
+            java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(256), r -> {
+                Thread t = new Thread(r, "JOUST host stderr delivery");
+                t.setDaemon(true);
+                return t;
+            }, new java.util.concurrent.ThreadPoolExecutor.DiscardPolicy());
+
+    /** The host's stderr ended: the delivery thread is released (M31A-CDX-38). */
+    void close() {
+        delivery.shutdown();
     }
 
     public synchronized void listen(Consumer<String> l) {

@@ -46,8 +46,11 @@ public record HostSpec(int protocol, Path java, String mainClass, String digest,
         byte[] bytes;
         // Opened without following a link and read to at most the cap (M31A-CDX-11): a file grown or replaced after the
         // check cannot be read past it.
-        try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
-            bytes = in.readNBytes(MAX_BYTES + 1);
+        try {
+            bytes = HostIo.readCapped(file, MAX_BYTES, 10_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted");
         }
         if (bytes.length > MAX_BYTES) throw new Invalid("the launch spec is larger than 1 MiB");
         try {

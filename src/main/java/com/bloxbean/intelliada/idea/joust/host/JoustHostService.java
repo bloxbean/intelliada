@@ -45,7 +45,8 @@ public final class JoustHostService implements Disposable {
 
     /** A running, initialized host. */
     public record Running(Path moduleDir, HostSpec spec, HostSnapshot snapshot, Process process, HostSession session,
-                          HostStderr stderr, @Nullable String joustVersion, JsonNode initialize) {
+                          HostStderr stderr, @Nullable String joustVersion, JsonNode initialize, ObjectNode requested,
+                          String binding, HostLauncher.Started started) {
     }
 
     /** Why a start did not happen; plain text for the panel. */
@@ -65,6 +66,8 @@ public final class JoustHostService implements Disposable {
     /** A module's slot, reserved before anything starts and released only once its process has exited (M31A-CDX-3). */
     private static final class Slot {
         volatile Running running;
+        volatile HostLauncher.Started started;
+        volatile boolean stopping;
     }
 
     private final Project project;
@@ -72,9 +75,61 @@ public final class JoustHostService implements Disposable {
 
     public JoustHostService(Project project) {
         this.project = project;
-        // Leftovers of an earlier IDE run (no host of this project is alive yet), off the calling thread (M31A-DES-8).
-        Path base = snapshotsBase();
-        ApplicationManager.getApplication().executeOnPooledThread(() -> HostSnapshot.delete(base));
+        // Snapshots of this IDE session live in a directory of their own, held by a lock while the service lives; the
+        // sweep removes only other sessions' directories whose lock is free (their IDE is gone), so it never races a
+        // snapshot of this session (M31A-CDX-17, M31A-DES-8). It runs off the calling thread.
+        this.session = sessionDir();
+        ApplicationManager.getApplication().executeOnPooledThread(this::sweepOtherSessions);
+    }
+
+    private final Path session;
+    private java.nio.channels.FileChannel sessionLockChannel;
+    private java.nio.channels.FileLock sessionLock;
+
+    /**
+     * Creates this session's directory under a temporary name, locks it, and only then renames it into the sweepers'
+     * view, so no sweeper can claim it in between (M31A-CDX-37). Without a lock, launches are refused.
+     */
+    private Path sessionDir() {
+        String id = java.util.UUID.randomUUID().toString();
+        Path tmp = projectBase().resolve(".tmp-session-" + id);
+        Path dir = projectBase().resolve(id);
+        try {
+            java.nio.file.Files.createDirectories(tmp);
+            sessionLockChannel = java.nio.channels.FileChannel.open(tmp.resolve(".lock"),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+            sessionLock = sessionLockChannel.tryLock();
+            java.nio.file.Files.move(tmp, dir, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException | RuntimeException e) {
+            sessionLock = null;
+        }
+        return dir;
+    }
+
+    private void sweepOtherSessions() {
+        try (var list = java.nio.file.Files.list(projectBase())) {
+            for (Path d : (Iterable<Path>) list::iterator) {
+                if (d.equals(session) || !java.nio.file.Files.isDirectory(d, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                // A session still being published (.tmp-session-*) is left alone unless it is a day old.
+                if (d.getFileName().toString().startsWith(".tmp-session-")) {
+                    try {
+                        if (java.nio.file.Files.getLastModifiedTime(d).toMillis() > System.currentTimeMillis() - 86_400_000L) continue;
+                    } catch (IOException e) {
+                        continue;
+                    }
+                }
+                Path lock = d.resolve(".lock");
+                // The claim is held while deleting, so its owner cannot reappear midway.
+                try (var ch = java.nio.channels.FileChannel.open(lock, java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.WRITE); var l = ch.tryLock()) {
+                    if (l != null) HostSnapshot.delete(d);
+                } catch (IOException | java.nio.channels.OverlappingFileLockException e) {
+                    // held by a live session
+                }
+            }
+        } catch (IOException ignored) {
+            // nothing to sweep
+        }
     }
 
     public static JoustHostService getInstance(Project project) {
@@ -90,6 +145,30 @@ public final class JoustHostService implements Disposable {
     }
 
     /** The running host of {@code moduleDir}, or null. */
+    /**
+     * The running host of {@code moduleDir} for an action bound to {@code guard}, if it serves the requested network and
+     * clock; otherwise refused (M31A-CDX-18).
+     */
+    @Nullable Running reuse(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, String binding) throws NotStarted {
+        Running r = running(moduleDir);
+        if (r == null) return null;
+        if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
+        // The bound node too: two configurations of one chain have equal parameters but separate providers (M31A-CDX-32).
+        if (!r.binding().equals(binding) || !sameBinding(r.requested(), initialize)) {
+            throw new NotStarted("this module's host runs on another network; stop it before binding another");
+        }
+        return r;
+    }
+
+    private static boolean sameBinding(ObjectNode a, ObjectNode b) {
+        java.util.Comparator<JsonNode> numeric = (x, y) -> x.isNumber() && y.isNumber()
+                ? x.decimalValue().compareTo(y.decimalValue()) : x.equals(y) ? 0 : 1;
+        for (String f : new String[]{"network", "clock", "time", "limits"}) {
+            if (!a.path(f).equals(numeric, b.path(f))) return false;
+        }
+        return true;
+    }
+
     public @Nullable Running running(Path moduleDir) {
         Slot s = slots.get(key(moduleDir));
         Running r = s == null ? null : s.running;
@@ -100,37 +179,59 @@ public final class JoustHostService implements Disposable {
      * Runs {@code joustHostSpec}, then {@link #launch}. Off the EDT; blocks. {@code initialize} holds every
      * {@code initialize} parameter except {@code build}, which this service fills from the verified snapshot.
      */
-    public Running start(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, HostSession.Reads reads,
+    public Running start(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, String binding, HostSession.Reads reads,
                          Consumer<String> onEnd) throws NotStarted, InterruptedException {
-        Running existing = running(moduleDir);
+        Running existing = reuse(guard, moduleDir, initialize, binding);
         if (existing != null) return existing;
         if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
-        JoustGradleTasks tasks = JoustGradleTasks.getInstance();
-        if (tasks == null) throw new NotStarted("the run panel needs IntelliJ's Gradle plugin");
-        JoustGradleTasks.Linked linked = tasks.linked(project, moduleDir);
-        if (linked == null) throw new NotStarted("this module is not part of a linked Gradle build");
-        String task = linked.gradlePath().equals(":") ? ":joustHostSpec" : linked.gradlePath() + ":joustHostSpec";
-        JoustAbiReview.Result r = tasks.run(guard, linked.rootDir(), List.of(task), "JOUST: dev-host launch spec");
-        if (r.cancelled()) throw new NotStarted("cancelled");
-        if (!r.ok()) {
-            throw new NotStarted(r.output().contains("joustHostSpec") && r.output().contains("not found")
-                    ? "this project's JOUST has no dev host (joustHostSpec); it needs a JOUST with dev-host protocol 1"
-                    : "joustHostSpec failed; see the Gradle output");
-        }
-        if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
-        return launch(guard, moduleDir, initialize, reads, onEnd);
-    }
-
-    /** The part of {@link #start} after {@code joustHostSpec}: snapshot, confirm, start, {@code initialize}. Off the EDT. */
-    Running launch(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, HostSession.Reads reads, Consumer<String> onEnd)
-            throws NotStarted, InterruptedException {
+        // The slot is reserved before the build runs, so Stop during joustHostSpec is recorded (M31A-CDX-31).
         Path key = key(moduleDir);
         Slot slot = new Slot();
         if (slots.putIfAbsent(key, slot) != null) {
-            Running r = running(moduleDir);
+            Running r = reuse(guard, moduleDir, initialize, binding);
             if (r != null) return r;
             throw new NotStarted("a host for this module is starting or stopping");
         }
+        boolean handed = false;
+        try {
+            JoustGradleTasks tasks = JoustGradleTasks.getInstance();
+            if (tasks == null) throw new NotStarted("the run panel needs IntelliJ's Gradle plugin");
+            JoustGradleTasks.Linked linked = tasks.linked(project, moduleDir);
+            if (linked == null) throw new NotStarted("this module is not part of a linked Gradle build");
+            String task = linked.gradlePath().equals(":") ? ":joustHostSpec" : linked.gradlePath() + ":joustHostSpec";
+            JoustAbiReview.Result r = tasks.run(guard, linked.rootDir(), List.of(task), "JOUST: dev-host launch spec");
+            if (r.cancelled()) throw new NotStarted("cancelled");
+            if (!r.ok()) {
+                throw new NotStarted(r.output().contains("joustHostSpec") && r.output().contains("not found")
+                        ? "this project's JOUST has no dev host (joustHostSpec); it needs a JOUST with dev-host protocol 1"
+                        : "joustHostSpec failed; see the Gradle output");
+            }
+            if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
+            Running running = launchIn(key, slot, guard, moduleDir, initialize, binding, reads, onEnd);
+            handed = true;
+            return running;
+        } finally {
+            if (!handed && slot.started == null) slots.remove(key, slot);
+        }
+    }
+
+    /** The part of {@link #start} after {@code joustHostSpec}: snapshot, confirm, start, {@code initialize}. Off the EDT. */
+    Running launch(JoustRunGuard guard, Path moduleDir, ObjectNode initialize, String binding, HostSession.Reads reads,
+                   Consumer<String> onEnd) throws NotStarted, InterruptedException {
+        Path key = key(moduleDir);
+        Slot slot = new Slot();
+        if (slots.putIfAbsent(key, slot) != null) {
+            Running r = reuse(guard, moduleDir, initialize, binding);
+            if (r != null) return r;
+            throw new NotStarted("a host for this module is starting or stopping");
+        }
+        return launchIn(key, slot, guard, moduleDir, initialize, binding, reads, onEnd);
+    }
+
+    /** {@link #launch} in a slot already reserved by the caller; releases it on every failure. */
+    private Running launchIn(Path key, Slot slot, JoustRunGuard guard, Path moduleDir, ObjectNode initialize, String binding,
+                             HostSession.Reads reads, Consumer<String> onEnd) throws NotStarted, InterruptedException {
+        if (sessionLock == null) throw new NotStarted("IntelliAda could not lock its snapshot directory for this session");
         JoustTaskTracker tracker = JoustTaskTracker.getInstance(project);
         HostSnapshot snapshot = null;
         JoustTaskTracker.Run run = null;
@@ -139,17 +240,20 @@ public final class JoustHostService implements Disposable {
         boolean handedOut = false;
         try {
             HostSpec spec;
+            int feature;
             try {
                 spec = HostSpec.read(moduleDir);
-                HostLauncher.javaVersion(spec.java());   // D11 step 2, before the copy and the confirmation (M31A-DES-9)
+                feature = HostLauncher.javaVersion(spec.java());   // D11 step 2, before the copy and the confirmation (M31A-DES-9)
                 snapshot = HostSnapshot.create(spec, snapshotsBase());
             } catch (HostSpec.Invalid e) {
                 throw new NotStarted(e.getMessage());
             } catch (IOException e) {
                 throw new NotStarted("could not copy the launch set: " + e.getMessage());
             }
-            String version = HostVersions.runtimeVersion(snapshot);
+            String version = HostVersions.runtimeVersion(snapshot, feature);
+            if (slot.stopping) throw new NotStarted("stopped");
             if (!confirmed(moduleDir, spec, version) || !guard.live()) throw new NotStarted("not started");
+            if (slot.stopping) throw new NotStarted("stopped");   // Stop before any process exists (M31A-CDX-31)
             // Registered before the process exists; null when trust went away meanwhile (M31A-CDX-2).
             run = tracker.start(guard);
             if (run == null) throw new NotStarted("the project is not trusted, or was closed");
@@ -161,18 +265,19 @@ public final class JoustHostService implements Disposable {
             }
             process = s.process();
             Process p = process;
-            session = new HostSession(p.getInputStream(), p.getOutputStream(), () -> HostLauncher.stop(p), reads, onEnd);
-            HostSession sess = session;
-            run.attach(sess::close);
-            // The process's exit releases the snapshot, the tracker entry and the module's slot; the reader, not this
-            // callback, decides how the session ended (the final frames and EOF are its to classify; M31A-CDX-5, -8).
+            slot.started = s;
+            // A Stop that raced the start sees slot.started, or this check sees its flag (M31A-CDX-31).
+            if (slot.stopping) throw new NotStarted("stopped");
+            // Installed first, before anything can fail (M31A-CDX-21): the process tree's end releases the snapshot, the
+            // tracker entry and the module's slot. The reader, not this callback, decides how the session ended (the
+            // final frames and EOF are its to classify; M31A-CDX-5, -8). Descendants seen while the host lived must be
+            // gone too before ownership is released (M31A-CDX-22).
             HostSnapshot snap = snapshot;
             JoustTaskTracker.Run tracked = run;
-            p.onExit().thenRun(() -> {
-                snap.delete();
-                tracker.done(tracked);
-                slots.remove(key, slot);
-            });
+            p.onExit().thenRun(() -> releaseWhenTreeGone(s, snap, tracker, tracked, key, slot, 0));
+            session = new HostSession(p.getInputStream(), p.getOutputStream(), s::stop, reads, onEnd);
+            HostSession sess = session;
+            run.attach(sess::close);
             ObjectNode params = initialize.deepCopy();
             params.putObject("build").put("snapshot", snapshot.root().toString()).put("digest", snapshot.digest());
             JsonNode init;
@@ -186,7 +291,8 @@ public final class JoustHostService implements Disposable {
                         + PlainText.literal(s.stderr().lastLine(), 300) + ")");
             }
             if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
-            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version, init);
+            if (slot.stopping) throw new NotStarted("stopped");   // Stop during startup (M31A-CDX-20)
+            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version, init, initialize.deepCopy(), binding, s);
             slot.running = running;
             handedOut = true;
             return running;
@@ -194,7 +300,9 @@ public final class JoustHostService implements Disposable {
             if (!handedOut) {
                 if (session != null) session.close();
                 if (process != null) {
-                    HostLauncher.stop(process);    // the exit callback then releases the rest
+                    HostLauncher.Started st = slot.started;
+                    if (st != null) st.stop();
+                    else HostLauncher.stop(process);    // the exit callback then releases the rest
                 } else {
                     if (snapshot != null) snapshot.delete();
                     if (run != null) tracker.done(run);
@@ -204,18 +312,43 @@ public final class JoustHostService implements Disposable {
         }
     }
 
-    /** Stops the host of {@code moduleDir} in order (shutdown, exit, end of output), then ends its process tree. */
+    /**
+     * Stops the host of {@code moduleDir} in order (shutdown, exit, end of output), then ends its process tree. During
+     * startup it ends the starting process at once, and the start is refused (M31A-CDX-20).
+     */
     public void stop(Path moduleDir) {
         Slot s = slots.get(key(moduleDir));
-        Running r = s == null ? null : s.running;
-        if (r == null) return;
+        if (s == null) return;
+        s.stopping = true;
+        Running r = s.running;
+        if (r == null) {
+            HostLauncher.Started st = s.started;
+            if (st != null) st.stop();
+            return;
+        }
         try {
             r.session().shutdown(Duration.ofSeconds(5));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
-            HostLauncher.stop(r.process());
+            r.started().stop();
         }
+    }
+
+    /** Releases a host's resources once its whole process tree is gone (polled briefly after the root's exit). */
+    private void releaseWhenTreeGone(HostLauncher.Started s, HostSnapshot snap, JoustTaskTracker tracker, JoustTaskTracker.Run run,
+                                     Path key, Slot slot, int attempt) {
+        // Ownership is kept while any tracked process lives, retried with backoff up to every 5 s (M31A-CDX-33).
+        if (!s.treeGone()) {
+            s.stop();
+            long delay = Math.min(5000, 250L << Math.min(attempt, 5));
+            com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                    () -> releaseWhenTreeGone(s, snap, tracker, run, key, slot, attempt + 1), delay, java.util.concurrent.TimeUnit.MILLISECONDS);
+            return;
+        }
+        snap.delete();
+        tracker.done(run);
+        slots.remove(key, slot);
     }
 
     @Override
@@ -224,8 +357,13 @@ public final class JoustHostService implements Disposable {
             Running r = s.running;
             if (r == null) continue;
             r.session().close();
-            HostLauncher.stop(r.process());
-            r.snapshot().delete();
+            r.started().stop();   // the exit callback deletes the snapshot once the tree is gone (M31A-CDX-33)
+        }
+        try {
+            if (sessionLock != null) sessionLock.release();
+            if (sessionLockChannel != null) sessionLockChannel.close();
+        } catch (IOException ignored) {
+            // the directory is swept by a later session
         }
     }
 
@@ -255,7 +393,12 @@ public final class JoustHostService implements Disposable {
         return yes[0];
     }
 
+    /** This IDE session's snapshot directory for the project. */
     Path snapshotsBase() {
+        return session;
+    }
+
+    private Path projectBase() {
         return Path.of(PathManager.getSystemPath(), "intelliada", "joust", "snapshots", sha(project.getLocationHash()));
     }
 

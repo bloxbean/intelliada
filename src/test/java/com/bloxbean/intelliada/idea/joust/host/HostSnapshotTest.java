@@ -279,6 +279,40 @@ public class HostSnapshotTest {
         assertEquals("only LDC; String.valueOf; PUTSTATIC RuntimeVersion.VERSION counts", "1.2.3", HostVersions.versionOf(cw.toByteArray()));
     }
 
+    @Test
+    public void theVersionIsReadAsTheJvmResolvesAMultiReleaseJar() throws Exception {
+        // M31A-SEC-10's jar: the base class says 0.1.0-reviewed, META-INF/versions/21 says 9.9.9-other (what a JVM loads).
+        Path dir = tmp.newFolder("mr").toPath();
+        Path jar = dir.resolve("rt.jar");
+        try (var in = HostSnapshotTest.class.getResourceAsStream("/joust-m3/multi-release-runtime.jar")) {
+            Files.copy(in, jar);
+        }
+        ObjectNode spec = HostJson.object().put("protocol", 1).put("mainClass", HostSpec.MAIN_CLASS).put("java", "/opt/jdk/bin/java");
+        String h = sha(Files.readAllBytes(jar));
+        spec.putArray("launch").addObject().put("ordinal", 0).put("path", jar.toString()).put("kind", "jar").put("sha256", h);
+        spec.put("digest", sha((h + " 0 jar \n").getBytes(StandardCharsets.UTF_8)));
+        HostSnapshot s = HostSnapshot.create(HostSpec.parse(spec), tmp.newFolder("s5").toPath());
+        try {
+            assertEquals("9.9.9-other", HostVersions.runtimeVersion(s, 25));
+        } finally {
+            s.delete();
+        }
+    }
+
+    @Test
+    public void deletingASnapshotNeverChangesALinkTarget() throws Exception {
+        Path base = tmp.newFolder("del").toPath();
+        Path snap = base.resolve("s");
+        Files.createDirectories(snap);
+        Path outside = tmp.newFile("outside.txt").toPath();
+        Files.setPosixFilePermissions(outside, java.nio.file.attribute.PosixFilePermissions.fromString("r--------"));
+        Files.createSymbolicLink(snap.resolve("link"), outside);
+        HostSnapshot.delete(snap);
+        assertFalse(Files.exists(snap));
+        assertEquals("the target's permissions are untouched (M31A-CDX-28)", "r--------",
+                java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(outside)));
+    }
+
     private static void assertInvalid(ObjectNode n) {
         try {
             HostSpec.parse(n);

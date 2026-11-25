@@ -160,16 +160,20 @@ public final class HostSnapshot {
                 createPrivateDir(dir);
                 List<String> rels = new ArrayList<>(e.files().keySet());
                 rels.sort(HostSnapshot::compareUtf8);
-                for (String rel : rels) {
-                    if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
-                    Path src = noLinkBelow(e.path(), rel);
-                    Path dst = dir.resolve(rel);
-                    if (!dst.normalize().startsWith(dir)) throw new HostSpec.Invalid("a relative path leaves its entry");
-                    Files.createDirectories(dst.getParent());
-                    String h = copyFile(src, dst, total);
-                    if (!h.equals(e.files().get(rel))) throw new HostSpec.Invalid("a class-path file changed since joustHostSpec ran: " + rel);
-                    lines.append(h).append(' ').append(o).append(" dir ").append(rel).append('\n');
-                    if (isAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
+                // Where the platform offers it, every component is opened relative to the directory handle already
+                // checked, never by a fresh path lookup, so no component can be swapped for a link (M31A-CDX-24).
+                try (java.nio.file.DirectoryStream<Path> ds = openRoot(e.path())) {
+                    java.nio.file.SecureDirectoryStream<Path> sds = ds instanceof java.nio.file.SecureDirectoryStream<Path> x ? x : null;
+                    for (String rel : rels) {
+                        if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
+                        Path dst = dir.resolve(rel);
+                        if (!dst.normalize().startsWith(dir)) throw new HostSpec.Invalid("a relative path leaves its entry");
+                        Files.createDirectories(dst.getParent());
+                        String h = sds != null ? copySecure(sds, rel, dst, total) : copyFile(noLinkBelow(e.path(), rel), dst, total);
+                        if (!h.equals(e.files().get(rel))) throw new HostSpec.Invalid("a class-path file changed since joustHostSpec ran: " + rel);
+                        lines.append(h).append(' ').append(o).append(" dir ").append(rel).append('\n');
+                        if (isAnchor(rel)) anchors.add(new Anchor(o, rel, readCapped(dst, total)));
+                    }
                 }
                 cp.add(dir);
             }
@@ -177,6 +181,76 @@ public final class HostSnapshot {
         String digest = sha256Hex(lines.toString().getBytes(StandardCharsets.UTF_8));
         if (!digest.equals(spec.digest())) throw new HostSpec.Invalid("the launch set's digest does not match the launch spec");
         return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors));
+    }
+
+    /**
+     * Opens a launch directory: through its parent's secure handle without following a link where the platform offers
+     * one, else by path with its identity ({@code fileKey}) checked before and after the open (M31A-CDX-34).
+     */
+    private static java.nio.file.DirectoryStream<Path> openRoot(Path dir) throws HostSpec.Invalid, IOException {
+        Path parent = dir.getParent();
+        if (parent != null) {
+            try (java.nio.file.DirectoryStream<Path> ps = Files.newDirectoryStream(parent)) {
+                if (ps instanceof java.nio.file.SecureDirectoryStream<Path> sp) {
+                    try {
+                        return sp.newDirectoryStream(dir.getFileName(), LinkOption.NOFOLLOW_LINKS);
+                    } catch (IOException e) {
+                        throw new HostSpec.Invalid("a class-path directory is missing or a link; run the build again");
+                    }
+                }
+            }
+        }
+        Object before = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir);
+        Object after = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        if (before == null || !before.equals(after)) {
+            ds.close();
+            throw new HostSpec.Invalid("a class-path directory changed while it was opened");
+        }
+        return ds;
+    }
+
+    /**
+     * Copies {@code rel} below the directory {@code root} is open on: each parent is opened relative to the previous
+     * handle without following links, and the file's attributes and contents are read through the last one.
+     */
+    private static String copySecure(java.nio.file.SecureDirectoryStream<Path> root, String rel, Path dst, long[] total)
+            throws HostSpec.Invalid, IOException {
+        String[] segs = rel.split("/");
+        List<java.nio.file.SecureDirectoryStream<Path>> opened = new ArrayList<>();
+        try {
+            java.nio.file.SecureDirectoryStream<Path> d = root;
+            for (int i = 0; i < segs.length - 1; i++) {
+                try {
+                    d = d.newDirectoryStream(Path.of(segs[i]), LinkOption.NOFOLLOW_LINKS);
+                } catch (IOException e) {
+                    throw new HostSpec.Invalid("a class-path directory under an entry is missing or a link: " + rel);
+                }
+                opened.add(d);
+            }
+            Path name = Path.of(segs[segs.length - 1]);
+            BasicFileAttributes a;
+            try {
+                a = d.getFileAttributeView(name, java.nio.file.attribute.BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
+                        .readAttributes();
+            } catch (IOException e) {
+                throw new HostSpec.Invalid("a class-path file is missing; run the build again");
+            }
+            if (!a.isRegularFile()) throw new HostSpec.Invalid("a class-path entry is not a regular file");
+            if (a.size() > MAX_FILE_BYTES) throw new HostSpec.Invalid("a class-path file is too large");
+            try (var ch = d.newByteChannel(name, java.util.Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+                 InputStream in = java.nio.channels.Channels.newInputStream(ch)) {
+                return copyStream(in, dst, total);
+            }
+        } finally {
+            for (int i = opened.size() - 1; i >= 0; i--) {
+                try {
+                    opened.get(i).close();
+                } catch (IOException ignored) {
+                    // read-only handles
+                }
+            }
+        }
     }
 
     /** {@code root/rel}, refusing a link at any component below {@code root} (M31A-CDX-12). */
@@ -202,9 +276,15 @@ public final class HostSnapshot {
         }
         if (!a.isRegularFile()) throw new HostSpec.Invalid("a class-path entry is not a regular file");
         if (a.size() > MAX_FILE_BYTES) throw new HostSpec.Invalid("a class-path file is too large");
+        try (InputStream in = Files.newInputStream(src, LinkOption.NOFOLLOW_LINKS)) {
+            return copyStream(in, dst, total);
+        }
+    }
+
+    /** Writes {@code in} to a new {@code dst} under the caps, returning the SHA-256 of the bytes written. */
+    private static String copyStream(InputStream in, Path dst, long[] total) throws HostSpec.Invalid, IOException {
         MessageDigest md = sha256();
-        try (InputStream in = Files.newInputStream(src, LinkOption.NOFOLLOW_LINKS);
-             OutputStream out = Files.newOutputStream(dst, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+        try (OutputStream out = Files.newOutputStream(dst, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             byte[] buf = new byte[64 * 1024];
             long n = 0;
             int r;
@@ -238,7 +318,26 @@ public final class HostSnapshot {
      */
     private static void jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total) throws HostSpec.Invalid, IOException {
         try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jar.toFile(), false)) {
-            java.util.jar.Manifest mf = jf.getManifest();
+            // The effective manifest, read through a bounded stream before it is parsed (M31A-CDX-25).
+            // Exactly one entry may be named like the manifest, in any case: with several, IntelliAda could check one while
+            // the host's JVM selects another (M31A-CDX-30).
+            java.util.jar.Manifest mf = null;
+            ZipEntry me = null;
+            for (var en0 = jf.entries(); en0.hasMoreElements(); ) {
+                ZipEntry z0 = en0.nextElement();
+                if (z0.getName().equalsIgnoreCase("META-INF/MANIFEST.MF")) {
+                    if (me != null) throw new HostSpec.Invalid("a class-path jar has more than one manifest (ordinal " + ordinal + ")");
+                    me = z0;
+                }
+            }
+            if (me != null) {
+                byte[] mb;
+                try (InputStream in = jf.getInputStream(me)) {
+                    mb = in.readNBytes(MAX_ANCHOR_BYTES + 1);
+                }
+                if (mb.length > MAX_ANCHOR_BYTES) throw new HostSpec.Invalid("a class-path jar's manifest is too large");
+                mf = new java.util.jar.Manifest(new java.io.ByteArrayInputStream(mb));
+            }
             if (mf != null) {
                 String cp = mf.getMainAttributes().getValue(java.util.jar.Attributes.Name.CLASS_PATH);
                 if (cp != null && !cp.isEmpty()) {
@@ -258,6 +357,8 @@ public final class HostSnapshot {
                     if (local.size() > 200_000) break;
                 }
             }
+            local.sort(null);
+            central.sort(null);
             if (!local.equals(central)) throw new HostSpec.Invalid("a class-path jar's entries read differently to the JVM (ordinal " + ordinal + ")");
             var en = jf.entries();
             while (en.hasMoreElements()) {
@@ -346,17 +447,27 @@ public final class HostSnapshot {
             Files.walkFileTree(root, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
-                    d.toFile().setWritable(true, true);
-                    d.toFile().setExecutable(true, true);
-                    d.toFile().setReadable(true, true);
+                    // The directory's permissions are set without following a link (M31A-CDX-35).
+                    try {
+                        var v = Files.getFileAttributeView(d, java.nio.file.attribute.PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+                        if (v != null) v.setPermissions(PosixFilePermissions.fromString("rwx------"));
+                        else d.toFile().setWritable(true, true);
+                    } catch (IOException | UnsupportedOperationException ignored) {
+                        // deletion below then fails and is swept later
+                    }
                     return FileVisitResult.CONTINUE;
                 }
 
                 @Override
                 public FileVisitResult visitFile(Path f, BasicFileAttributes attrs) {
                     // Windows keeps a read-only file from deletion (M31A-CDX-15); one failure does not stop the walk.
-                    f.toFile().setWritable(true, true);
+                    // A link is unlinked as it is: no permission change may reach its target (M31A-CDX-28).
                     try {
+                        if (attrs.isSymbolicLink() || !attrs.isRegularFile()) {
+                            Files.deleteIfExists(f);
+                            return FileVisitResult.CONTINUE;
+                        }
+                        // POSIX unlinks a read-only file given a writable parent: no chmod on files (M31A-CDX-35).
                         if (f.getFileSystem().supportedFileAttributeViews().contains("dos")) {
                             Files.setAttribute(f, "dos:readonly", false, LinkOption.NOFOLLOW_LINKS);
                         }

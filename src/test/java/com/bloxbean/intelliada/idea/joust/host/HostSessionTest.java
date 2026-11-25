@@ -200,6 +200,90 @@ public class HostSessionTest {
     }
 
     @Test
+    public void aReadOfAnEarlierCallsGenerationIsAViolation() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        peer = new Peer((id, p) -> {
+            asked.incrementAndGet();
+            return HostJson.object();
+        }, HostFrames.STALL_NANOS);
+        new Thread(() -> {
+            try {
+                long a = peer.next().get("id").longValue();
+                peer.frame("{\"jsonrpc\":\"2.0\",\"id\":\"" + a + ".1\",\"method\":\"chain/read\",\"params\":{\"kind\":\"tip\"}}");
+                peer.next();
+                peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + a + ",\"result\":{}}");
+                peer.next();   // B's request
+                // A read carrying A's generation while B is in flight (M31A-DES-12).
+                peer.frame("{\"jsonrpc\":\"2.0\",\"id\":\"" + a + ".2\",\"method\":\"chain/read\",\"params\":{\"kind\":\"tip\"}}");
+            } catch (Throwable ignored) {
+            }
+        }).start();
+        peer.session.call("describe", HostJson.object(), Duration.ofSeconds(10), () -> false);
+        try {
+            peer.session.call("view", HostJson.object(), Duration.ofSeconds(10), () -> false);
+            fail("a read of an earlier call was accepted");
+        } catch (HostSession.Ended expected) {
+            assertTrue(peer.session.violated());
+        }
+        assertEquals("only A's own read was answered", 1, asked.get());
+    }
+
+    @Test
+    public void aSilentHostIsStoppedEvenAfterItsCallerWasInterrupted() throws Exception {
+        peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
+        Thread caller = new Thread(() -> {
+            try {
+                peer.session.call("prepare", HostJson.object(), Duration.ofMillis(300), () -> false);
+            } catch (Exception ignored) {
+            }
+        });
+        caller.start();
+        peer.next();
+        caller.interrupt();
+        long end = System.nanoTime() + 8_000_000_000L;
+        while (peer.session.ended() == null && System.nanoTime() < end) Thread.sleep(20);
+        assertNotNull("the watchdog owns the deadline (M31A-CDX-16)", peer.session.ended());
+        assertTrue(peer.session.violated());
+        assertEquals(1, peer.stops.get());
+    }
+
+    @Test
+    public void aQueuedCallCancelledWhileWaitingIsNeverSent() throws Exception {
+        peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
+        new Thread(() -> {
+            try {
+                peer.session.call("describe", HostJson.object(), Duration.ofSeconds(10), () -> false);
+            } catch (Exception ignored) {
+            }
+        }).start();
+        long a = peer.next().get("id").longValue();
+        java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        var queued = new java.util.concurrent.CompletableFuture<String>();
+        new Thread(() -> {
+            try {
+                peer.session.call("view", HostJson.object(), Duration.ofSeconds(10), cancel::get);
+                queued.complete("sent");
+            } catch (HostSession.Ended e) {
+                queued.complete("not sent");
+            } catch (Exception e) {
+                queued.complete(e.toString());
+            }
+        }).start();
+        Thread.sleep(200);
+        cancel.set(true);
+        assertEquals("not sent", queued.get(5, java.util.concurrent.TimeUnit.SECONDS));
+        peer.frame("{\"jsonrpc\":\"2.0\",\"id\":" + a + ",\"result\":{}}");
+        // The next frame the host sees is a new call, never the cancelled view.
+        new Thread(() -> {
+            try {
+                peer.session.call("instances", HostJson.object(), Duration.ofSeconds(10), () -> false);
+            } catch (Exception ignored) {
+            }
+        }).start();
+        assertEquals("instances", peer.next().get("method").textValue());
+    }
+
+    @Test
     public void aMalformedErrorEnvelopeIsAViolation() throws Exception {
         peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
         new Thread(() -> {
@@ -254,6 +338,31 @@ public class HostSessionTest {
         } finally {
             s.close();
         }
+    }
+
+    @Test
+    public void aHostThatStopsReadingWhileACancelIsDueStillEndsTheSession() throws Exception {
+        // M31A-SEC-12's probe: the request write blocks (the host never reads) and the hard timeout falls due meanwhile.
+        java.nio.channels.Pipe toClient = java.nio.channels.Pipe.open(), toHost = java.nio.channels.Pipe.open();
+        java.util.concurrent.atomic.AtomicInteger stops = new java.util.concurrent.atomic.AtomicInteger();
+        HostSession s = new HostSession(java.nio.channels.Channels.newInputStream(toClient.source()),
+                java.nio.channels.Channels.newOutputStream(toHost.sink()), stops::incrementAndGet, NO_READS, e -> { }, 2_000_000_000L);
+        s.markInitializedForTests();
+        ObjectNode big = HostJson.object();
+        big.put("pad", "y".repeat(3_000_000));
+        Thread t = new Thread(() -> {
+            try {
+                s.call("prepare", big, Duration.ofMillis(200), () -> false);
+            } catch (Exception ignored) {
+            }
+        });
+        t.setDaemon(true);
+        t.start();
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (s.ended() == null && System.nanoTime() < end) Thread.sleep(20);
+        assertNotNull("the watchdog was not blocked by the stuck write", s.ended());
+        assertEquals(1, stops.get());
+        s.close();
     }
 
     @Test
@@ -386,8 +495,16 @@ public class HostSessionTest {
                 throw new RuntimeException(e);
             }
         }).start();
+        java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        new Thread(() -> {
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException ignored) {
+            }
+            cancel.set(true);
+        }).start();
         try {
-            peer.session.call("prepare", HostJson.object(), Duration.ofSeconds(30), () -> true);
+            peer.session.call("prepare", HostJson.object(), Duration.ofSeconds(30), cancel::get);
             fail("no error");
         } catch (HostError e) {
             assertTrue(e.is("internal", "cancelled"));
