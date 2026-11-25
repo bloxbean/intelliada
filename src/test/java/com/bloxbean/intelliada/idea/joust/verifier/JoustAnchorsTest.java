@@ -30,39 +30,9 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         return Files.createTempDirectory("joust-anchors");
     }
 
-    /** A real snapshot of {@code entries} (directories or jars), through a launch spec built here. */
+    /** A real snapshot of {@code entries} (directories or jars). */
     private HostSnapshot snapshot(List<Path> entries) throws Exception {
-        ObjectNode spec = HostJson.object().put("protocol", 1).put("mainClass", HostSpec.MAIN_CLASS).put("java", "/opt/jdk/bin/java");
-        ArrayNode launch = spec.putArray("launch");
-        StringBuilder lines = new StringBuilder();
-        for (int o = 0; o < entries.size(); o++) {
-            Path e = entries.get(o);
-            if (Files.isDirectory(e)) {
-                ObjectNode dir = launch.addObject().put("ordinal", o).put("path", e.toString()).put("kind", "dir");
-                ObjectNode files = dir.putObject("files");
-                TreeMap<String, String> sorted = new TreeMap<>(HostSnapshotOrder.UTF8);
-                try (var w = Files.walk(e)) {
-                    for (Path p : (Iterable<Path>) w.filter(Files::isRegularFile)::iterator) {
-                        sorted.put(e.relativize(p).toString().replace(File.separatorChar, '/'), sha(Files.readAllBytes(p)));
-                    }
-                }
-                for (var f : sorted.entrySet()) {
-                    files.put(f.getKey(), f.getValue());
-                    lines.append(f.getValue()).append(' ').append(o).append(" dir ").append(f.getKey()).append('\n');
-                }
-            } else {
-                String h = sha(Files.readAllBytes(e));
-                launch.addObject().put("ordinal", o).put("path", e.toString()).put("kind", "jar").put("sha256", h);
-                lines.append(h).append(' ').append(o).append(" jar \n");
-            }
-        }
-        spec.put("digest", sha(lines.toString().getBytes(StandardCharsets.UTF_8)));
-        return HostSnapshot.create(HostSpec.parse(spec), newFolder());
-    }
-
-    private static final class HostSnapshotOrder {
-        static final java.util.Comparator<String> UTF8 = (a, b) -> java.util.Arrays.compareUnsigned(
-                a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+        return SnapshotOf.create(entries, newFolder()).snapshot();
     }
 
     private static String sha(byte[] b) throws Exception {

@@ -44,6 +44,16 @@ public final class HostVersions {
         return null;
     }
 
+    /** The runtime version from one class-path entry's own {@code RuntimeVersion} (D12: the reviewed runtime jar's), or null. */
+    public static @Nullable String runtimeVersionAt(Path entry, int javaFeature) {
+        try {
+            byte[] b = classBytes(entry, javaFeature);
+            return b == null ? null : versionOf(b);
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
     private static byte[] classBytes(Path entry, int javaFeature) throws IOException {
         if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
             Path f = entry.resolve(CLASS);
