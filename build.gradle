@@ -145,12 +145,206 @@ dependencies {
 }
 def joustConformanceFiles = configurations.joustConformance.incoming.artifactView { lenient = true }.files
 
+// ADR-005 D13, L37: JOUST's reference checker, bundled in the plugin's joust-verifier/ directory, off the class path.
+// The closure is pinned by gradle/joust-verifier.lock (exact coordinates, SHA-256s, nothing transitive): the bundle
+// task requires exactly the locked set and fails on any hash mismatch. The plugin's built-in manifest is generated from
+// the verified files (and the runner), and IntelliAda checks it before each run. Strict by default: without the kit
+// the build fails, unless -Pjoust.checkerOptional=true is given on the command line, which builds a plugin that refuses
+// to sign or export ("the transaction checker is not bundled"). buildPlugin refuses a SNAPSHOT kit unless
+// -Pjoust.allowSnapshotKit=true is given on the command line; such a build is stamped snapshot=true.
+def joustVerifierLockFile = file('gradle/joust-verifier.lock')
+def joustVerifierLock = joustVerifierLockFile.readLines().findAll { it.trim() && !it.startsWith('#') }.collect {
+    def parts = it.trim().split(/\s+/)
+    if (parts.length != 2 || !(parts[0] ==~ /[0-9a-f]{64}/)) throw new GradleException("malformed line in ${joustVerifierLockFile}: ${it}")
+    def c = parts[1].split(':')
+    if (c.length < 3 || c.length > 4) throw new GradleException("malformed coordinate in ${joustVerifierLockFile}: ${parts[1]}")
+    [sha: parts[0], coord: parts[1], file: "${c[1]}-${c[2]}${c.length == 4 ? '-' + c[3] : ''}.jar".toString()]
+}
+def cliProperty = { String name -> gradle.startParameter.projectProperties[name] == 'true' }
+def joustCheckerOptional = cliProperty('joust.checkerOptional')
+def joustAllowSnapshotKit = cliProperty('joust.allowSnapshotKit')
+configurations {
+    joustVerifier {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    joustVerifierRunnerCompile {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+}
+dependencies {
+    joustVerifierLock.each { joustVerifier it.coord }
+    joustVerifierRunnerCompile 'com.fasterxml.jackson.core:jackson-databind:2.21.0'
+    joustVerifierRunnerCompile 'com.fasterxml.jackson.core:jackson-core:2.21.0'
+    joustVerifierRunnerCompile 'com.fasterxml.jackson.core:jackson-annotations:2.21'
+}
+def joustVerifierFiles = configurations.joustVerifier.incoming.artifactView { lenient = true }.files
+
+// The runner: Java 21 class files, compiled against Jackson only (it reaches ReferenceChecker by reflection).
+def compileJoustVerifierRunner = tasks.register('compileJoustVerifierRunner', JavaCompile) {
+    source = fileTree('src/joustVerifier/java')
+    classpath = configurations.joustVerifierRunnerCompile
+    destinationDirectory = layout.buildDirectory.dir('joust-verifier-runner/classes')
+    options.release = 21
+}
+def joustVerifierRunnerJar = tasks.register('joustVerifierRunnerJar', Jar) {
+    from(compileJoustVerifierRunner)
+    archiveFileName = 'intelliada-joust-verifier-runner.jar'
+    destinationDirectory = layout.buildDirectory.dir('joust-verifier-runner')
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+def joustVerifierBundleDir = layout.buildDirectory.dir('joust-verifier/bundle')
+def joustVerifierManifestDir = layout.buildDirectory.dir('joust-verifier/manifest')
+def joustVerifierBundle = tasks.register('joustVerifierBundle') {
+    inputs.file(joustVerifierLockFile)
+    inputs.file(file('src/main/resources/joust/reviewed-sets.json')).withPropertyName('reviewedSets')   // M33A-CDX-18
+    inputs.files(joustVerifierFiles).withPropertyName('kit')
+    inputs.files(joustVerifierRunnerJar).withPropertyName('runner')
+    inputs.property('checkerOptional', joustCheckerOptional)
+    outputs.dir(joustVerifierBundleDir)
+    outputs.dir(joustVerifierManifestDir)
+    doLast {
+        def bundle = joustVerifierBundleDir.get().asFile
+        def manifestDir = joustVerifierManifestDir.get().asFile
+        project.delete(bundle, manifestDir)
+        bundle.mkdirs()
+        new File(manifestDir, 'joust').mkdirs()
+        def sha = { File f -> java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+        def resolved = joustVerifierFiles.files.collectEntries { [(it.name): it] }
+        def missing = joustVerifierLock.findAll { !resolved.containsKey(it.file) }
+        def manifest = new File(manifestDir, 'joust/joust-verifier.manifest')
+        if (!missing.isEmpty() || resolved.size() != joustVerifierLock.size()) {
+            if (resolved.size() > 0 && missing.isEmpty()) throw new GradleException("the checker closure resolved files the lock does not list")
+            if (!joustCheckerOptional) {
+                throw new GradleException("JOUST's reference checker kit is not resolvable (${missing.size()} of ${joustVerifierLock.size()} " +
+                        "locked jars missing, e.g. ${missing.take(3)*.coord}). Publish the reviewed JOUST kit to the local Maven " +
+                        "repository, or build without the checker with -Pjoust.checkerOptional=true (the plugin then refuses to sign).")
+            }
+            logger.warn("WARNING: building WITHOUT the JOUST transaction checker (-Pjoust.checkerOptional=true): the run panel will refuse to sign or export.")
+            manifest.text = "format=1\nbundled=false\n"
+            return
+        }
+        def lines = []
+        def classOwner = [:]
+        new File(bundle, 'lib').mkdirs()
+        joustVerifierLock.each { e ->
+            File f = resolved[e.file]
+            byte[] bytes = f.bytes
+            String h = java.security.MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString()
+            if (h != e.sha) throw new GradleException("checker jar ${e.coord} has SHA-256 ${h}, the lock pins ${e.sha}")
+            new File(bundle, "lib/${e.file}").bytes = bytes   // exactly the bytes hashed (M33A-SEC-7)
+            // No class in two locked jars: the class path's order must never decide a verdict (M33A-SEC-6).
+            new java.util.zip.ZipInputStream(new ByteArrayInputStream(bytes)).withCloseable { z ->
+                def ze
+                while ((ze = z.nextEntry) != null) {
+                    if (!ze.name.endsWith('.class') || ze.name.endsWith('module-info.class') || ze.name.startsWith('META-INF/')) continue
+                    def prior = classOwner.put(ze.name, e.file)
+                    if (prior != null && prior != e.file) throw new GradleException("checker jars ${prior} and ${e.file} both hold ${ze.name}")
+                }
+            }
+            lines << "${h} lib/${e.file}"
+        }
+        // The reviewed set must be the bundled kit's: its label and its api and runtime hashes (M33A-SEC-4, -DES-4).
+        def reviewed = new groovy.json.JsonSlurper().parse(file('src/main/resources/joust/reviewed-sets.json'))
+        def lockSha = { String artifact -> joustVerifierLock.find { it.coord.split(':')[1] == artifact && it.coord.split(':').length == 3 }?.sha }
+        def kitLabel = joustVerifierLock.find { it.coord.contains(':julc-state-host:') }.coord.split(':')[2]
+        // Every set the runtime can authorize is the bundled kit's: its label, api and runtime hashes (M33A-CDX-19).
+        if (reviewed.sets.isEmpty()) throw new GradleException("joust/reviewed-sets.json has no reviewed set")
+        reviewed.sets.each { set ->
+            if (set.label != kitLabel || set.jars['julc-state-api'] != lockSha('julc-state-api')
+                    || set.jars['julc-state-runtime'] != lockSha('julc-state-runtime')) {
+                throw new GradleException("reviewed set ${set.label} in joust/reviewed-sets.json is not the bundled kit ${kitLabel} (label, julc-state-api and julc-state-runtime hashes)")
+            }
+        }
+        File runner = joustVerifierRunnerJar.get().archiveFile.get().asFile
+        project.copy { from runner; into bundle }
+        lines << "${sha(runner)} ${runner.name}"
+        def kitVersion = joustVerifierLock.find { it.coord.contains(':julc-state-host:') }.coord.split(':')[2]
+        boolean snapshot = joustVerifierLock.any { it.coord.split(':')[2] ==~ /.*(-SNAPSHOT|-\d{8}\.\d{6}-\d+)$/ }
+        manifest.text = "format=1\nbundled=true\nkit=${kitVersion}\nsnapshot=${snapshot}\nrunner=${runner.name}\n" +
+                "main=com.bloxbean.intelliada.joust.verifier.StdinRunner\n" + lines.collect { "file=${it}" }.join('\n') + '\n'
+    }
+}
+sourceSets.main.resources.srcDir(joustVerifierManifestDir)
+tasks.named('processResources') { dependsOn(joustVerifierBundle) }
+
+// A Marketplace or release zip never carries a SNAPSHOT kit unless explicitly overridden on the command line (L37).
+def checkJoustKit = tasks.register('checkJoustKit') {
+    dependsOn(joustVerifierBundle)
+    inputs.property('allowSnapshotKit', joustAllowSnapshotKit)
+    doLast {
+        def m = joustVerifierManifestDir.get().file('joust/joust-verifier.manifest').asFile.text
+        def labels = new groovy.json.JsonSlurper().parse(file('src/main/resources/joust/reviewed-sets.json')).sets*.label
+        boolean snapshotLabel = labels.any { it ==~ /.*(-SNAPSHOT|-\d{8}\.\d{6}-\d+)$/ }
+        // Only a distribution carrying a checker can sign; a checker-less build (CI) refuses every check (M33A-CDX-11).
+        boolean bundled = m.contains('bundled=true')
+        if (bundled && (m.contains('snapshot=true') || snapshotLabel) && !joustAllowSnapshotKit) {
+            throw new GradleException("the bundled JOUST checker kit is a SNAPSHOT build; a distributable plugin needs a released, " +
+                    "reviewed kit. For a local build only, pass -Pjoust.allowSnapshotKit=true on the command line.")
+        }
+    }
+}
+tasks.matching { it.name in ['buildPlugin', 'signPlugin', 'publishPlugin'] }.configureEach { dependsOn(checkJoustKit) }
+
+// ADR-005 I9: the zip carries no org/julclang class on the plugin class path (lib/) and no JOUST class
+// (org/julclang/state/) anywhere but joust-verifier/; printed with the bundle's SHA-256s for the PR (I9).
+def verifyJoustPluginLayout = tasks.register('verifyJoustPluginLayout') {
+    doLast {
+        def zip = tasks.named('buildPlugin').get().archiveFile.get().asFile
+        def manifest = joustVerifierManifestDir.get().file('joust/joust-verifier.manifest').asFile
+        def expected = [:]
+        manifest.readLines().findAll { it.startsWith('file=') }.each { l ->
+            def p = l.substring(5).split(' ', 2)
+            expected[p[1]] = p[0]
+        }
+        // A class's logical name: a multi-release copy counts as its class (M33A-CDX-20).
+        def logical = { String n -> def m = (n =~ /^META-INF\/versions\/\d+\/(.+)$/); m.matches() ? m.group(1) : n }
+        def found = [:]
+        def bad = []
+        new java.util.zip.ZipFile(zip).withCloseable { z ->
+            z.entries().each { e ->
+                if (e.isDirectory()) return
+                boolean verifier = e.name.contains('/joust-verifier/')
+                // IntelliAda's JuLC integration (its own class loader) may hold JuLC's compiler and VM, never JOUST.
+                boolean julcRuntime = e.name.contains('/julc-runtime/')
+                if (e.name.endsWith('.class') && !verifier) bad << "a loose class ${e.name}"
+                if (verifier) {
+                    def rel = e.name.substring(e.name.indexOf('/joust-verifier/') + '/joust-verifier/'.length())
+                    found[rel] = java.security.MessageDigest.getInstance('SHA-256').digest(z.getInputStream(e).bytes).encodeHex().toString()
+                    println "joust-verifier ${found[rel]} ${rel}"
+                    return
+                }
+                if (!e.name.endsWith('.jar')) return
+                new java.util.zip.ZipInputStream(z.getInputStream(e)).withCloseable { jar ->
+                    def je
+                    while ((je = jar.nextEntry) != null) {
+                        if (!je.name.endsWith('.class')) continue
+                        String c = logical(je.name)
+                        if (c.startsWith('org/julclang/state/')) bad << "a JOUST class outside joust-verifier/: ${e.name}: ${je.name}"
+                        else if (!julcRuntime && c.startsWith('org/julclang/')) bad << "a JuLC class on the plugin class path: ${e.name}: ${je.name}"
+                    }
+                }
+            }
+        }
+        // joust-verifier/ holds exactly the manifest's files and hashes, none for a checker-less build (M33A-CDX-20).
+        if (found != expected) bad << "joust-verifier/ differs from the built-in manifest"
+        if (!bad.isEmpty()) throw new GradleException("I9: ${bad.take(5)}")
+    }
+}
+tasks.named('buildPlugin') { finalizedBy(verifyJoustPluginLayout) }
+
 def joustLintLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
 
 test {
     failOnNoDiscoveredTests = false
     inputs.files(configurations.joustLint).withPropertyName('joustLintClasspath')
     inputs.files(joustConformanceFiles).withPropertyName('joustConformanceClasspath')
+    dependsOn(joustVerifierBundle)
     jvmArgumentProviders.add({
         String java = project.findProperty('joustLintJava')
         if (java == null) {
@@ -161,7 +355,8 @@ test {
             }
         }
         ["-Djoust.lint.classpath=${configurations.joustLint.asPath}", "-Djoust.lint.java=${java}",
-         "-Djoust.conformance.classpath=${joustConformanceFiles.asPath}", "-Djoust.conformance.version=${joustTestVersion}"]
+         "-Djoust.conformance.classpath=${joustConformanceFiles.asPath}", "-Djoust.conformance.version=${joustTestVersion}",
+         "-Djoust.verifier.dir=${joustVerifierBundleDir.get().asFile}"]
     } as CommandLineArgumentProvider)
     // ADR-004 milestone verification: with JOUST_REQUIRE_TOOLS=1 a JOUST test whose tools are missing fails instead of
     // skipping (M1-CDX-25).
@@ -179,7 +374,18 @@ configurations.testRuntimeClasspath {
 // Copy julc shadow JARs to plugin sandbox for runtime classloader
 // These go in julc-runtime/ (NOT lib/) to avoid IntelliJ classloader scanning them
 tasks.named('prepareSandbox') {
+    dependsOn(joustVerifierBundle)
     doLast {
+        // ADR-005 D13: the checker's files, off the plugin class path (I9).
+        def verifierDir = new File(it.destinationDir, "${rootProject.name}/joust-verifier")
+        project.delete(verifierDir)
+        def bundled = joustVerifierBundleDir.get().asFile
+        if (new File(bundled, 'lib').isDirectory()) {
+            copy {
+                from bundled
+                into verifierDir
+            }
+        }
         def julcRuntimeDir = file("julc-runtime")
         if (julcRuntimeDir.exists()) {
             def targetDir = new File(it.destinationDir, "${rootProject.name}/julc-runtime")

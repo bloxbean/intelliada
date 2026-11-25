@@ -41,6 +41,21 @@ public final class HostJson {
                 .build());
     }
 
+    /**
+     * A contract description read as JOUST's host reads it: Jackson's byte-stream reader, which detects a BOM and
+     * UTF-16/32, with this mapper's strictness (duplicate keys, trailing tokens). Blueprints and protocol frames use
+     * {@link #parse} (UTF-8, as the runtime decodes blueprints; M33A-CDX-47).
+     */
+    public static JsonNode parseResource(byte[] b) throws Malformed {
+        try {
+            JsonNode n = MAPPER.readTree(b);
+            if (n == null || n.isMissingNode()) throw new Malformed("an empty resource");
+            return n;
+        } catch (java.io.IOException e) {
+            throw new Malformed("not valid JSON");
+        }
+    }
+
     /** A malformed body: a protocol violation on the host channel. */
     public static final class Malformed extends Exception {
         Malformed(String why) {

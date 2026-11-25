@@ -539,10 +539,32 @@ public class JoustAccountsPlatformTest extends BasePlatformTestCase {
         java.nio.file.Path home = dirs.get(0);
         try {
             for (var d : dirs) if (!d.equals(home)) java.nio.file.Files.setPosixFilePermissions(d, java.nio.file.attribute.PosixFilePermissions.fromString("---------"));
+            // A privileged runner traverses anyway: only assert when the folder really cannot be read (M32-CDX-41).
+            if (java.nio.file.Files.isReadable(dirs.get(1))) return;
             assertRefused(() -> store.importMnemonic("x", NetworkClass.TESTNET, phrase()), "could not be read");
         } finally {
             for (var d : dirs) java.nio.file.Files.setPosixFilePermissions(d, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
         }
+    }
+
+    /** M32-CDX-36, -DES-20: a watch-only row is listed, selectable and importable even when the JOUST store holds its key. */
+    public void testWatchOnlyRowsAreNeverWithheld() throws Exception {
+        Account k = new Account(Networks.testnet());
+        store.importMnemonic("j", NetworkClass.TESTNET, k.mnemonic());
+        CardanoAccount watch = new CardanoAccount(k.baseAddress());
+        assertTrue("a watch-only entry is imported after the JOUST one", AccountService.getAccountService().importAccount(watch));
+        assertFalse(AccountService.withheld(watch));
+        assertTrue(AccountService.getAccountService().getAccounts().stream().anyMatch(c -> c.getAddress().equals(k.baseAddress())));
+    }
+
+    /** M32-CDX-38: a session is never offered an entry whose phrase is missing or empty. */
+    public void testASessionNeverGetsAnEntryWithoutAUsablePhrase() throws Exception {
+        var t = store.createFresh("t", NetworkClass.TESTNET);
+        var testnet = new com.bloxbean.intelliada.idea.joust.host.chain.NetworkIdentity.Identity(NetworkClass.TESTNET, 0, 1, 0, 0, 1000, 300, "public-1");
+        assertTrue(store.forSession(testnet).stream().anyMatch(e -> e.id.equals(t.id)));
+        safe.set(JoustAccounts.attributes(t.id), new Credentials(JoustAccounts.holder(t.id, NetworkClass.TESTNET), ""));
+        assertTrue(store.forSession(testnet).stream().noneMatch(e -> e.id.equals(t.id)));
+        assertTrue("still listed for repair", store.list(NetworkClass.TESTNET).stream().anyMatch(e -> e.id.equals(t.id)));
     }
 
     public void testSessionsSeeOnlyTheirClass() throws Exception {

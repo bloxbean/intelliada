@@ -67,11 +67,77 @@ public class AccountCacheService {
 
     /** Every legacy account, or an IOException when the store exists but cannot be read (M32-CDX-18). */
     public List<CardanoAccount> getAccountsStrict() throws java.io.IOException {
-        String folder = getAccountCacheFolder();
-        if (folder == null) throw new java.io.IOException("the account cache folder could not be determined");
+        // Both places the cache can live, whatever is writable now: the home folder's, and the temp-dir fallback used
+        // when home was not writable (M32-CDX-39). A folder that exists but cannot be read refuses.
+        java.util.LinkedHashSet<java.nio.file.Path> folders = new java.util.LinkedHashSet<>();
+        folders.add(java.nio.file.Path.of(System.getProperty("user.home"), ".intelliada"));
+        folders.add(java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), ".intelliada"));
+        List<CardanoAccount> all = new java.util.ArrayList<>();
         synchronized (STORAGE) {
-            List<CardanoAccount> a = new GlobalCache(folder).getAccountCacheStrict().getAccounts();
-            return a == null ? List.of() : a;
+            for (java.nio.file.Path f : folders) {
+                if (java.nio.file.Files.notExists(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                // The shared temp directory counts only when this user made it: a real directory, owned by this user,
+                // writable by no one else (anyone can create /tmp/.intelliada; M33A-SEC-5).
+                // Only the exact home cache is exempt; any other folder, under the profile or not, is checked (M33A-CDX-42).
+                boolean homeCache = f.toAbsolutePath().normalize().equals(java.nio.file.Path.of(System.getProperty("user.home"), ".intelliada").toAbsolutePath().normalize());
+                if (!homeCache && !java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+                    // Without POSIX permissions the fallback's privacy cannot be established: the ownership decision is
+                    // refused rather than made without its accounts (M33A-CDX-49).
+                    throw new java.io.IOException("a legacy account store in " + f + " cannot be verified as private on this system");
+                }
+                if (!homeCache && !ownPrivateDirectory(f)) {
+                    // Untrusted and not in use: skipped. Untrusted but the legacy store's active folder (its chooser
+                    // and writer use it): the ownership decision is refused, never made without it (M33A-CDX-21).
+                    String active = getAccountCacheFolder();
+                    if (active != null && java.nio.file.Path.of(active).toAbsolutePath().normalize().equals(f.toAbsolutePath().normalize())) {
+                        throw new java.io.IOException("the active legacy account store is in a shared, untrusted folder");
+                    }
+                    continue;
+                }
+                if (!java.nio.file.Files.isDirectory(f) || !java.nio.file.Files.isReadable(f)) {
+                    throw new java.io.IOException("an account cache folder cannot be read");
+                }
+                List<CardanoAccount> a = new GlobalCache(f.toString()).getAccountCacheStrict().getAccounts();
+                if (a != null) all.addAll(a);
+            }
+        }
+        return all;
+    }
+
+    /**
+     * True when the folder is established as this user's own private directory, false when it is established not to be;
+     * an IOException when it cannot be established, which refuses the ownership decision (M33A-CDX-58).
+     */
+    private static boolean ownPrivateDirectory(java.nio.file.Path f) throws java.io.IOException {
+        try {
+            // The type read directly: isDirectory hides a read failure as false (M33A-CDX-64).
+            java.nio.file.attribute.BasicFileAttributes attrs;
+            try {
+                attrs = java.nio.file.Files.readAttributes(f, java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            } catch (java.nio.file.NoSuchFileException gone) {
+                return false;   // established absent
+            }
+            if (!attrs.isDirectory()) return false;
+            // The owner as a file-system principal, compared with the principal of a file this process creates: never a
+            // name, which distinct users can share (M33A-CDX-32).
+            var owner = java.nio.file.Files.getOwner(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            java.nio.file.Path probe = java.nio.file.Files.createTempFile("intelliada-owner", null);
+            java.nio.file.attribute.UserPrincipal me;
+            try {
+                me = java.nio.file.Files.getOwner(probe);
+            } finally {
+                java.nio.file.Files.deleteIfExists(probe);
+            }
+            if (!owner.equals(me)) return false;
+            if (!java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+                // Without POSIX permissions the effective write access is not checked here, so a fallback is not trusted.
+                return false;
+            }
+            var perms = java.nio.file.Files.getPosixFilePermissions(f, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            return !perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
+                    && !perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE);
+        } catch (UnsupportedOperationException | java.io.IOException e) {
+            throw new java.io.IOException("whether " + f + " is a private account store cannot be established", e);
         }
     }
 

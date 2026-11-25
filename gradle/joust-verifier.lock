@@ -1,0 +1,24 @@
+# ADR-005 D13, L37: the bundled reference checker's closure, pinned by SHA-256.
+# The smallest set passing all 333 vectors of the reviewed JOUST kit (measured with every jar removed in turn).
+# Changes only through a reviewed PR that posts these hashes (I9). Format: <sha256> <group:artifact:version[:classifier]>
+5ef465c47e34c6b13f93ece2ff49e94b933d69cf9f172cc4997418303884da73 co.nstant.in:cbor:0.9
+14558e344aaf2df7f05f0424cff1750f865cc2ef4cd7a36e89db5d4548e95fff com.bloxbean.cardano:cardano-client-address:0.8.0-pre8
+b5180bdabf5c9c73fa52ae73a6241d1bf1afd29c0bef0670099d6ca98a8849d1 com.bloxbean.cardano:cardano-client-common-spec:0.8.0-pre8
+d77a16850f65e9797569cca3adb2c886d8bc1c3e4cd7a03f845aa383aa354fa0 com.bloxbean.cardano:cardano-client-common:0.8.0-pre8
+8fb6763b7d5d703b62a627561ac88cf9d3a79822bef0fe7d1c8cd6e95d4d1812 com.bloxbean.cardano:cardano-client-core-api:0.8.0-pre8
+7672d87cc18baa7ca78caed450e82ceab5045c7bebb758afa03624d1138e8421 com.bloxbean.cardano:cardano-client-crypto:0.8.0-pre8
+a0d563433d1f48300be22090568012997ba2a27701de87107547aafae5edf46a com.bloxbean.cardano:cardano-client-ledger-cbor:0.8.0-pre8
+10e7e19efeb815efc48119cb6b055dcd6e07328d68cfe17d0f4683870ff4ada7 com.bloxbean.cardano:cardano-client-plutus:0.8.0-pre8
+1a21366fa730fe8ba36720d9dbef9b7933dbdaf52afd7f9d7b40ed5c25546948 com.bloxbean.cardano:cardano-client-transaction-spec:0.8.0-pre8
+53ca085f4a150f703f49e1aabd935bd03b43e1ea3d55d135438292af22cef56b com.fasterxml.jackson.core:jackson-annotations:2.21
+e22604bcd9b24e462d5df102007cb06e1ed811e86f1ce6081ca62f385f2db87b com.fasterxml.jackson.core:jackson-core:2.21.0
+0057817ee40bc71544072dc2a3ba575ef91dce53a2d87489bde91c05f3a22621 com.fasterxml.jackson.core:jackson-databind:2.21.0
+1e301f0c52ac248b0b14fdc3d12283c77252d4d6f48521d572e7d8c4c2cc4ac7 com.google.guava:guava:33.5.0-jre
+2af190b300cbb0b35e248ccf5f4a06b6072030aeb3da7a98ec73abe5b4cb371f org.bouncycastle:bcprov-jdk18on:1.86
+dc78a5ef4b6809dc31075d278de7f786d0416c7f541108bfd212df3a9a925d97 org.julclang:julc-cardano-client-lib:0.1.0-pre22
+fa7d22f6147ac337b2f551b2e249f3fb883dda350c0aa67bc0517d262a9f7426 org.julclang:julc-core:0.1.0-pre22
+2b6b30de8db37484f2b1940c94a2c81da6ae4c56d10bbeba8731177f5dd07f37 org.julclang:julc-ledger-api:0.1.0-pre22
+fd723d5c6b41a6b18722ae6d020ac043d8de04273e1dd498e62b52415609e4dd org.julclang:julc-state-api:0.1.0-pre3-01bad1f-SNAPSHOT
+f462511ec62f179a7aa26c4ee1e7a4b3235b83f03b3a5984826edb9a57175e27 org.julclang:julc-state-host:0.1.0-pre3-01bad1f-SNAPSHOT:conformance
+d6bb6ed5ce78cf473f1ffdb1a7cdee0ab253fc0b56b518084f43ad78b50ad5ae org.julclang:julc-state-runtime:0.1.0-pre3-01bad1f-SNAPSHOT
+6ace792de3b769f50e729e055db64fb4e96fa48951a525b88b6f40969981f791 org.julclang:julc-stdlib:0.1.0-pre22

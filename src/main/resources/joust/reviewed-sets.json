@@ -1,0 +1,16 @@
+{
+  "comment": "ADR-005 D12/L31: the JOUST versions whose kit IntelliAda was reviewed against. A project signs or exports only when its launch set's five runtime jars are one set's, byte for byte. Changes only through a reviewed PR that posts these hashes (I9). The version string is a label.",
+  "sets": [
+    {
+      "label": "0.1.0-pre3-01bad1f-SNAPSHOT",
+      "jars": {
+        "julc-state-api": "fd723d5c6b41a6b18722ae6d020ac043d8de04273e1dd498e62b52415609e4dd",
+        "julc-state-runtime": "d6bb6ed5ce78cf473f1ffdb1a7cdee0ab253fc0b56b518084f43ad78b50ad5ae",
+        "julc-state-serve": "f227d915e3a1e610df69f0a5709ec9ac0ee573b4df26ed301ee171ca71b1e387",
+        "julc-state-host": "ab3e84a26470abea276b0a001fa45079d5938fe0ec2384aecaf0bb42db58ba18",
+        "julc-state-verifier": "eb3e14d66bf3d705d5a0cf48937fdf4c0cb9b3818644208a6b848848201d446f"
+      },
+      "xJoustVersions": [2]
+    }
+  ]
+}

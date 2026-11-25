@@ -1,0 +1,96 @@
+package com.bloxbean.intelliada.idea.joust.verifier;
+
+import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.Assert.*;
+
+/**
+ * ADR-005 I16 (M3.3a): an architecture test over IntelliAda's compiled JOUST packages. No class refers to a Plutus data
+ * encoder (IntelliAda never builds datums or redeemers), and CCL's transaction decoding appears only in the review
+ * modal's package (display only; none exists before M3.3b). Read from the class files' constant pools, so an import,
+ * a fully qualified name or a reflective string all count.
+ */
+public class JoustArchitectureTest {
+
+    static final String REVIEW = "com/bloxbean/intelliada/idea/joust/review/";
+
+    /**
+     * By rule, not by a list of names (M33A-DES-5): any Plutus data type or serializer of CCL, any JuLC class, and CCL's
+     * and cbor's encoders and transaction readers.
+     */
+    static boolean encoder(String name) {
+        return name.startsWith("com/bloxbean/cardano/client/plutus/spec/") && (name.contains("PlutusData") || name.contains("/serializers/"))
+                || name.startsWith("org/julclang/core/") || name.startsWith("org/julclang/clientlib/")
+                || name.equals("com/bloxbean/cardano/client/transaction/spec/Redeemer")
+                || name.equals("co/nstant/in/cbor/CborEncoder") || name.equals("co/nstant/in/cbor/CborBuilder");
+    }
+
+    static boolean decoder(String name) {
+        return name.startsWith("com/bloxbean/cardano/client/transaction/spec/Transaction")
+                || name.equals("com/bloxbean/cardano/client/common/cbor/CborSerializationUtil")
+                || name.equals("co/nstant/in/cbor/CborDecoder");
+    }
+
+    /**
+     * The internal class names a class file refers to, parsed with ASM: every type the remapper sees (class
+     * references, field and method descriptors, signatures, annotations), never a raw byte scan (M33A-CDX-24).
+     */
+    static java.util.Set<String> referencedClasses(byte[] b) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        org.jetbrains.org.objectweb.asm.commons.Remapper collect = new org.jetbrains.org.objectweb.asm.commons.Remapper() {
+            @Override
+            public String map(String internalName) {
+                out.add(internalName);
+                return internalName;
+            }
+        };
+        new org.jetbrains.org.objectweb.asm.ClassReader(b).accept(new org.jetbrains.org.objectweb.asm.commons.ClassRemapper(
+                new org.jetbrains.org.objectweb.asm.ClassWriter(0), collect), 0);
+        return out;
+    }
+
+    /** A compiled canary the parser and the rule must flag: a field of type BytesPlutusData is an encoder reference. */
+    @Test
+    public void aCompiledCanaryIsFlagged() throws Exception {
+        assertTrue(encoder("com/bloxbean/cardano/client/plutus/spec/BytesPlutusData"));
+        assertTrue(encoder("org/julclang/core/cbor/PlutusDataCborEncoder"));
+        assertTrue(decoder("com/bloxbean/cardano/client/transaction/spec/TransactionWitnessSet"));
+        assertFalse(encoder("org/julclang/state/verifier/OutputVerifier"));
+        assertFalse(encoder("com/bloxbean/cardano/client/address/Address"));
+        // The canary is a test source, compiled with the tests: no compiler launched here (M33A-CDX-33).
+        byte[] canary;
+        try (var in = getClass().getResourceAsStream("/com/bloxbean/intelliada/idea/joust/verifier/canary/ArchitectureCanary.class")) {
+            assertNotNull("the compiled canary", in);
+            canary = in.readAllBytes();
+        }
+        java.util.Set<String> refs = referencedClasses(canary);
+        assertTrue("the field's descriptor is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::encoder));
+        assertTrue("the decoder call is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::decoder));
+    }
+
+    @Test
+    public void noEncoderAndDecodingOnlyInTheReviewModal() throws Exception {
+        Path root = Path.of("build/classes/java/main/com/bloxbean/intelliada/idea/joust");
+        assertTrue("compiled classes at " + root.toAbsolutePath(), Files.isDirectory(root));
+        List<String> bad = new ArrayList<>();
+        int scanned = 0;
+        try (var w = Files.walk(root)) {
+            for (Path c : (Iterable<Path>) w.filter(p -> p.toString().endsWith(".class"))::iterator) {
+                scanned++;
+                String rel = root.getParent().getParent().getParent().getParent().getParent().relativize(c).toString().replace('\\', '/');
+                for (String n : referencedClasses(Files.readAllBytes(c))) {
+                    if (encoder(n)) bad.add(rel + " refers to " + n);
+                    if (!rel.contains(REVIEW) && decoder(n)) bad.add(rel + " refers to " + n);
+                }
+            }
+        }
+        assertTrue("scanned the JOUST packages", scanned > 50);
+        assertTrue("I16: " + bad, bad.isEmpty());
+    }
+}

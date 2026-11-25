@@ -24,4 +24,6 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
       - name: Build with Gradle
-        run: ./gradlew buildPlugin
+        # ADR-005 L37: CI cannot resolve the JOUST checker kit (a local SNAPSHOT until a release), so it builds a
+        # plugin without the checker, which refuses to sign or export. release.yml stays strict.
+        run: ./gradlew buildPlugin -Pjoust.checkerOptional=true

@@ -345,6 +345,7 @@ public class ListAccountDialog extends DialogWrapper {
             @Override
             public void actionPerformed(@NotNull AnActionEvent e) {
                 CardanoAccount cardanoAccount = getSelectAccount();
+                if (cardanoAccount == null) return;   // refused (M32-CDX-37)
                 copyAddress(cardanoAccount);
             }
 
@@ -367,6 +368,7 @@ public class ListAccountDialog extends DialogWrapper {
             @Override
             public void actionPerformed(@NotNull AnActionEvent e) {
                 CardanoAccount account = getSelectAccount();
+                if (account == null || account.getMnemonic() == null) return;   // refused, or watch-only (M32-CDX-37)
                 StringSelection stringSelection = new StringSelection(account.getMnemonic().toString());
                 Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
                 clipboard.setContents(stringSelection, null);
@@ -468,7 +470,7 @@ public class ListAccountDialog extends DialogWrapper {
         else if (selectedRow <= tableModel.getAccounts().size() - 1) {
             CardanoAccount a = tableModel.getAccounts().get(selectedRow);
             // ADR-005 L39: an account migrated while this chooser was open is not returned (M32-CDX-33).
-            if (AccountService.heldByJoust(a.getAddress())) {
+            if (AccountService.withheld(a)) {   // the listing's own predicate (M32-CDX-36, -DES-20)
                 Messages.showWarningDialog("This account was copied to the JOUST run panel's accounts and is no longer offered here.",
                         "Account Moved");
                 poulateAccounts();

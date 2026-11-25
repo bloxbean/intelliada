@@ -46,7 +46,7 @@ public final class JoustHostService implements Disposable {
     /** A running, initialized host. */
     public record Running(Path moduleDir, HostSpec spec, HostSnapshot snapshot, Process process, HostSession session,
                           HostStderr stderr, @Nullable String joustVersion, JsonNode initialize, ObjectNode requested,
-                          String binding, HostLauncher.Started started) {
+                          String binding, HostLauncher.Started started, int javaFeature) {
     }
 
     /** Why a start did not happen; plain text for the panel. */
@@ -252,7 +252,7 @@ public final class JoustHostService implements Disposable {
             }
             String version = HostVersions.runtimeVersion(snapshot, feature);
             if (slot.stopping) throw new NotStarted("stopped");
-            if (!confirmed(moduleDir, spec, version) || !guard.live()) throw new NotStarted("not started");
+            if (!confirmed(moduleDir, spec, version, feature) || !guard.live()) throw new NotStarted("not started");
             if (slot.stopping) throw new NotStarted("stopped");   // Stop before any process exists (M31A-CDX-31)
             // Registered before the process exists; null when trust went away meanwhile (M31A-CDX-2).
             run = tracker.start(guard);
@@ -266,7 +266,7 @@ public final class JoustHostService implements Disposable {
             synchronized (slot) {
                 if (slot.stopping) throw new NotStarted("stopped");
                 try {
-                    s = HostLauncher.start(spec, snapshot, moduleDir, STDERR_CAP);
+                    s = HostLauncher.start(spec, snapshot, moduleDir, STDERR_CAP, feature);   // refused before any process (M33A-CDX-48)
                 } catch (IOException e) {
                     throw new NotStarted(e.getMessage());
                 }
@@ -292,7 +292,8 @@ public final class JoustHostService implements Disposable {
             }
             if (!guard.live()) throw new NotStarted("the project is not trusted, or was closed");
             if (slot.stopping) throw new NotStarted("stopped");   // Stop during startup (M31A-CDX-20)
-            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version, init, initialize.deepCopy(), binding, s);
+            Running running = new Running(moduleDir, spec, snapshot, p, session, s.stderr(), version, init, initialize.deepCopy(), binding, s,
+                    feature);   // the launch JDK, as read at launch (M33A-CDX-30)
             slot.running = running;
             handedOut = true;
             return running;
@@ -392,9 +393,10 @@ public final class JoustHostService implements Disposable {
     }
 
     /** Asks on the EDT and waits: {@link #start} must not be called under a read action or a modal progress. */
-    private boolean confirmed(Path moduleDir, HostSpec spec, @Nullable String version) {
-        // Keyed on what the dialog shows: another java or JOUST version is confirmed again (M31A-DES-9).
-        String key = project.getLocationHash() + "|" + key(moduleDir) + "|" + spec.java() + "|" + version;
+    private boolean confirmed(Path moduleDir, HostSpec spec, @Nullable String version, int feature) {
+        // Keyed on what the dialog shows: another java, its feature version, or JOUST version is confirmed again
+        // (M31A-DES-9, M33A-CDX-59).
+        String key = project.getLocationHash() + "|" + key(moduleDir) + "|" + spec.java() + "|" + feature + "|" + version;
         if (CONFIRMED.contains(key)) return true;
         Confirm c = confirmForTests;
         boolean[] yes = {false};
@@ -406,7 +408,7 @@ public final class JoustHostService implements Disposable {
             }
             String text = "Start this project's JOUST dev host?\n\n"
                     + "Module: " + PlainText.literal(String.valueOf(moduleDir), 300) + "\n"
-                    + "Java: " + PlainText.literal(spec.java().toString(), 300) + "\n"
+                    + "Java: " + PlainText.literal(spec.java().toString(), 300) + " (Java " + feature + ")\n"
                     + "Main class: " + spec.mainClass() + "\n"
                     + "JOUST: " + (version == null ? "unknown" : PlainText.literal(version, 64)) + "\n\n"
                     + "It runs the project's own code, from a private copy of its build, with no network endpoint or key.";
