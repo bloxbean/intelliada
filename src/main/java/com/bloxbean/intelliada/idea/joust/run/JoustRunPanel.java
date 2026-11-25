@@ -112,6 +112,7 @@ public final class JoustRunPanel implements Disposable {
         JBTabbedPane tabs = new JBTabbedPane();
         tabs.addTab("Result", new JBScrollPane(details));
         tabs.addTab("JOUST host", new JBScrollPane(console));
+        tabs.addTab("Accounts", new com.bloxbean.intelliada.idea.joust.accounts.JoustAccountsPanel(project).component());
         JBSplitter split = new JBSplitter(false, 0.3f);
         split.setFirstComponent(left);
         split.setSecondComponent(tabs);
