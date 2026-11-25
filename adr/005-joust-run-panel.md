@@ -369,7 +369,7 @@ calls** wait for M3c (D17's designation journal). `@Params` and `@AuthorizedBy` 
 - **Fee:** within the protocol's derived cap (rule 3) **and** the user maximum: an application setting, default 3 ADA,
   hard ceiling 10 ADA, sent as `maxFee`.
 - **`now`:** `max(previous now, bound node's tip slot)` per call (I28); re-baselined only by `reset`. A rewind (Yano
-  snapshot restore, rollback) goes through D17's rewound reset, never a lower `now`.
+  snapshot restore, rollback) goes through D17's rewind path (a restored fresh host), never a lower `now`.
 - **TTL per call:** devnets `min(900, horizon)` slots, where the horizon is ⌊3k/f⌋ from the devnet's genesis or admin API
   (300 when not stated), as JOUST's playground computes it (ADR5-CDX-7); public networks 900 slots (15 min at 1 s
   slots). **Export** is chosen **before** `prepare`, and an exported call asks for 7,200 slots (2 h).
@@ -631,7 +631,7 @@ These continue ADR-004's. This ADR also relies on ADR-004's I15, I18, I20 and I2
 outside `org.julclang.state` (for example `com.bloxbean.intelliada.fixture.HostCouncil`, so D12's package rule admits
 it; ADR5-DES-19, ADR5-CDX-18) and rebuilt with the reviewed JOUST (`vote`, as in `quorum-two`; protocol 1 serves `@Quorum` without `@Params`, and every JOUST example with `@Quorum` is
 parameterized or keyed: `StakedVault`, `Treasury`, `Registry`; ADR5-DES-16, ADR5-CDX-18), a call with sends (`dex`) and a map call (`token`); a restart between submit and settlement restores; I10, I11, I13 (signing), I25, I26, I30 |
-| **M3.4** | Yano controls (time, epoch shift with clock reset, snapshots, rollback with rewound reset), DevKit faucet, gutter icons (`.jsc`, Java), recorded instances | a `@ValidAfter` call made valid by advancing Yano's time, and across an epoch shift; a snapshot restore with re-check (I17) |
+| **M3.4** | Yano controls (time, epoch shift with clock reset, snapshots, rollback with a restored fresh host), DevKit faucet, gutter icons (`.jsc`, Java), recorded instances | a `@ValidAfter` call made valid by advancing Yano's time, and across an epoch shift; a snapshot restore with re-check (I17) |
 | **M3.5** | Public testnets behind the opt-in (Blockfrost preprod and preview), export unsigned / import witness sets | the Counter on preprod **and** preview with a testnet account and the review modal, and once through export and import; I13 for testnets |
 
 **M3b (npm):** the npm host, D11's npm launch and fingerprint, the same parts' tests on a `joust new -t node` project.
