@@ -258,23 +258,23 @@ public final class JoustHostService implements Disposable {
             run = tracker.start(guard);
             if (run == null) throw new NotStarted("the project is not trusted, or was closed");
             HostLauncher.Started s;
-            try {
-                s = HostLauncher.start(spec, snapshot, moduleDir, STDERR_CAP);
-            } catch (IOException e) {
-                throw new NotStarted(e.getMessage());
+            HostSnapshot snap = snapshot;
+            JoustTaskTracker.Run tracked = run;
+            // The final Stop decision, the process's creation and its ownership are one step under the slot's lock: Stop
+            // either comes first (no process) or finds slot.started (M31A-CDX-41). The exit cleanup is installed before
+            // anything can fail: the tree's end releases the snapshot, the tracker entry and the slot (M31A-CDX-21, -22).
+            synchronized (slot) {
+                if (slot.stopping) throw new NotStarted("stopped");
+                try {
+                    s = HostLauncher.start(spec, snapshot, moduleDir, STDERR_CAP);
+                } catch (IOException e) {
+                    throw new NotStarted(e.getMessage());
+                }
+                slot.started = s;
+                s.process().onExit().thenRun(() -> releaseWhenTreeGone(s, snap, tracker, tracked, key, slot, 0));
             }
             process = s.process();
             Process p = process;
-            slot.started = s;
-            // A Stop that raced the start sees slot.started, or this check sees its flag (M31A-CDX-31).
-            if (slot.stopping) throw new NotStarted("stopped");
-            // Installed first, before anything can fail (M31A-CDX-21): the process tree's end releases the snapshot, the
-            // tracker entry and the module's slot. The reader, not this callback, decides how the session ended (the
-            // final frames and EOF are its to classify; M31A-CDX-5, -8). Descendants seen while the host lived must be
-            // gone too before ownership is released (M31A-CDX-22).
-            HostSnapshot snap = snapshot;
-            JoustTaskTracker.Run tracked = run;
-            p.onExit().thenRun(() -> releaseWhenTreeGone(s, snap, tracker, tracked, key, slot, 0));
             session = new HostSession(p.getInputStream(), p.getOutputStream(), s::stop, reads, onEnd);
             HostSession sess = session;
             run.attach(sess::close);
@@ -319,10 +319,14 @@ public final class JoustHostService implements Disposable {
     public void stop(Path moduleDir) {
         Slot s = slots.get(key(moduleDir));
         if (s == null) return;
-        s.stopping = true;
-        Running r = s.running;
+        Running r;
+        HostLauncher.Started st;
+        synchronized (s) {
+            s.stopping = true;
+            r = s.running;
+            st = s.started;
+        }
         if (r == null) {
-            HostLauncher.Started st = s.started;
             if (st != null) st.stop();
             return;
         }
@@ -341,6 +345,16 @@ public final class JoustHostService implements Disposable {
         // Ownership is kept while any tracked process lives, retried with backoff up to every 5 s (M31A-CDX-33).
         if (!s.treeGone()) {
             s.stop();
+            if (attempt == 20) {
+                // About a minute: a process that cannot be ended (a privileged helper) must not lock the module for the
+                // rest of the session. The slot is released and the survivors named; the snapshot and the tracker entry
+                // are still released once they are gone (M31A-SEC-14, M31A-DES-22).
+                String pids = s.owned().stream().filter(ProcessHandle::isAlive).map(h -> String.valueOf(h.pid()))
+                        .collect(java.util.stream.Collectors.joining(", "));
+                com.intellij.openapi.diagnostic.Logger.getInstance(JoustHostService.class)
+                        .warn("JOUST dev host: processes still alive after stop: " + (s.process().isAlive() ? s.process().pid() + " " : "") + pids);
+                slots.remove(key, slot);
+            }
             long delay = Math.min(5000, 250L << Math.min(attempt, 5));
             com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().schedule(
                     () -> releaseWhenTreeGone(s, snap, tracker, run, key, slot, attempt + 1), delay, java.util.concurrent.TimeUnit.MILLISECONDS);
@@ -349,6 +363,19 @@ public final class JoustHostService implements Disposable {
         snap.delete();
         tracker.done(run);
         slots.remove(key, slot);
+        if (disposed && slots.isEmpty()) releaseSessionLock();
+    }
+
+    private volatile boolean disposed;
+
+    private synchronized void releaseSessionLock() {
+        try {
+            if (sessionLock != null) sessionLock.release();
+            if (sessionLockChannel != null) sessionLockChannel.close();
+        } catch (IOException ignored) {
+            // the directory is swept by a later session
+        }
+        sessionLock = null;
     }
 
     @Override
@@ -359,12 +386,9 @@ public final class JoustHostService implements Disposable {
             r.session().close();
             r.started().stop();   // the exit callback deletes the snapshot once the tree is gone (M31A-CDX-33)
         }
-        try {
-            if (sessionLock != null) sessionLock.release();
-            if (sessionLockChannel != null) sessionLockChannel.close();
-        } catch (IOException ignored) {
-            // the directory is swept by a later session
-        }
+        disposed = true;
+        // The session directory stays locked until the last tracked tree is gone (M31A-CDX-42).
+        if (slots.isEmpty()) releaseSessionLock();
     }
 
     /** Asks on the EDT and waits: {@link #start} must not be called under a read action or a modal progress. */

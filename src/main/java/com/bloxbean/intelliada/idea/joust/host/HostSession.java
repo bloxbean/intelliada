@@ -97,6 +97,7 @@ public final class HostSession implements AutoCloseable {
         volatile long cancelAt;
         volatile long stopAt;
         volatile boolean cancelSent;
+        final java.util.concurrent.CountDownLatch written = new java.util.concurrent.CountDownLatch(1);
         /** True once the request is fully written: only then may the host's reads belong to it (M31A-DES-12). */
         boolean sent;
         /** The generation its reverse ids carry ({@code <generation>.<sequence>}), fixed by its first read. */
@@ -159,9 +160,15 @@ public final class HostSession implements AutoCloseable {
         if (!initialized && !method.equals("initialize") && !method.equals("shutdown")) {
             throw new IllegalStateException("the host session is not initialized");
         }
-        if (method.equals("initialize") && (initialized || !initializing)) {
-            throw new IllegalStateException("initialize is sent once, through initialize(...)");   // M31A-DES-14
+        if (method.equals("initialize")) {
+            throw new IllegalStateException("initialize is sent once, through initialize(...)");   // M31A-DES-14, -CDX-43
         }
+        return dispatch(method, params, hardTimeout, cancelled);
+    }
+
+    /** The one path that writes forward calls; {@code initialize} reaches it only from {@link #initialize}. */
+    private JsonNode dispatch(String method, JsonNode params, Duration hardTimeout, BooleanSupplier cancelled)
+            throws HostError, Ended, InterruptedException {
         // Wait for our turn: calls queue rather than reach the host while another runs (bad/busy). A cancelled or
         // stopping wait gives up without writing anything (M31A-CDX-19, -20).
         long deadline = System.nanoTime() + hardTimeout.toNanos();
@@ -193,12 +200,17 @@ public final class HostSession implements AutoCloseable {
         });
         ObjectNode req = F.objectNode().put("jsonrpc", "2.0").put("id", c.id).put("method", method);
         req.set("params", params == null ? F.objectNode() : params);
-        // Marked before the write: a host may answer (and ask its first read) the moment it has the frame, before this
-        // thread resumes (M31A-CDX-36). Stray reads of an earlier call are refused by their generation (M31A-DES-12).
-        synchronized (lock) {
-            c.sent = true;
+        // Marked sent once the frame is written; a read the host asks the moment it has the frame waits in the reader for
+        // this write to finish, so it is neither refused nor credited before the request exists (M31A-CDX-36, -44,
+        // M31A-DES-12, -20).
+        try {
+            send(req);
+        } finally {
+            synchronized (lock) {
+                c.sent = true;
+                c.written.countDown();
+            }
         }
-        send(req);
         while (true) {
             try {
                 return c.result.get(100, TimeUnit.MILLISECONDS);
@@ -251,7 +263,7 @@ public final class HostSession implements AutoCloseable {
         JsonNode r;
         initializing = true;
         try {
-            r = call("initialize", params, timeout, () -> false);
+            r = dispatch("initialize", params, timeout, () -> false);
         } catch (HostError e) {
             initClaimed.set(false);   // the host refused this handshake: the client may try again (as the kit's Bank session does)
             throw e;
@@ -379,6 +391,19 @@ public final class HostSession implements AutoCloseable {
             }
             if (m.size() != 4 || !m.path("params").isObject()) throw new Violation("a malformed chain/read request");
             Call owner;
+            synchronized (lock) {
+                owner = current;
+            }
+            // A read can only follow a request the host has received: wait (bounded by the stall limit) for a write still
+            // in progress before classifying it.
+            if (owner != null && !owner.answered) {
+                try {
+                    if (!owner.written.await(stallNanos, TimeUnit.NANOSECONDS)) throw new Violation("a chain/read before its call was sent");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new Violation("interrupted");
+                }
+            }
             synchronized (lock) {
                 owner = current;
                 // A read after the call's terminal answer is outside any call (M31A-CDX-7).
