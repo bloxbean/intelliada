@@ -77,6 +77,7 @@ public final class HostSession implements AutoCloseable {
     /** The highest read generation seen: each call's must be greater than every earlier call's (M31A-DES-12). */
     private long lastGeneration;
     private volatile boolean initializing;
+    private final java.util.concurrent.atomic.AtomicBoolean initClaimed = new java.util.concurrent.atomic.AtomicBoolean();
     /** Set by {@link #shutdown}: queued calls give up so that shutdown takes the next turn (M31A-CDX-20). */
     private volatile boolean stopping;
     /** initialize's {@code limits.readsPerCall}: more reverse reads in one call is a violation (M31A-SEC-7). */
@@ -192,10 +193,12 @@ public final class HostSession implements AutoCloseable {
         });
         ObjectNode req = F.objectNode().put("jsonrpc", "2.0").put("id", c.id).put("method", method);
         req.set("params", params == null ? F.objectNode() : params);
-        send(req);
+        // Marked before the write: a host may answer (and ask its first read) the moment it has the frame, before this
+        // thread resumes (M31A-CDX-36). Stray reads of an earlier call are refused by their generation (M31A-DES-12).
         synchronized (lock) {
             c.sent = true;
         }
+        send(req);
         while (true) {
             try {
                 return c.result.get(100, TimeUnit.MILLISECONDS);
@@ -222,8 +225,16 @@ public final class HostSession implements AutoCloseable {
             c.cancelSent = true;
             c.stopAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CANCEL_GRACE_MS);
         }
-        sendCancel(c);
+        // Written by a thread of its own: a blocked writer can never stall the watchdog, which still stops the host at
+        // stopAt (M31A-CDX-29).
+        try {
+            cancelSender.execute(() -> sendCancel(c));
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // the session is over
+        }
     }
+
+    private final ExecutorService cancelSender = Executors.newSingleThreadExecutor(daemon("JOUST host cancel"));
 
     /**
      * The protocol's handshake (ADR-005 D11 step 7, I24): {@code initialize}, then the selected protocol must be 1, the
@@ -232,13 +243,18 @@ public final class HostSession implements AutoCloseable {
      */
     public JsonNode initialize(ObjectNode params, String expectedDigest, Duration timeout)
             throws HostError, Ended, InterruptedException {
+        // One handshake per session, claimed atomically; the negotiated read limit is committed only on success
+        // (M31A-CDX-39). Until then a provisional limit from the client's own parameters applies.
+        if (!initClaimed.compareAndSet(false, true)) throw new IllegalStateException("initialize is sent once per session");
         JsonNode limit = params.path("limits").path("readsPerCall");
-        if (limit.isIntegralNumber() && limit.canConvertToInt() && limit.intValue() > 0) readsPerCall = limit.intValue();
-        if (initialized) throw new IllegalStateException("already initialized");
+        int negotiated = limit.isIntegralNumber() && limit.canConvertToInt() && limit.intValue() > 0 ? limit.intValue() : readsPerCall;
         JsonNode r;
         initializing = true;
         try {
             r = call("initialize", params, timeout, () -> false);
+        } catch (HostError e) {
+            initClaimed.set(false);   // the host refused this handshake: the client may try again (as the kit's Bank session does)
+            throw e;
         } finally {
             initializing = false;
         }
@@ -256,6 +272,7 @@ public final class HostSession implements AutoCloseable {
             end(why, true);
             throw new Ended(why);
         }
+        readsPerCall = negotiated;
         initialized = true;
         return r;
     }
@@ -458,13 +475,21 @@ public final class HostSession implements AutoCloseable {
         synchronized (lock) {
             c = current;
         }
+        // Stalls first; the watchdog never writes (cancels go through their own thread), so a host that stops reading
+        // its input cannot block these checks (M31A-SEC-12, M31A-CDX-29).
+        long r = reader.startedAt(), w = writer.writingSince();
+        if (r != 0 && now - r >= stallNanos) {
+            end("the host's frame stalled", true);
+            return;
+        }
+        if (w != 0 && now - w >= stallNanos) {
+            end("the host stopped reading its input", true);
+            return;
+        }
         if (c != null && !c.answered) {
             if (!c.cancelSent && now >= c.cancelAt) cancel(c);
             else if (c.cancelSent && now >= c.stopAt) end("the host did not answer " + c.method + " in time", true);
         }
-        long r = reader.startedAt(), w = writer.writingSince();
-        if (r != 0 && now - r >= stallNanos) end("the host's frame stalled", true);
-        else if (w != 0 && now - w >= stallNanos) end("the host stopped reading its input", true);
     }
 
     private void end(String why, boolean violation) {
@@ -482,6 +507,7 @@ public final class HostSession implements AutoCloseable {
             if (c != null) c.result.completeExceptionally(new Ended(why));
             readPool.shutdownNow();
             watchdog.shutdownNow();
+            cancelSender.shutdownNow();
             try {
                 onEnd.accept(violation ? "protocol violation: " + why : why);
             } catch (RuntimeException ignored) {

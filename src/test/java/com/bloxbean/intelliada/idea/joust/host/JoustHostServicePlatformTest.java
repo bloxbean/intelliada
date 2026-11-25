@@ -62,7 +62,7 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         // launch() confirms on the EDT, which is this test's thread: wait while dispatching events.
         JoustHostService.Running r = com.intellij.testFramework.PlatformTestUtil.waitForFuture(
                 com.intellij.openapi.application.ApplicationManager.getApplication()
-                        .executeOnPooledThread(() -> svc.launch(guard, Path.of(fixture), init(), NO_READS, ends::add)), 120_000);
+                        .executeOnPooledThread(() -> svc.launch(guard, Path.of(fixture), init(), "node-a", NO_READS, ends::add)), 120_000);
         assertTrue(r.process().isAlive());
         assertTrue(Files.isDirectory(r.snapshot().root()));
         assertEquals("the JOUST version is read before launch", r.joustVersion() != null, true);
@@ -88,7 +88,7 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         var app = com.intellij.openapi.application.ApplicationManager.getApplication();
         java.util.concurrent.Callable<Object> start = () -> {
             try {
-                return svc.launch(guard, Path.of(fixture), init(), NO_READS, e -> { });
+                return svc.launch(guard, Path.of(fixture), init(), "node-a", NO_READS, e -> { });
             } catch (JoustHostService.NotStarted e) {
                 return e.getMessage();
             }
@@ -108,13 +108,22 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         ((com.fasterxml.jackson.databind.node.ObjectNode) other.get("network")).put("protocolMagic", 43);
         Object reused = com.intellij.testFramework.PlatformTestUtil.waitForFuture(app.executeOnPooledThread(() -> {
             try {
-                return svc.launch(guard, Path.of(fixture), other, NO_READS, e -> { });
+                return svc.launch(guard, Path.of(fixture), other, "node-a", NO_READS, e -> { });
             } catch (JoustHostService.NotStarted e) {
                 return e.getMessage();
             }
         }), 30_000);
         assertTrue("another network is refused, not handed the running host (M31A-CDX-18): " + reused,
                 reused instanceof String s0 && s0.contains("another network"));
+        Object otherNode = com.intellij.testFramework.PlatformTestUtil.waitForFuture(app.executeOnPooledThread(() -> {
+            try {
+                return svc.launch(guard, Path.of(fixture), init(), "node-b", NO_READS, e -> { });
+            } catch (JoustHostService.NotStarted e) {
+                return e.getMessage();
+            }
+        }), 30_000);
+        assertTrue("the same parameters through another node configuration are refused (M31A-CDX-32): " + otherNode,
+                otherNode instanceof String s1 && s1.contains("another network"));
         svc.stop(Path.of(fixture));
         assertTrue(r.process().waitFor(20, TimeUnit.SECONDS));
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
@@ -132,12 +141,37 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
         JoustHostService.Running r = com.intellij.testFramework.PlatformTestUtil.waitForFuture(
                 com.intellij.openapi.application.ApplicationManager.getApplication()
-                        .executeOnPooledThread(() -> svc.launch(guard, Path.of(fixture), init(), NO_READS, e -> { })), 120_000);
+                        .executeOnPooledThread(() -> svc.launch(guard, Path.of(fixture), init(), "node-a", NO_READS, e -> { })), 120_000);
         svc.dispose();   // what project close does to the service (I20)
         assertTrue(r.process().waitFor(20, TimeUnit.SECONDS));
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (Files.exists(r.snapshot().root()) && System.nanoTime() < deadline) Thread.sleep(50);
         assertFalse(Files.exists(r.snapshot().root()));
+    }
+
+    public void testStopBeforeTheProcessExistsStartsNone() throws Exception {
+        String fixture = JoustTestTools.env("JOUST_HOST_FIXTURE", "testStopBeforeTheProcessExistsStartsNone");
+        if (fixture == null) return;
+        TrustedProjects.setProjectTrusted(getProject(), true);
+        JoustHostService svc = JoustHostService.getInstance(getProject());
+        // Stop pressed while the user is being asked (after the copy): no host process may start (M31A-CDX-31).
+        JoustHostService.confirmForTests = (project, dir, spec, version) -> {
+            svc.stop(Path.of(fixture));
+            return true;
+        };
+        int before = HostLauncher.STARTS.get();
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        Object o = com.intellij.testFramework.PlatformTestUtil.waitForFuture(
+                com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                    try {
+                        return svc.launch(guard, Path.of(fixture), init(), "node-a", NO_READS, e -> { });
+                    } catch (JoustHostService.NotStarted e) {
+                        return e.getMessage();
+                    }
+                }), 120_000);
+        assertEquals("stopped", o);
+        assertEquals("no host process was started", before, HostLauncher.STARTS.get());
+        assertNull(svc.running(Path.of(fixture)));
     }
 
     public void testADeclinedConfirmationStartsNothing() throws Exception {
@@ -150,7 +184,7 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         var future = com.intellij.openapi.application.ApplicationManager.getApplication()
                 .executeOnPooledThread(() -> {
                     try {
-                        svc.launch(guard, Path.of(fixture), init(), NO_READS, e -> { });
+                        svc.launch(guard, Path.of(fixture), init(), "node-a", NO_READS, e -> { });
                         return "launched";
                     } catch (JoustHostService.NotStarted e) {
                         return "not started";

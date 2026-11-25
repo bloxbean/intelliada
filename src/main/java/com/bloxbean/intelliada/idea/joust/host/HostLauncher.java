@@ -115,6 +115,7 @@ public final class HostLauncher {
         env.putAll(keep);
         pb.redirectErrorStream(false);
         Process p = pb.start();
+        STARTS.incrementAndGet();
         HostStderr err = new HostStderr(stderrCapBytes);
         drain(p.getErrorStream(), err);
         return new Started(p, err, track(p));
@@ -179,6 +180,9 @@ public final class HostLauncher {
         throw new IOException("the launch spec's JDK release file has no JAVA_VERSION");
     }
 
+    /** Host processes started (tests: a Stop before launch must start none). */
+    static final java.util.concurrent.atomic.AtomicInteger STARTS = new java.util.concurrent.atomic.AtomicInteger();
+
     static boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
     }
@@ -191,6 +195,8 @@ public final class HostLauncher {
                 while ((r = in.read(buf)) > 0) sink.append(buf, r);
             } catch (IOException ignored) {
                 // the process ended
+            } finally {
+                sink.close();
             }
         }, "JOUST host stderr");
         t.setDaemon(true);

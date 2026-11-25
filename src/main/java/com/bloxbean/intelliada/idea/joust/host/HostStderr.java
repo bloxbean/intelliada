@@ -68,6 +68,11 @@ public final class HostStderr {
                 return t;
             }, new java.util.concurrent.ThreadPoolExecutor.DiscardPolicy());
 
+    /** The host's stderr ended: the delivery thread is released (M31A-CDX-38). */
+    void close() {
+        delivery.shutdown();
+    }
+
     public synchronized void listen(Consumer<String> l) {
         listeners.add(l);
     }

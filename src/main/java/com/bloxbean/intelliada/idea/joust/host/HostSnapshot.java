@@ -162,7 +162,7 @@ public final class HostSnapshot {
                 rels.sort(HostSnapshot::compareUtf8);
                 // Where the platform offers it, every component is opened relative to the directory handle already
                 // checked, never by a fresh path lookup, so no component can be swapped for a link (M31A-CDX-24).
-                try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(e.path())) {
+                try (java.nio.file.DirectoryStream<Path> ds = openRoot(e.path())) {
                     java.nio.file.SecureDirectoryStream<Path> sds = ds instanceof java.nio.file.SecureDirectoryStream<Path> x ? x : null;
                     for (String rel : rels) {
                         if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
@@ -181,6 +181,33 @@ public final class HostSnapshot {
         String digest = sha256Hex(lines.toString().getBytes(StandardCharsets.UTF_8));
         if (!digest.equals(spec.digest())) throw new HostSpec.Invalid("the launch set's digest does not match the launch spec");
         return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors));
+    }
+
+    /**
+     * Opens a launch directory: through its parent's secure handle without following a link where the platform offers
+     * one, else by path with its identity ({@code fileKey}) checked before and after the open (M31A-CDX-34).
+     */
+    private static java.nio.file.DirectoryStream<Path> openRoot(Path dir) throws HostSpec.Invalid, IOException {
+        Path parent = dir.getParent();
+        if (parent != null) {
+            try (java.nio.file.DirectoryStream<Path> ps = Files.newDirectoryStream(parent)) {
+                if (ps instanceof java.nio.file.SecureDirectoryStream<Path> sp) {
+                    try {
+                        return sp.newDirectoryStream(dir.getFileName(), LinkOption.NOFOLLOW_LINKS);
+                    } catch (IOException e) {
+                        throw new HostSpec.Invalid("a class-path directory is missing or a link; run the build again");
+                    }
+                }
+            }
+        }
+        Object before = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir);
+        Object after = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        if (before == null || !before.equals(after)) {
+            ds.close();
+            throw new HostSpec.Invalid("a class-path directory changed while it was opened");
+        }
+        return ds;
     }
 
     /**
@@ -292,15 +319,15 @@ public final class HostSnapshot {
     private static void jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total) throws HostSpec.Invalid, IOException {
         try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jar.toFile(), false)) {
             // The effective manifest, read through a bounded stream before it is parsed (M31A-CDX-25).
+            // Exactly one entry may be named like the manifest, in any case: with several, IntelliAda could check one while
+            // the host's JVM selects another (M31A-CDX-30).
             java.util.jar.Manifest mf = null;
-            ZipEntry me = jf.getEntry("META-INF/MANIFEST.MF");
-            if (me == null) {
-                for (var en0 = jf.entries(); en0.hasMoreElements(); ) {
-                    ZipEntry z0 = en0.nextElement();
-                    if (z0.getName().equalsIgnoreCase("META-INF/MANIFEST.MF")) {
-                        me = z0;
-                        break;
-                    }
+            ZipEntry me = null;
+            for (var en0 = jf.entries(); en0.hasMoreElements(); ) {
+                ZipEntry z0 = en0.nextElement();
+                if (z0.getName().equalsIgnoreCase("META-INF/MANIFEST.MF")) {
+                    if (me != null) throw new HostSpec.Invalid("a class-path jar has more than one manifest (ordinal " + ordinal + ")");
+                    me = z0;
                 }
             }
             if (me != null) {
@@ -420,9 +447,14 @@ public final class HostSnapshot {
             Files.walkFileTree(root, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
-                    d.toFile().setWritable(true, true);
-                    d.toFile().setExecutable(true, true);
-                    d.toFile().setReadable(true, true);
+                    // The directory's permissions are set without following a link (M31A-CDX-35).
+                    try {
+                        var v = Files.getFileAttributeView(d, java.nio.file.attribute.PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+                        if (v != null) v.setPermissions(PosixFilePermissions.fromString("rwx------"));
+                        else d.toFile().setWritable(true, true);
+                    } catch (IOException | UnsupportedOperationException ignored) {
+                        // deletion below then fails and is swept later
+                    }
                     return FileVisitResult.CONTINUE;
                 }
 
@@ -435,9 +467,7 @@ public final class HostSnapshot {
                             Files.deleteIfExists(f);
                             return FileVisitResult.CONTINUE;
                         }
-                        if (f.getFileSystem().supportedFileAttributeViews().contains("posix")) {
-                            Files.setPosixFilePermissions(f, PosixFilePermissions.fromString("rw-------"));
-                        }
+                        // POSIX unlinks a read-only file given a writable parent: no chmod on files (M31A-CDX-35).
                         if (f.getFileSystem().supportedFileAttributeViews().contains("dos")) {
                             Files.setAttribute(f, "dos:readonly", false, LinkOption.NOFOLLOW_LINKS);
                         }

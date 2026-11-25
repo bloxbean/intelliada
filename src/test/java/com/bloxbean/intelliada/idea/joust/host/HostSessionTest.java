@@ -341,6 +341,31 @@ public class HostSessionTest {
     }
 
     @Test
+    public void aHostThatStopsReadingWhileACancelIsDueStillEndsTheSession() throws Exception {
+        // M31A-SEC-12's probe: the request write blocks (the host never reads) and the hard timeout falls due meanwhile.
+        java.nio.channels.Pipe toClient = java.nio.channels.Pipe.open(), toHost = java.nio.channels.Pipe.open();
+        java.util.concurrent.atomic.AtomicInteger stops = new java.util.concurrent.atomic.AtomicInteger();
+        HostSession s = new HostSession(java.nio.channels.Channels.newInputStream(toClient.source()),
+                java.nio.channels.Channels.newOutputStream(toHost.sink()), stops::incrementAndGet, NO_READS, e -> { }, 2_000_000_000L);
+        s.markInitializedForTests();
+        ObjectNode big = HostJson.object();
+        big.put("pad", "y".repeat(3_000_000));
+        Thread t = new Thread(() -> {
+            try {
+                s.call("prepare", big, Duration.ofMillis(200), () -> false);
+            } catch (Exception ignored) {
+            }
+        });
+        t.setDaemon(true);
+        t.start();
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (s.ended() == null && System.nanoTime() < end) Thread.sleep(20);
+        assertNotNull("the watchdog was not blocked by the stuck write", s.ended());
+        assertEquals(1, stops.get());
+        s.close();
+    }
+
+    @Test
     public void stopDuringACallCancelsItAndDoesNotThrow() throws Exception {
         peer = new Peer(NO_READS, HostFrames.STALL_NANOS);
         new Thread(() -> {
