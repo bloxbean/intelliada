@@ -36,6 +36,12 @@ public class AccountCacheService {
     private final static Logger log = Logger.getInstance(AccountCacheService.class);
     //private Project project;
 
+    /**
+     * One lock for every read-modify-write of the legacy cache file (each rewrites the whole file): two writers never
+     * read the same old list (ADR-005 M32-CDX-30). Taken after the account stores' key lock, never before it.
+     */
+    public static final Object STORAGE = new Object();
+
     public AccountCacheService() {
         //this.project = project;
     }
@@ -61,29 +67,36 @@ public class AccountCacheService {
 
     /** Every legacy account, or an IOException when the store exists but cannot be read (M32-CDX-18). */
     public List<CardanoAccount> getAccountsStrict() throws java.io.IOException {
-        List<CardanoAccount> a = new GlobalCache(getAccountCacheFolder()).getAccountCacheStrict().getAccounts();
-        return a == null ? List.of() : a;
+        String folder = getAccountCacheFolder();
+        if (folder == null) throw new java.io.IOException("the account cache folder could not be determined");
+        synchronized (STORAGE) {
+            List<CardanoAccount> a = new GlobalCache(folder).getAccountCacheStrict().getAccounts();
+            return a == null ? List.of() : a;
+        }
     }
 
     public void storeAccount(CardanoAccount account) {
+        synchronized (STORAGE) {
+            GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
+            AccountCache accountCache = globalCache.getAccountCache();
 
-        GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
-        AccountCache accountCache = globalCache.getAccountCache();
-
-        accountCache.addAccount(account);
-        globalCache.setAccountCache(accountCache);
+            accountCache.addAccount(account);
+            globalCache.setAccountCache(accountCache);
+        }
     }
 
     public boolean deleteAccount(CardanoAccount account) {
-        GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
-        AccountCache accountCache = globalCache.getAccountCache();
+        synchronized (STORAGE) {
+            GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
+            AccountCache accountCache = globalCache.getAccountCache();
 
-        if (accountCache.deleteAccount(account)) {
-            globalCache.setAccountCache(accountCache);
-            return true;
+            if (accountCache.deleteAccount(account)) {
+                globalCache.setAccountCache(accountCache);
+                return true;
+            }
+
+            return false;
         }
-
-        return false;
     }
 
 
@@ -163,12 +176,14 @@ public class AccountCacheService {
     }
 
     public boolean updateAccountName(String address, String accountName) {
-        GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
-        AccountCache accountCache = globalCache.getAccountCache();
+        synchronized (STORAGE) {
+            GlobalCache globalCache = new GlobalCache(getAccountCacheFolder());
+            AccountCache accountCache = globalCache.getAccountCache();
 
-        boolean successful = accountCache.updateAccountName(address, accountName);
-        globalCache.setAccountCache(accountCache);
+            boolean successful = accountCache.updateAccountName(address, accountName);
+            globalCache.setAccountCache(accountCache);
 
-        return successful;
+            return successful;
+        }
     }
 }

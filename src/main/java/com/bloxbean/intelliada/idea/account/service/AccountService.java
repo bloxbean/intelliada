@@ -55,6 +55,12 @@ public class AccountService {
     }
 
     private boolean importChecked(CardanoAccount account) {
+        synchronized (AccountCacheService.STORAGE) {   // key lock, then storage lock (M32-CDX-30)
+            return importLocked(account);
+        }
+    }
+
+    private boolean importLocked(CardanoAccount account) {
         if (heldByJoust(account.getAddress()))
             return false;   // a key the JOUST run panel holds is never also a legacy account (M32-CDX-2)
 
@@ -87,7 +93,9 @@ public class AccountService {
      * the JOUST store holds (a migrated copy) is hidden, so a key is selectable under one class only (ADR-005 L39).
      */
     public List<CardanoAccount> getAccounts() {
-        return accountCacheService.getAccounts().stream().filter(a -> !heldByJoust(a.getAddress()))
+        // A watch-only entry holds no key: it stays listed (M32-DES-18).
+        return accountCacheService.getAccounts().stream()
+                .filter(a -> a.getMnemonic() == null || a.getMnemonic().isBlank() || !heldByJoust(a.getAddress()))
                 .collect(java.util.stream.Collectors.toList());
     }
 
