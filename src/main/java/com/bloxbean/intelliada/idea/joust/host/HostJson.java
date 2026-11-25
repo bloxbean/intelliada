@@ -24,7 +24,7 @@ public final class HostJson {
     private HostJson() {
     }
 
-    static final ObjectMapper MAPPER = JsonMapper.builder()
+    public static final ObjectMapper MAPPER = JsonMapper.builder()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .disable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS, JsonReadFeature.ALLOW_JAVA_COMMENTS,
                     JsonReadFeature.ALLOW_SINGLE_QUOTES, JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES,
