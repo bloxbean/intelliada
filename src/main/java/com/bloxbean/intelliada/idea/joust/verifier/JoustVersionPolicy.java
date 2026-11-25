@@ -104,10 +104,14 @@ public final class JoustVersionPolicy {
                 if (reviewedEntries.contains(e.ordinal())) continue;
                 for (String pkg : PACKAGES) {
                     // Exact names, and what a directory's file system serves under the package root (M33A-CDX-54).
+                    // A directory: what it serves under the package root is the whole answer; its versioned copies are
+                    // never loaded (M33A-CDX-70). A jar: every class it holds there, base or versioned.
                     boolean holds = snapshot.isDirectory(e.ordinal()) && snapshot.servesPackage(e.ordinal(), pkg);
-                    for (String c : snapshot.classesAt(e.ordinal())) {
-                        if (holds) break;
-                        holds = c.startsWith(pkg);
+                    if (!snapshot.isDirectory(e.ordinal())) {
+                        for (String c : snapshot.classesAt(e.ordinal())) {
+                            if (holds) break;
+                            holds = c.startsWith(pkg);
+                        }
                     }
                     if (holds) {
                         return Verdict.no("read-only: another class-path entry also holds JOUST's " + pkg.replace('/', '.')
