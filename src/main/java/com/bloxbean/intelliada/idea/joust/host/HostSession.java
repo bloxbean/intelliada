@@ -25,8 +25,8 @@ import java.util.function.Consumer;
 /**
  * The client side of one dev-host session (ADR-005 D11, I22; protocol 1 "Launch and framing").
  * <ul>
- *   <li><b>One forward call at a time.</b> A second call while one runs (or while a cancelled one unwinds) is refused here,
- *   before it reaches the host.</li>
+ *   <li><b>One forward call at a time.</b> Calls queue (fairly) behind the running one and reach the host only after its
+ *   terminal answer, even when a waiting caller gives up.</li>
  *   <li><b>Reverse reads</b> ({@code chain/read}) are accepted only while a forward call is in flight, with session-unique
  *   string ids, and answered on a pooled thread by {@link Reads}. A read that cannot be answered cancels the call.</li>
  *   <li><b>Violations</b> end the session and stop the host: an unsolicited or second response, a reverse request outside
@@ -74,6 +74,11 @@ public final class HostSession implements AutoCloseable {
     /** One forward call at a time, in arrival order (ADR-005 D11 serial calls); released when a call's terminal answer arrives. */
     private final java.util.concurrent.Semaphore turn = new java.util.concurrent.Semaphore(1, true);
     private volatile boolean initialized;
+    /** The highest read generation seen: each call's must be greater than every earlier call's (M31A-DES-12). */
+    private long lastGeneration;
+    private volatile boolean initializing;
+    /** Set by {@link #shutdown}: queued calls give up so that shutdown takes the next turn (M31A-CDX-20). */
+    private volatile boolean stopping;
     /** initialize's {@code limits.readsPerCall}: more reverse reads in one call is a violation (M31A-SEC-7). */
     private volatile int readsPerCall = 256;
     private volatile String ended;
@@ -84,11 +89,23 @@ public final class HostSession implements AutoCloseable {
     private static final class Call {
         final long id;
         final CompletableFuture<JsonNode> result = new CompletableFuture<>();
+        final String method;
         boolean answered;
         int reads;
+        /** Monotonic deadlines the watchdog enforces, whoever is waiting (M31A-CDX-16): cancel at the first, stop at the second. */
+        volatile long cancelAt;
+        volatile long stopAt;
+        volatile boolean cancelSent;
+        /** True once the request is fully written: only then may the host's reads belong to it (M31A-DES-12). */
+        boolean sent;
+        /** The generation its reverse ids carry ({@code <generation>.<sequence>}), fixed by its first read. */
+        long generation;
 
-        Call(long id) {
+        Call(long id, String method, long cancelAt) {
             this.id = id;
+            this.method = method;
+            this.cancelAt = cancelAt;
+            this.stopAt = Long.MAX_VALUE;
         }
     }
 
@@ -113,8 +130,9 @@ public final class HostSession implements AutoCloseable {
         this.onEnd = onEnd;
         this.readerThread = new Thread(this::readLoop, "JOUST host reader");
         readerThread.setDaemon(true);
+        // The watchdog first, so an immediate EOF cannot shut it down before it is scheduled (M31A-CDX-21).
+        watchdog.scheduleWithFixedDelay(this::checkStalls, 100, 100, TimeUnit.MILLISECONDS);
         readerThread.start();
-        watchdog.scheduleWithFixedDelay(this::checkStalls, 250, 250, TimeUnit.MILLISECONDS);
     }
 
     /** Why the session ended, or null while it is live. */
@@ -140,22 +158,32 @@ public final class HostSession implements AutoCloseable {
         if (!initialized && !method.equals("initialize") && !method.equals("shutdown")) {
             throw new IllegalStateException("the host session is not initialized");
         }
-        // Wait for our turn: calls queue rather than reach the host while another runs (bad/busy).
+        if (method.equals("initialize") && (initialized || !initializing)) {
+            throw new IllegalStateException("initialize is sent once, through initialize(...)");   // M31A-DES-14
+        }
+        // Wait for our turn: calls queue rather than reach the host while another runs (bad/busy). A cancelled or
+        // stopping wait gives up without writing anything (M31A-CDX-19, -20).
         long deadline = System.nanoTime() + hardTimeout.toNanos();
-        while (!turn.tryAcquire(100, TimeUnit.MILLISECONDS)) {
+        boolean isShutdown = method.equals("shutdown");
+        while (!turn.tryAcquire(50, TimeUnit.MILLISECONDS)) {
             if (ended != null) throw new Ended(ended);
+            if (stopping && !isShutdown) throw new Ended("the host is stopping");
+            if (cancelled.getAsBoolean()) throw new Ended("cancelled before it was sent");
             if (System.nanoTime() >= deadline) throw new Ended("another host call did not finish in time");
         }
         Call c;
         synchronized (lock) {
-            if (ended != null) {
+            String why = ended != null ? ended : stopping && !isShutdown ? "the host is stopping"
+                    : cancelled.getAsBoolean() ? "cancelled before it was sent" : null;
+            if (why != null) {
                 turn.release();
-                throw new Ended(ended);
+                throw new Ended(why);
             }
-            c = current = new Call(nextId++);
+            c = current = new Call(nextId++, method, System.nanoTime() + hardTimeout.toNanos());
         }
         // The turn and the in-flight slot are held until the host's terminal answer (or the session's end), even if this
-        // thread stops waiting: an interrupted caller must not let another request onto the wire (M31A-CDX-6).
+        // thread stops waiting: an interrupted caller must not let another request onto the wire (M31A-CDX-6). The
+        // deadline is the watchdog's, so it still holds after the caller leaves (M31A-CDX-16).
         c.result.whenComplete((r, t) -> {
             synchronized (lock) {
                 if (current == c) current = null;
@@ -165,22 +193,16 @@ public final class HostSession implements AutoCloseable {
         ObjectNode req = F.objectNode().put("jsonrpc", "2.0").put("id", c.id).put("method", method);
         req.set("params", params == null ? F.objectNode() : params);
         send(req);
-        deadline = System.nanoTime() + hardTimeout.toNanos();
-        boolean cancelSent = false;
+        synchronized (lock) {
+            c.sent = true;
+        }
         while (true) {
             try {
                 return c.result.get(100, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
-                long now = System.nanoTime();
-                if (!cancelSent && (cancelled.getAsBoolean() || now >= deadline)) {
-                    cancelSent = true;
-                    sendCancel(c);
-                    deadline = Math.min(deadline, now) + TimeUnit.MILLISECONDS.toNanos(CANCEL_GRACE_MS);
-                } else if (cancelSent && now >= deadline) {
-                    end("the host did not answer " + method + " in time", true);
-                }
+                if (cancelled.getAsBoolean()) cancel(c);
             } catch (InterruptedException e) {
-                if (!cancelSent) sendCancel(c);
+                cancel(c);
                 throw e;
             } catch (ExecutionException e) {
                 Throwable t = e.getCause();
@@ -193,6 +215,16 @@ public final class HostSession implements AutoCloseable {
         }
     }
 
+    /** Sends {@code $/cancelRequest} once and starts the grace period after which the watchdog stops the host. */
+    private void cancel(Call c) {
+        synchronized (lock) {
+            if (c.cancelSent || c.answered) return;
+            c.cancelSent = true;
+            c.stopAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CANCEL_GRACE_MS);
+        }
+        sendCancel(c);
+    }
+
     /**
      * The protocol's handshake (ADR-005 D11 step 7, I24): {@code initialize}, then the selected protocol must be 1, the
      * echoed network the one sent, and the fingerprint the digest IntelliAda computed from its snapshot copies. Anything
@@ -202,7 +234,14 @@ public final class HostSession implements AutoCloseable {
             throws HostError, Ended, InterruptedException {
         JsonNode limit = params.path("limits").path("readsPerCall");
         if (limit.isIntegralNumber() && limit.canConvertToInt() && limit.intValue() > 0) readsPerCall = limit.intValue();
-        JsonNode r = call("initialize", params, timeout, () -> false);
+        if (initialized) throw new IllegalStateException("already initialized");
+        JsonNode r;
+        initializing = true;
+        try {
+            r = call("initialize", params, timeout, () -> false);
+        } finally {
+            initializing = false;
+        }
         String why = null;
         if (!r.path("protocol").isIntegralNumber() || !r.path("protocol").canConvertToInt() || r.path("protocol").intValue() != 1) {
             why = "the host selected another protocol";
@@ -225,6 +264,8 @@ public final class HostSession implements AutoCloseable {
     void markInitializedForTests() {
         initialized = true;
     }
+
+    private static final java.util.regex.Pattern READ_ID = java.util.regex.Pattern.compile("([1-9][0-9]{0,17})\\.([1-9][0-9]{0,17})");
 
     /** JSON equality with numbers compared by value (an int sent, a BigInteger parsed). */
     private static final java.util.Comparator<JsonNode> NUMERIC = (a, b) -> {
@@ -254,11 +295,12 @@ public final class HostSession implements AutoCloseable {
      * {@code timeout}), so a frame the host still sends is reported as a violation rather than ignored (I20, I22).
      */
     public void shutdown(Duration timeout) throws InterruptedException {
+        stopping = true;
         Call running;
         synchronized (lock) {
             running = current;
         }
-        if (running != null && !running.answered) sendCancel(running);   // Stop during a call (M31A-DES-5)
+        if (running != null) cancel(running);   // Stop during a call (M31A-DES-5)
         try {
             call("shutdown", F.objectNode(), timeout, () -> false);
         } catch (HostError | Ended | IllegalStateException ignored) {
@@ -323,7 +365,22 @@ public final class HostSession implements AutoCloseable {
             synchronized (lock) {
                 owner = current;
                 // A read after the call's terminal answer is outside any call (M31A-CDX-7).
-                if (owner == null || owner.answered) throw new Violation("a chain/read outside a call");
+                if (owner == null || owner.answered || !owner.sent) throw new Violation("a chain/read outside a call");
+                var gm = READ_ID.matcher(id.textValue());
+                if (!gm.matches()) throw new Violation("a malformed chain/read id");
+                long g;
+                try {
+                    g = Long.parseLong(gm.group(1));
+                } catch (NumberFormatException e) {
+                    throw new Violation("a malformed chain/read id");
+                }
+                if (owner.generation == 0) {
+                    if (g <= lastGeneration) throw new Violation("a chain/read of an earlier call");
+                    owner.generation = g;
+                    lastGeneration = g;
+                } else if (g != owner.generation) {
+                    throw new Violation("a chain/read of another call");
+                }
                 if (++owner.reads > readsPerCall) throw new Violation("more reverse reads in one call than its limit");
             }
             if (!reverseIds.add(id.textValue())) throw new Violation("a reused chain/read id");
@@ -379,7 +436,7 @@ public final class HostSession implements AutoCloseable {
                 synchronized (lock) {
                     live = current == owner && !owner.answered;
                 }
-                if (live) sendCancel(owner);
+                if (live) cancel(owner);
                 return;
             }
             ObjectNode resp = F.objectNode().put("jsonrpc", "2.0").put("id", id);
@@ -397,6 +454,14 @@ public final class HostSession implements AutoCloseable {
 
     private void checkStalls() {
         long now = System.nanoTime();
+        Call c;
+        synchronized (lock) {
+            c = current;
+        }
+        if (c != null && !c.answered) {
+            if (!c.cancelSent && now >= c.cancelAt) cancel(c);
+            else if (c.cancelSent && now >= c.stopAt) end("the host did not answer " + c.method + " in time", true);
+        }
         long r = reader.startedAt(), w = writer.writingSince();
         if (r != 0 && now - r >= stallNanos) end("the host's frame stalled", true);
         else if (w != 0 && now - w >= stallNanos) end("the host stopped reading its input", true);

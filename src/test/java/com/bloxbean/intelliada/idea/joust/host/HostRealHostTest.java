@@ -51,7 +51,7 @@ public class HostRealHostTest {
             init.put("restoring", false);
             JsonNode r = s.initialize(init, snap.digest(), Duration.ofSeconds(120));
             assertEquals(1, r.path("protocol").intValue());
-            String version = HostVersions.runtimeVersion(snap);
+            String version = HostVersions.runtimeVersion(snap, HostLauncher.javaVersion(spec.java()));
             assertNotNull("RuntimeVersion read from the snapshot's bytecode", version);
             assertEquals("D12: the bytecode version equals the handshake's", r.path("versions").path("engine").path("joust").textValue(), version);
             assertEquals("I24: the host's fingerprint is IntelliAda's digest", snap.digest(), r.path("fingerprint").textValue());
@@ -70,6 +70,50 @@ public class HostRealHostTest {
         } finally {
             s.close();
             HostLauncher.stop(p);
+            snap.delete();
+        }
+    }
+
+    @Test
+    public void aSnapshotCopyEditedAfterHashingIsRefusedByTheHandshake() throws Exception {
+        String fixture = JoustTestTools.env("JOUST_HOST_FIXTURE", "aSnapshotCopyEditedAfterHashingIsRefusedByTheHandshake");
+        if (fixture == null) return;
+        Path project = Path.of(fixture);
+        HostSpec spec = HostSpec.read(project);
+        HostSnapshot snap = HostSnapshot.create(spec, tmp.newFolder("edited").toPath());
+        // Edit one copied resource after IntelliAda hashed it (I24): the host fingerprints what it actually runs.
+        Path dir = snap.classPath().get(0);
+        Path victim;
+        try (var walk = Files.walk(dir)) {
+            victim = walk.filter(Files::isRegularFile).filter(p -> p.toString().endsWith(".json")).findFirst().orElseThrow();
+        }
+        for (Path p = victim.getParent(); p != null && p.startsWith(snap.root()); p = p.getParent()) p.toFile().setWritable(true, true);
+        victim.toFile().setWritable(true, true);
+        Files.writeString(victim, Files.readString(victim) + " ");
+        HostLauncher.Started started = HostLauncher.start(spec, snap, project, 256 * 1024);
+        Process p = started.process();
+        HostSession s = new HostSession(p.getInputStream(), p.getOutputStream(), started::stop, (id, params) -> {
+            throw new IllegalStateException("no reads");
+        }, e -> { });
+        try {
+            ObjectNode init = HostJson.object();
+            init.putArray("protocol").add(1);
+            init.putObject("network").put("networkId", 0).put("protocolMagic", 42).put("mainnet", false);
+            init.putObject("clock").put("zeroSlot", 0).put("zeroTimeMs", 1700000000000L).put("slotLengthMs", 1000);
+            init.putObject("time").put("maxTtlSlots", 900).put("settlementSlots", 60).put("maxNowAheadSlots", 900);
+            init.putObject("limits").put("callDeadlineMs", 60000).put("readsPerCall", 256).put("readBytesPerCall", 33554432);
+            init.putObject("build").put("snapshot", snap.root().toString()).put("digest", snap.digest());
+            init.put("restoring", false);
+            try {
+                s.initialize(init, snap.digest(), Duration.ofSeconds(120));
+                fail("a host running an edited copy was accepted");
+            } catch (HostError | HostSession.Ended expected) {
+                // the host refuses the digest (bad/stageMismatch) or reports another fingerprint; either way no session
+            }
+            assertThrows(Exception.class, () -> s.call("describe", HostJson.object().put("contract", "x"), Duration.ofSeconds(5), () -> false));
+        } finally {
+            s.close();
+            started.stop();
             snap.delete();
         }
     }

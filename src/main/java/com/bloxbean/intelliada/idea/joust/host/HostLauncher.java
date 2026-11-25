@@ -26,8 +26,50 @@ public final class HostLauncher {
     static final List<String> JVM_OPTIONS = List.of("-XX:+DisplayVMOutputToStderr", "-Xlog:disable", "-Xlog:all=warning:stderr",
             "--enable-native-access=ALL-UNNAMED");
 
-    /** A started host: its process and the drained stderr. */
-    public record Started(Process process, HostStderr stderr) {
+    /**
+     * A started host: its process, the drained stderr, and every descendant seen while it lived (M31A-CDX-22), so a
+     * helper the host started is still ended after the host itself has exited.
+     */
+    public record Started(Process process, HostStderr stderr, java.util.Set<ProcessHandle> owned) {
+        /** Ends the root and every owned descendant; true once all of them are gone. */
+        public boolean stop() {
+            HostLauncher.stop(process);
+            for (ProcessHandle h : owned) {
+                try {
+                    h.destroyForcibly();
+                } catch (RuntimeException ignored) {
+                    // gone
+                }
+            }
+            return !process.isAlive() && owned.stream().noneMatch(ProcessHandle::isAlive);
+        }
+
+        /** True when the root and every owned descendant have exited. */
+        public boolean treeGone() {
+            return !process.isAlive() && owned.stream().noneMatch(ProcessHandle::isAlive);
+        }
+    }
+
+    private static final java.util.concurrent.ScheduledExecutorService SAMPLER =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "JOUST host descendants");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** Records the descendants of {@code p} every 500 ms while it lives. */
+    static java.util.Set<ProcessHandle> track(Process p) {
+        java.util.Set<ProcessHandle> owned = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        java.util.concurrent.ScheduledFuture<?>[] f = new java.util.concurrent.ScheduledFuture<?>[1];
+        f[0] = SAMPLER.scheduleWithFixedDelay(() -> {
+            try {
+                p.descendants().forEach(owned::add);
+            } catch (RuntimeException ignored) {
+                // listing can be refused; the root is still ended by stop
+            }
+            if (!p.isAlive() && f[0] != null) f[0].cancel(false);
+        }, 0, 500, java.util.concurrent.TimeUnit.MILLISECONDS);
+        return owned;
     }
 
     /** The command line, for tests and the confirmation dialog. */
@@ -75,7 +117,7 @@ public final class HostLauncher {
         Process p = pb.start();
         HostStderr err = new HostStderr(stderrCapBytes);
         drain(p.getErrorStream(), err);
-        return new Started(p, err);
+        return new Started(p, err, track(p));
     }
 
     /**
@@ -119,8 +161,11 @@ public final class HostLauncher {
             throw new IOException("the launch spec's java has no JDK release file");
         }
         byte[] rb;
-        try (InputStream in = Files.newInputStream(release, LinkOption.NOFOLLOW_LINKS)) {
-            rb = in.readNBytes(64 * 1024 + 1);     // no link, capped (M31A-SEC-5)
+        try {
+            rb = HostIo.readCapped(release, 64 * 1024, 10_000);     // no link, capped, bounded (M31A-SEC-5, -CDX-23)
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted");
         }
         if (rb.length > 64 * 1024) throw new IOException("the launch spec's JDK release file is too large");
         for (String line : new String(rb, java.nio.charset.StandardCharsets.ISO_8859_1).split("\\R")) {

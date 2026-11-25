@@ -104,6 +104,17 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         assertEquals("one host per module (M31A-CDX-3): " + a + " / " + b, 1, pids.size());
         JoustHostService.Running r = svc.running(Path.of(fixture));
         assertNotNull(r);
+        var other = init();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) other.get("network")).put("protocolMagic", 43);
+        Object reused = com.intellij.testFramework.PlatformTestUtil.waitForFuture(app.executeOnPooledThread(() -> {
+            try {
+                return svc.launch(guard, Path.of(fixture), other, NO_READS, e -> { });
+            } catch (JoustHostService.NotStarted e) {
+                return e.getMessage();
+            }
+        }), 30_000);
+        assertTrue("another network is refused, not handed the running host (M31A-CDX-18): " + reused,
+                reused instanceof String s0 && s0.contains("another network"));
         svc.stop(Path.of(fixture));
         assertTrue(r.process().waitFor(20, TimeUnit.SECONDS));
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
@@ -149,7 +160,7 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
                 com.intellij.testFramework.PlatformTestUtil.waitForFuture(future, 120_000));
         assertNull(svc.running(Path.of(fixture)));
         try (var list = Files.list(svc.snapshotsBase())) {
-            assertEquals("no snapshot is left", 0, list.count());
+            assertEquals("no snapshot is left", 0, list.filter(p -> !p.getFileName().toString().equals(".lock")).count());
         }
     }
 }

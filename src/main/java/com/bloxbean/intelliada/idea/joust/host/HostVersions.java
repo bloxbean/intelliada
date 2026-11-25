@@ -28,11 +28,14 @@ public final class HostVersions {
     private HostVersions() {
     }
 
-    /** The runtime version from the first snapshot class-path entry holding {@code RuntimeVersion}, or null. */
-    public static @Nullable String runtimeVersion(HostSnapshot snapshot) {
+    /**
+     * The runtime version from the first snapshot class-path entry holding {@code RuntimeVersion}, as a JVM of feature
+     * version {@code javaFeature} resolves it (a multi-release jar's versioned class wins, M31A-SEC-10), or null.
+     */
+    public static @Nullable String runtimeVersion(HostSnapshot snapshot, int javaFeature) {
         for (Path entry : snapshot.classPath()) {
             try {
-                byte[] b = classBytes(entry);
+                byte[] b = classBytes(entry, javaFeature);
                 if (b != null) return versionOf(b);
             } catch (IOException | RuntimeException e) {
                 return null;
@@ -41,14 +44,15 @@ public final class HostVersions {
         return null;
     }
 
-    private static byte[] classBytes(Path entry) throws IOException {
+    private static byte[] classBytes(Path entry, int javaFeature) throws IOException {
         if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
             Path f = entry.resolve(CLASS);
             if (!Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS) || Files.size(f) > MAX_CLASS) return null;
             return Files.readAllBytes(f);
         }
-        try (ZipFile z = new ZipFile(entry.toFile())) {
-            ZipEntry e = z.getEntry(CLASS);
+        try (java.util.jar.JarFile z = new java.util.jar.JarFile(entry.toFile(), false, ZipFile.OPEN_READ,
+                Runtime.Version.parse(String.valueOf(Math.max(9, javaFeature))))) {
+            ZipEntry e = z.getJarEntry(CLASS);
             if (e == null) return null;
             try (InputStream in = z.getInputStream(e)) {
                 byte[] b = in.readNBytes(MAX_CLASS + 1);
