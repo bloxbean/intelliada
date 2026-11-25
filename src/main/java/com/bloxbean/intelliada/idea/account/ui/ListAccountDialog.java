@@ -191,7 +191,8 @@ public class ListAccountDialog extends DialogWrapper {
                 return;
             }
 
-            ApplicationManager.getApplication().runWriteAction(() -> {
+            // Off the EDT: the ownership check may wait for the JOUST store (M32-CDX-21).
+            ApplicationManager.getApplication().executeOnPooledThread(() -> {
                 AccountService accountService = AccountService.getAccountService();
                 boolean result = accountService.importAccount(account);
 
