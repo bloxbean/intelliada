@@ -1,6 +1,6 @@
 # ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
 
-**Status:** Proposed (r17). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+**Status:** Proposed (r18). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
 JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
 
 **Date:** 2026-11-25 (draft d1: 2026-11-19).
@@ -855,7 +855,8 @@ invariant.
   - **Read-only, not stopped (D11 step 4).** A contract that cannot be anchored leaves the session read-only (views, listings, decoding); only an established conflict (a contract missing or extra against the host's discovery rule, a differing hash or status) stops the host. Every deployment reply is checked when anchors exist. The signing gate covers every contract the snapshot describes, never a caller's subset. A snapshot refuses repeats only of the names IntelliAda reads (anchors, the manifest, `RuntimeVersion`).
   - **I9.** It holds as "no JuLC class on the plugin class path, no JOUST class outside `joust-verifier/`" (logical names, multi-release copies included). IntelliAda's earlier JuLC integration keeps its compiler and VM in `julc-runtime/`, loaded by its own class loader: the one other place JuLC classes may be, and never JOUST's.
   - **The reviewed set** (D12) must be the bundled kit's: the same label, `julc-state-api` hash and `julc-state-runtime` hash. The build checks this.
-  - **Deferred to M3.3b's end-to-end runs:** the verifier and staking deployment fields against a live host (Dex, Token).
+  - **Catalog facts and status (M3.3a round 3).** Each catalog fact is compared as soon as its evidence exists: the contract's own script and description, even when a shared verifier cannot be anchored. The status rule is the reviewed host's: a parameterized contract is `unsupported:"params"`, a served one `served:true`; a non-parameterized contract claimed as `params` is a conflict, while another contract-level `unsupported` reason (a newer JOUST) leaves that contract read-only. Resources are read as the host reads them (a UTF-8 BOM accepted). Directory entries are matched ignoring case, since a case-insensitive file system may serve any casing; jar names are exact.
+  - **Deferred to M3.3b:** the verifier and staking deployment fields against a live host (Dex, Token) in its end-to-end runs. Also three conditions on the session's signing path (M33A-DES-13): signing and export take only a session whose `JoustSigningGate` passed, and are blocked by any read-only reason; one discovery function and one anchors map; read-only reasons accumulate. The first two land with the signing flow; the discovery function is already shared and reasons already accumulate.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1028,3 +1029,4 @@ Security and design approved round 8.
 - **r15** (2026-11-26): §12 E8a wording (the hidden legacy copy, repair, watch-only entries, forSession). From M3.2 round 3.
 - **r16** (2026-11-26): §12 E9, anchor and checker rules from M3.3a round 1.
 - **r17** (2026-11-26): §12 E9 from M3.3a round 2 (read-only on unanchored contracts, checker I/O wording, I9).
+- **r18** (2026-11-26): §12 E9 from M3.3a round 3 (catalog facts and status, case-insensitive directories, DES-13 conditions).
