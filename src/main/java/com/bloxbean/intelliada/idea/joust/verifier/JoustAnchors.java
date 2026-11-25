@@ -44,7 +44,8 @@ public final class JoustAnchors {
         }
     }
 
-    public record Script(String language, String hash, String address) {
+    /** A script: its language, recomputed hash, address (a verifier's holder) and reward address. */
+    public record Script(String language, String hash, String address, String reward) {
         ObjectNode toJson() {
             return HostJson.object().put("language", language).put("hash", hash).put("address", address);
         }
@@ -110,10 +111,10 @@ public final class JoustAnchors {
         Script map = null;
         if (description.path("definitions").has("org.julclang.state.api.MerkleMap")) {
             Resolved mv = resolve(snapshot, MAP_VERIFIER, "MapVerifier", true);
-            map = new Script("PlutusScriptV3", mv.hash, enterprise(mv.hash, network));
+            map = verifierScript(mv.hash, network);
         }
-        return new Anchors(description, new Script("PlutusScriptV3", v.hash, address), reward,
-                new Script("PlutusScriptV3", ov.hash, enterprise(ov.hash, network)), map, v.entry, ov.entry);
+        return new Anchors(description, new Script("PlutusScriptV3", v.hash, address, reward), reward,
+                verifierScript(ov.hash, network), map, v.entry, ov.entry);
     }
 
     private record Resolved(int entry, String hash) {
@@ -181,6 +182,12 @@ public final class JoustAnchors {
         }
         if (len != b.length - head) throw new Refused("the script's CBOR length does not match its bytes");
         return Arrays.copyOfRange(b, head, b.length);
+    }
+
+    /** A verifier's holder (its enterprise address) and reward address, as the runtime's VerifierHandle derives them. */
+    private static Script verifierScript(String hash, Network network) {
+        return new Script("PlutusScriptV3", hash, enterprise(hash, network),
+                AddressProvider.getRewardAddress(Credential.fromScript(HexFormat.of().parseHex(hash)), network).toBech32());
     }
 
     private static String enterprise(String hash, Network network) {
