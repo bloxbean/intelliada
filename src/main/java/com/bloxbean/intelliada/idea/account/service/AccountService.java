@@ -60,9 +60,14 @@ public class AccountService {
         }
     }
 
+    /** Whether a legacy row is withheld because the JOUST store holds its key: only rows that hold a phrase are (L39). */
+    public static boolean withheld(CardanoAccount a) {
+        return a != null && a.getMnemonic() != null && !a.getMnemonic().isBlank() && heldByJoust(a.getAddress());
+    }
+
     private boolean importLocked(CardanoAccount account) {
-        if (heldByJoust(account.getAddress()))
-            return false;   // a key the JOUST run panel holds is never also a legacy account (M32-CDX-2)
+        if (withheld(account))
+            return false;   // a key the JOUST run panel holds is never also a legacy account; watch-only rows hold none (M32-CDX-36)
 
         CardanoAccount existingAcc = getAccountByAddress(account.getAddress());
         if (existingAcc != null) {
@@ -94,8 +99,7 @@ public class AccountService {
      */
     public List<CardanoAccount> getAccounts() {
         // A watch-only entry holds no key: it stays listed (M32-DES-18).
-        return accountCacheService.getAccounts().stream()
-                .filter(a -> a.getMnemonic() == null || a.getMnemonic().isBlank() || !heldByJoust(a.getAddress()))
+        return accountCacheService.getAccounts().stream().filter(a -> !withheld(a))
                 .collect(java.util.stream.Collectors.toList());
     }
 

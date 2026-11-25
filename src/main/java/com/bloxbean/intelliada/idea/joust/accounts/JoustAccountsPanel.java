@@ -37,6 +37,7 @@ public final class JoustAccountsPanel {
     private final JBLabel bound = new JBLabel();
     /** Mainnet accounts kept while mainnet is not offered: named here, never selectable (M32-CDX-24). */
     private final com.intellij.ui.components.JBTextArea kept = new com.intellij.ui.components.JBTextArea();
+    private JComponent keptPane;
     /** The latest refresh; an older one's result is discarded (M32-CDX-20). */
     private long refreshSeq;
     private final DefaultListModel<JoustAccounts.Entry> model = new DefaultListModel<>();
@@ -76,8 +77,12 @@ public final class JoustAccountsPanel {
         kept.setEditable(false);
         kept.setOpaque(false);
         kept.setLineWrap(true);
-        kept.setVisible(false);
-        rows.add(kept);
+        // A bounded, scrolling area: every name stays reachable without pushing the account list out (M32-CDX-40).
+        JBScrollPane keptScroll = new JBScrollPane(kept);
+        keptScroll.setPreferredSize(new Dimension(400, com.intellij.util.ui.JBUI.scale(70)));
+        keptScroll.setVisible(false);
+        keptPane = keptScroll;
+        rows.add(keptScroll);
         root.add(rows, BorderLayout.NORTH);
         root.add(new JBScrollPane(list), BorderLayout.CENTER);
         cls.addActionListener(e -> refresh());
@@ -97,7 +102,8 @@ public final class JoustAccountsPanel {
                 StringBuilder sb = new StringBuilder("Mainnet accounts kept, usable once mainnet support exists:");
                 for (var e : mainnet) sb.append("\n  ").append(PlainText.label(e.name, 100)).append("  ").append(PlainText.label(e.address, 120));
                 kept.setText(sb.toString());
-                kept.setVisible(true);
+                keptPane.setVisible(true);
+                root.revalidate();
             }
             refresh();
         });

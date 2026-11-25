@@ -67,12 +67,23 @@ public class AccountCacheService {
 
     /** Every legacy account, or an IOException when the store exists but cannot be read (M32-CDX-18). */
     public List<CardanoAccount> getAccountsStrict() throws java.io.IOException {
-        String folder = getAccountCacheFolder();
-        if (folder == null) throw new java.io.IOException("the account cache folder could not be determined");
+        // Both places the cache can live, whatever is writable now: the home folder's, and the temp-dir fallback used
+        // when home was not writable (M32-CDX-39). A folder that exists but cannot be read refuses.
+        java.util.LinkedHashSet<java.nio.file.Path> folders = new java.util.LinkedHashSet<>();
+        folders.add(java.nio.file.Path.of(System.getProperty("user.home"), ".intelliada"));
+        folders.add(java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), ".intelliada"));
+        List<CardanoAccount> all = new java.util.ArrayList<>();
         synchronized (STORAGE) {
-            List<CardanoAccount> a = new GlobalCache(folder).getAccountCacheStrict().getAccounts();
-            return a == null ? List.of() : a;
+            for (java.nio.file.Path f : folders) {
+                if (java.nio.file.Files.notExists(f)) continue;
+                if (!java.nio.file.Files.isDirectory(f) || !java.nio.file.Files.isReadable(f)) {
+                    throw new java.io.IOException("an account cache folder cannot be read");
+                }
+                List<CardanoAccount> a = new GlobalCache(f.toString()).getAccountCacheStrict().getAccounts();
+                if (a != null) all.addAll(a);
+            }
         }
+        return all;
     }
 
     public void storeAccount(CardanoAccount account) {

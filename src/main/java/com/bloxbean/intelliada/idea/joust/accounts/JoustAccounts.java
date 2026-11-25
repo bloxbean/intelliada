@@ -251,8 +251,13 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
                 out.add(e);
                 continue;
             }
-            Credentials c = safe.get(attributes(e.id));
-            if (c != null && holder(e.id, cls).equals(c.getUserName())) out.add(e);
+            // A usable phrase of this key, stored under this class: never an entry whose phrase is missing (M32-CDX-38).
+            try {
+                revealMnemonic(e.id);
+                out.add(e);
+            } catch (Refused notUsable) {
+                // listed for management and repair, never offered to a session
+            }
         }
         return out;
     }
@@ -526,7 +531,7 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         if (phrase == null) {
             throw new Refused(Origin.valueOf(e.origin) == Origin.MIGRATED
                     ? "the recovery phrase is not in the password safe; use \"Migrate a legacy testnet account\" to restore it from the "
-                    + "legacy copy, or remove this JOUST account to see the legacy copy again (M32-SEC-13)"
+                    + "legacy copy, or remove this JOUST account to see the legacy copy again"
                     : "the recovery phrase is not in the password safe");
         }
         // The class stored with the secret must be the entry's: a re-tagged entry is never served (M32-SEC-11).
