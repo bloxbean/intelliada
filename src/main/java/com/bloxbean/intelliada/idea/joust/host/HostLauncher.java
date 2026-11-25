@@ -78,10 +78,28 @@ public final class HostLauncher {
         return new Started(p, err);
     }
 
-    /** Ends the host: the process and every descendant it started. */
+    /**
+     * Ends the host: the root process always, and every descendant that could be listed while it lived (M31A-CDX-4).
+     * Listing descendants can fail (macOS {@code sysctl} refusals); that never skips ending the root.
+     */
     public static void stop(Process p) {
-        p.descendants().forEach(ProcessHandle::destroyForcibly);
-        p.destroyForcibly();
+        List<ProcessHandle> kids = List.of();
+        try {
+            kids = p.descendants().toList();
+        } catch (RuntimeException ignored) {
+            // the root is still ended below
+        }
+        try {
+            p.destroyForcibly();
+        } finally {
+            for (ProcessHandle k : kids) {
+                try {
+                    k.destroyForcibly();
+                } catch (RuntimeException ignored) {
+                    // already gone, or not ours to end
+                }
+            }
+        }
     }
 
     /**
@@ -100,7 +118,12 @@ public final class HostLauncher {
         if (!Files.isRegularFile(release, LinkOption.NOFOLLOW_LINKS) || Files.size(release) > 64 * 1024) {
             throw new IOException("the launch spec's java has no JDK release file");
         }
-        for (String line : Files.readAllLines(release, java.nio.charset.StandardCharsets.ISO_8859_1)) {
+        byte[] rb;
+        try (InputStream in = Files.newInputStream(release, LinkOption.NOFOLLOW_LINKS)) {
+            rb = in.readNBytes(64 * 1024 + 1);     // no link, capped (M31A-SEC-5)
+        }
+        if (rb.length > 64 * 1024) throw new IOException("the launch spec's JDK release file is too large");
+        for (String line : new String(rb, java.nio.charset.StandardCharsets.ISO_8859_1).split("\\R")) {
             var m = java.util.regex.Pattern.compile("^JAVA_VERSION=\"?(\\d{1,3})(?:[.+\\-].*)?\"?$").matcher(line.trim());
             if (m.matches()) {
                 int v = Integer.parseInt(m.group(1));

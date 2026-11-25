@@ -35,6 +35,18 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         }
     }
 
+    /** initialize's parameters without build (the service fills it from the snapshot). */
+    static com.fasterxml.jackson.databind.node.ObjectNode init() {
+        var n = HostJson.object();
+        n.putArray("protocol").add(1);
+        n.putObject("network").put("networkId", 0).put("protocolMagic", 42).put("mainnet", false);
+        n.putObject("clock").put("zeroSlot", 0).put("zeroTimeMs", 1700000000000L).put("slotLengthMs", 1000);
+        n.putObject("time").put("maxTtlSlots", 900).put("settlementSlots", 60).put("maxNowAheadSlots", 900);
+        n.putObject("limits").put("callDeadlineMs", 60000).put("readsPerCall", 256).put("readBytesPerCall", 33554432);
+        n.put("restoring", false);
+        return n;
+    }
+
     private static final HostSession.Reads NO_READS = (id, p) -> {
         throw new IllegalStateException("no reads");
     };
@@ -50,10 +62,11 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         // launch() confirms on the EDT, which is this test's thread: wait while dispatching events.
         JoustHostService.Running r = com.intellij.testFramework.PlatformTestUtil.waitForFuture(
                 com.intellij.openapi.application.ApplicationManager.getApplication()
-                        .executeOnPooledThread(() -> svc.launch(guard, Path.of(fixture), NO_READS, ends::add)), 120_000);
+                        .executeOnPooledThread(() -> svc.launch(guard, Path.of(fixture), init(), NO_READS, ends::add)), 120_000);
         assertTrue(r.process().isAlive());
         assertTrue(Files.isDirectory(r.snapshot().root()));
         assertEquals("the JOUST version is read before launch", r.joustVersion() != null, true);
+        assertEquals("handed out only after a verified initialize", 1, r.initialize().path("protocol").intValue());
         TrustedProjects.setProjectTrusted(getProject(), false);
         assertTrue("revoking trust stops the host", r.process().waitFor(20, TimeUnit.SECONDS));
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
@@ -61,6 +74,59 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         assertFalse("the snapshot is deleted when the host ends", Files.exists(r.snapshot().root()));
         assertNull(svc.running(Path.of(fixture)));
         assertFalse("a stopped guard cannot start another host", guard.live());
+    }
+
+    public void testConcurrentStartsGiveOneHostAndTheTrackerReturnsToBaseline() throws Exception {
+        String fixture = JoustTestTools.env("JOUST_HOST_FIXTURE", "testConcurrentStartsGiveOneHostAndTheTrackerReturnsToBaseline");
+        if (fixture == null) return;
+        TrustedProjects.setProjectTrusted(getProject(), true);
+        JoustHostService.confirmForTests = (project, dir, spec, version) -> true;
+        var tracker = com.bloxbean.intelliada.idea.joust.tasks.JoustTaskTracker.getInstance(getProject());
+        int baseline = tracker.runningCount();
+        JoustHostService svc = JoustHostService.getInstance(getProject());
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        var app = com.intellij.openapi.application.ApplicationManager.getApplication();
+        java.util.concurrent.Callable<Object> start = () -> {
+            try {
+                return svc.launch(guard, Path.of(fixture), init(), NO_READS, e -> { });
+            } catch (JoustHostService.NotStarted e) {
+                return e.getMessage();
+            }
+        };
+        var f1 = app.executeOnPooledThread(start);
+        var f2 = app.executeOnPooledThread(start);
+        Object a = com.intellij.testFramework.PlatformTestUtil.waitForFuture(f1, 120_000);
+        Object b = com.intellij.testFramework.PlatformTestUtil.waitForFuture(f2, 120_000);
+        java.util.Set<Long> pids = new java.util.HashSet<>();
+        for (Object o : new Object[]{a, b}) {
+            if (o instanceof JoustHostService.Running r) pids.add(r.process().pid());
+        }
+        assertEquals("one host per module (M31A-CDX-3): " + a + " / " + b, 1, pids.size());
+        JoustHostService.Running r = svc.running(Path.of(fixture));
+        assertNotNull(r);
+        svc.stop(Path.of(fixture));
+        assertTrue(r.process().waitFor(20, TimeUnit.SECONDS));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (tracker.runningCount() != baseline && System.nanoTime() < deadline) Thread.sleep(50);
+        assertEquals("the tracker releases the run once the process exits (M31A-CDX-8)", baseline, tracker.runningCount());
+        assertFalse(r.session().violated());
+    }
+
+    public void testClosingTheProjectStopsTheHostAndDeletesItsSnapshot() throws Exception {
+        String fixture = JoustTestTools.env("JOUST_HOST_FIXTURE", "testClosingTheProjectStopsTheHostAndDeletesItsSnapshot");
+        if (fixture == null) return;
+        TrustedProjects.setProjectTrusted(getProject(), true);
+        JoustHostService.confirmForTests = (project, dir, spec, version) -> true;
+        JoustHostService svc = JoustHostService.getInstance(getProject());
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        JoustHostService.Running r = com.intellij.testFramework.PlatformTestUtil.waitForFuture(
+                com.intellij.openapi.application.ApplicationManager.getApplication()
+                        .executeOnPooledThread(() -> svc.launch(guard, Path.of(fixture), init(), NO_READS, e -> { })), 120_000);
+        svc.dispose();   // what project close does to the service (I20)
+        assertTrue(r.process().waitFor(20, TimeUnit.SECONDS));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (Files.exists(r.snapshot().root()) && System.nanoTime() < deadline) Thread.sleep(50);
+        assertFalse(Files.exists(r.snapshot().root()));
     }
 
     public void testADeclinedConfirmationStartsNothing() throws Exception {
@@ -73,7 +139,7 @@ public class JoustHostServicePlatformTest extends BasePlatformTestCase {
         var future = com.intellij.openapi.application.ApplicationManager.getApplication()
                 .executeOnPooledThread(() -> {
                     try {
-                        svc.launch(guard, Path.of(fixture), NO_READS, e -> { });
+                        svc.launch(guard, Path.of(fixture), init(), NO_READS, e -> { });
                         return "launched";
                     } catch (JoustHostService.NotStarted e) {
                         return "not started";

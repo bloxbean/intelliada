@@ -50,16 +50,18 @@ public final class HostJson {
 
     /** Parses one frame body: valid UTF-8 and exactly one JSON value. */
     public static JsonNode parse(byte[] body) throws Malformed {
+        String text;
         try {
-            StandardCharsets.UTF_8.newDecoder()
+            text = StandardCharsets.UTF_8.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(body));
+                    .decode(ByteBuffer.wrap(body)).toString();
         } catch (CharacterCodingException e) {
             throw new Malformed("a frame body that is not UTF-8");
         }
+        // The decoded text is parsed, so no other encoding can be auto-detected from the bytes (M31A-CDX-9).
         try {
-            JsonNode n = MAPPER.readTree(body);
+            JsonNode n = MAPPER.readTree(text);
             if (n == null || n.isMissingNode()) throw new Malformed("an empty frame body");
             return n;
         } catch (IOException e) {

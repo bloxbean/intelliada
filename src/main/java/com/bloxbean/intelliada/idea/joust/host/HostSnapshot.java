@@ -29,7 +29,6 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 /**
  * The private, read-only copy of a launch set that the host runs from (ADR-005 D11 step 3, I24) and the anchors read from
@@ -104,13 +103,20 @@ public final class HostSnapshot {
             try {
                 s = task.get(COPY_DEADLINE_MS, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
-                t.interrupt();
                 throw new HostSpec.Invalid("copying the launch set did not finish in time");
+            } catch (InterruptedException e) {
+                throw e;
             } catch (ExecutionException e) {
                 Throwable c = e.getCause();
                 if (c instanceof HostSpec.Invalid i) throw i;
                 if (c instanceof IOException io) throw io;
                 throw new IOException(c);
+            } finally {
+                // Every exit stops the copy and waits (bounded) for it, so nothing writes after cleanup (M31A-SEC-6).
+                if (!task.isDone()) {
+                    task.cancel(true);
+                    t.join(5000);
+                }
             }
             // Atomic: the snapshot appears under its final name only when complete (ADR-005 D11 step 3); a directory is
             // renamed before it is made read-only (macOS refuses to move a directory without write permission on it).
@@ -137,6 +143,7 @@ public final class HostSnapshot {
         long[] total = {0, 0};
         for (HostSpec.Entry e : spec.launch()) {
             int o = e.ordinal();
+            if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
             if (e.jar()) {
                 Path dst = root.resolve(o + ".jar");
                 String h = copyFile(e.path(), dst, total);
@@ -145,12 +152,17 @@ public final class HostSnapshot {
                 jarAnchors(dst, o, anchors, total);
                 cp.add(dst);
             } else {
+                // The declared root must be a real directory (not a link), even when it lists no files (M31A-CDX-12).
+                if (!Files.isDirectory(e.path(), LinkOption.NOFOLLOW_LINKS)) {
+                    throw new HostSpec.Invalid("a class-path directory is missing or a link; run the build again");
+                }
                 Path dir = root.resolve(String.valueOf(o));
                 createPrivateDir(dir);
                 List<String> rels = new ArrayList<>(e.files().keySet());
                 rels.sort(HostSnapshot::compareUtf8);
                 for (String rel : rels) {
-                    Path src = e.path().resolve(rel);
+                    if (Thread.currentThread().isInterrupted()) throw new HostSpec.Invalid("copying the launch set was cancelled");
+                    Path src = noLinkBelow(e.path(), rel);
                     Path dst = dir.resolve(rel);
                     if (!dst.normalize().startsWith(dir)) throw new HostSpec.Invalid("a relative path leaves its entry");
                     Files.createDirectories(dst.getParent());
@@ -165,6 +177,19 @@ public final class HostSnapshot {
         String digest = sha256Hex(lines.toString().getBytes(StandardCharsets.UTF_8));
         if (!digest.equals(spec.digest())) throw new HostSpec.Invalid("the launch set's digest does not match the launch spec");
         return new HostSnapshot(root, List.copyOf(cp), digest, Collections.unmodifiableList(anchors));
+    }
+
+    /** {@code root/rel}, refusing a link at any component below {@code root} (M31A-CDX-12). */
+    static Path noLinkBelow(Path root, String rel) throws HostSpec.Invalid {
+        Path p = root;
+        String[] segs = rel.split("/");
+        for (int i = 0; i < segs.length - 1; i++) {
+            p = p.resolve(segs[i]);
+            if (!Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
+                throw new HostSpec.Invalid("a class-path directory under an entry is missing or a link: " + rel);
+            }
+        }
+        return p.resolve(segs[segs.length - 1]);
     }
 
     /** Copies one regular file (never through a link) and returns the SHA-256 of the bytes written. */
@@ -207,25 +232,42 @@ public final class HostSnapshot {
         return Files.readAllBytes(p);
     }
 
+    /**
+     * The anchors of a copied jar, read through {@link java.util.jar.JarFile}, the central directory the JVM itself uses
+     * (M31A-CDX-13); a manifest adding a {@code Class-Path} is refused, as the host refuses it.
+     */
     private static void jarAnchors(Path jar, int ordinal, List<Anchor> anchors, long[] total) throws HostSpec.Invalid, IOException {
-        try (ZipInputStream z = new ZipInputStream(Files.newInputStream(jar))) {
-            ZipEntry ze;
-            int entries = 0;
-            while ((ze = z.getNextEntry()) != null) {
-                if (++entries > 200_000) throw new HostSpec.Invalid("a class-path jar has too many entries");
-                String name = ze.getName();
-                if (name.equalsIgnoreCase("META-INF/MANIFEST.MF")) {
-                    byte[] mf = z.readNBytes(MAX_ANCHOR_BYTES + 1);
-                    if (mf.length > MAX_ANCHOR_BYTES) throw new HostSpec.Invalid("a class-path jar's manifest is too large");
-                    String cp = new java.util.jar.Manifest(new java.io.ByteArrayInputStream(mf)).getMainAttributes()
-                            .getValue(java.util.jar.Attributes.Name.CLASS_PATH);
-                    if (cp != null && !cp.isBlank()) {
-                        throw new HostSpec.Invalid("a class-path jar's manifest adds a Class-Path, which the dev host refuses (ordinal " + ordinal + ")");
-                    }
-                    continue;
+        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jar.toFile(), false)) {
+            java.util.jar.Manifest mf = jf.getManifest();
+            if (mf != null) {
+                String cp = mf.getMainAttributes().getValue(java.util.jar.Attributes.Name.CLASS_PATH);
+                if (cp != null && !cp.isEmpty()) {
+                    throw new HostSpec.Invalid("a class-path jar's manifest adds a Class-Path, which the dev host refuses (ordinal " + ordinal + ")");
                 }
+            }
+            if (jf.size() > 200_000) throw new HostSpec.Invalid("a class-path jar has too many entries");
+            // The local headers and the central directory must name the same entries: a jar that reads differently to
+            // a stream parser and to the JVM is refused (M31A-SEC-2).
+            java.util.List<String> central = new java.util.ArrayList<>();
+            jf.stream().forEach(e -> central.add(e.getName()));
+            java.util.List<String> local = new java.util.ArrayList<>();
+            try (java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(Files.newInputStream(jar))) {
+                ZipEntry le;
+                while ((le = z.getNextEntry()) != null) {
+                    local.add(le.getName());
+                    if (local.size() > 200_000) break;
+                }
+            }
+            if (!local.equals(central)) throw new HostSpec.Invalid("a class-path jar's entries read differently to the JVM (ordinal " + ordinal + ")");
+            var en = jf.entries();
+            while (en.hasMoreElements()) {
+                ZipEntry ze = en.nextElement();
+                String name = ze.getName();
                 if (ze.isDirectory() || !isAnchor(name) || !HostSpec.safeRelative(name)) continue;
-                byte[] b = z.readNBytes(MAX_ANCHOR_BYTES + 1);
+                byte[] b;
+                try (InputStream in = jf.getInputStream(ze)) {
+                    b = in.readNBytes(MAX_ANCHOR_BYTES + 1);
+                }
                 if (b.length > MAX_ANCHOR_BYTES) throw new HostSpec.Invalid("a description or blueprint is larger than 8 MiB");
                 total[1] += b.length;
                 if (total[1] > MAX_ANCHORS_TOTAL) throw new HostSpec.Invalid("the descriptions and blueprints are too large");
@@ -311,14 +353,32 @@ public final class HostSnapshot {
                 }
 
                 @Override
-                public FileVisitResult visitFile(Path f, BasicFileAttributes attrs) throws IOException {
-                    Files.deleteIfExists(f);
+                public FileVisitResult visitFile(Path f, BasicFileAttributes attrs) {
+                    // Windows keeps a read-only file from deletion (M31A-CDX-15); one failure does not stop the walk.
+                    f.toFile().setWritable(true, true);
+                    try {
+                        if (f.getFileSystem().supportedFileAttributeViews().contains("dos")) {
+                            Files.setAttribute(f, "dos:readonly", false, LinkOption.NOFOLLOW_LINKS);
+                        }
+                        Files.deleteIfExists(f);
+                    } catch (IOException | RuntimeException ignored) {
+                        // swept later
+                    }
                     return FileVisitResult.CONTINUE;
                 }
 
                 @Override
-                public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
-                    Files.deleteIfExists(d);
+                public FileVisitResult visitFileFailed(Path f, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path d, IOException exc) {
+                    try {
+                        Files.deleteIfExists(d);
+                    } catch (IOException ignored) {
+                        // swept later
+                    }
                     return FileVisitResult.CONTINUE;
                 }
             });
@@ -327,7 +387,7 @@ public final class HostSnapshot {
         }
     }
 
-    /** For tests and the status line: the anchors by relative path (last class-path entry wins only if earlier is absent). */
+    /** The anchors by relative path; the earliest class-path entry holding a path wins, as a class loader resolves it. */
     public Map<String, Anchor> firstByPath() {
         Map<String, Anchor> m = new LinkedHashMap<>();
         for (Anchor a : anchors) m.putIfAbsent(a.path(), a);

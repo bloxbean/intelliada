@@ -23,13 +23,29 @@ public final class HostStderr {
         this.ring = new byte[cap];
     }
 
-    synchronized void append(byte[] b, int n) {
-        for (int i = 0; i < n; i++) ring[(int) ((written + i) % cap)] = b[i];
-        written += n;
-        if (!listeners.isEmpty()) {
-            String s = PlainText.clean(new String(b, 0, n, StandardCharsets.UTF_8), n + 16);
-            for (Consumer<String> l : listeners) l.accept(s);
+    private final java.nio.charset.CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPLACE)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPLACE);
+    private java.nio.ByteBuffer carry = java.nio.ByteBuffer.allocate(0);
+
+    void append(byte[] b, int n) {
+        String s;
+        List<Consumer<String>> ls;
+        synchronized (this) {
+            for (int i = 0; i < n; i++) ring[(int) ((written + i) % cap)] = b[i];
+            written += n;
+            if (listeners.isEmpty()) return;
+            // A multibyte character split across reads is decoded once its bytes arrive (M31A-DES-11).
+            java.nio.ByteBuffer in = java.nio.ByteBuffer.allocate(carry.remaining() + n);
+            in.put(carry).put(b, 0, n).flip();
+            java.nio.CharBuffer out = java.nio.CharBuffer.allocate(in.remaining() + 1);
+            decoder.decode(in, out, false);
+            carry = in.slice();
+            s = PlainText.clean(out.flip().toString(), n + 16);
+            ls = List.copyOf(listeners);
         }
+        // Listeners run outside the lock, so a slow console cannot stall the drain of the host's stderr.
+        for (Consumer<String> l : ls) l.accept(s);
     }
 
     public synchronized void listen(Consumer<String> l) {

@@ -3,6 +3,8 @@ package com.bloxbean.intelliada.idea.joust.host;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -41,9 +43,15 @@ public record HostSpec(int protocol, Path java, String mainClass, String digest,
     public static HostSpec read(Path moduleDir) throws Invalid, IOException {
         Path file = moduleDir.resolve(RELATIVE);
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new Invalid("no launch spec: run joustHostSpec");
-        if (Files.size(file) > MAX_BYTES) throw new Invalid("the launch spec is larger than 1 MiB");
+        byte[] bytes;
+        // Opened without following a link and read to at most the cap (M31A-CDX-11): a file grown or replaced after the
+        // check cannot be read past it.
+        try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+            bytes = in.readNBytes(MAX_BYTES + 1);
+        }
+        if (bytes.length > MAX_BYTES) throw new Invalid("the launch spec is larger than 1 MiB");
         try {
-            return parse(HostJson.parseFile(Files.readAllBytes(file)));
+            return parse(HostJson.parseFile(bytes));
         } catch (HostJson.Malformed e) {
             throw new Invalid("the launch spec is not well-formed JSON");
         }
@@ -51,7 +59,7 @@ public record HostSpec(int protocol, Path java, String mainClass, String digest,
 
     public static HostSpec parse(JsonNode n) throws Invalid {
         if (!n.isObject()) throw new Invalid("the launch spec is not an object");
-        if (!n.path("protocol").isIntegralNumber() || n.path("protocol").intValue() != 1) {
+        if (!exactInt(n.path("protocol"), 1)) {
             throw new Invalid("this IntelliAda supports dev-host protocol 1 only");
         }
         String main = n.path("mainClass").textValue();
@@ -69,7 +77,7 @@ public record HostSpec(int protocol, Path java, String mainClass, String digest,
         for (int i = 0; i < launch.size(); i++) {
             JsonNode e = launch.get(i);
             if (!e.isObject()) throw new Invalid("a launch entry is not an object");
-            if (!e.path("ordinal").isIntegralNumber() || e.path("ordinal").intValue() != i) {
+            if (!exactInt(e.path("ordinal"), i)) {
                 throw new Invalid("launch entries are not in ordinal order from 0");
             }
             String p = e.path("path").textValue();
@@ -99,6 +107,11 @@ public record HostSpec(int protocol, Path java, String mainClass, String digest,
             }
         }
         return new HostSpec(1, javaPath, main, digest, List.copyOf(entries));
+    }
+
+    /** True when {@code n} is an integer equal to {@code v}, without narrowing (M31A-CDX-14). */
+    static boolean exactInt(JsonNode n, int v) {
+        return n.isIntegralNumber() && n.canConvertToInt() && n.bigIntegerValue().equals(BigInteger.valueOf(v));
     }
 
     /** A relative POSIX path: nonempty segments, no {@code .} or {@code ..}, no leading slash, backslash or control character. */
