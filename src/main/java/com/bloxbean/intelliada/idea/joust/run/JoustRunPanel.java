@@ -60,9 +60,11 @@ public final class JoustRunPanel implements Disposable {
     private final JBTextArea details = new JBTextArea();
     private final JBTextArea console = new JBTextArea();
     private volatile JoustRunSession session;
+    private final com.bloxbean.intelliada.idea.joust.accounts.JoustAccountsPanel accounts;
 
     public JoustRunPanel(Project project) {
         this.project = project;
+        this.accounts = new com.bloxbean.intelliada.idea.joust.accounts.JoustAccountsPanel(project);
         details.setEditable(false);
         console.setEditable(false);
         contractList.setCellRenderer(plainRenderer());
@@ -85,7 +87,8 @@ public final class JoustRunPanel implements Disposable {
         actions.add(button("Instances", (s, c, i) -> listInstances(s, c)));
         actions.add(button("State of instance", true, (s, c, i) -> s.view(c, required(i), null, null)));
         actions.add(button("Objects of instance", true, (s, c, i) -> listObjects(s, c, required(i))));
-        actions.add(button("Next page", true, (s, c, i) -> nextPage(s, c, i)));
+        // Instance-specific only when the pending listing is an objects listing (M32-CDX-9, -DES-10).
+        actions.add(button("Next page", () -> pager != null && pager.method().equals("objects"), (s, c, i) -> nextPage(s, c, i)));
         actions.add(button("Named view…", true, (s, c, i) -> {
             String[] in = ask("View name", "Arguments (JSON object in the description's encoding)", "{}");
             if (in == null) return null;
@@ -112,7 +115,7 @@ public final class JoustRunPanel implements Disposable {
         JBTabbedPane tabs = new JBTabbedPane();
         tabs.addTab("Result", new JBScrollPane(details));
         tabs.addTab("JOUST host", new JBScrollPane(console));
-        tabs.addTab("Accounts", new com.bloxbean.intelliada.idea.joust.accounts.JoustAccountsPanel(project).component());
+        tabs.addTab("Accounts", accounts.component());
         JBSplitter split = new JBSplitter(false, 0.3f);
         split.setFirstComponent(left);
         split.setSecondComponent(tabs);
@@ -319,6 +322,7 @@ public final class JoustRunPanel implements Disposable {
     private void started(JoustRunSession s) {
         launching = false;
         session = s;
+        accounts.bindSession(s.binding().identity().networkClass());   // I12: the tab shows this session's class only
         appendConsole(s.running().stderr().text());
         // Registered after the snapshot of the text so far, so early lines are not shown twice (M31B-DES-9).
         s.running().stderr().listen(text -> ui(() -> appendConsole(text)));
@@ -340,6 +344,7 @@ public final class JoustRunPanel implements Disposable {
         if (sessionLaunch != l) return;   // not published yet (the completion sees the mark), or an older host
         sessionLaunch = null;
         session = null;
+        accounts.bindSession(null);
         status.setText("Not running");
         details.setText("The host ended: " + PlainText.literal(why, 2000));
         listDescriptions();
@@ -373,11 +378,18 @@ public final class JoustRunPanel implements Disposable {
     }
 
     private JButton button(String label, ContractCall call) {
-        return button(label, false, call);
+        return button(label, () -> false, call);
     }
 
-    /** An action; {@code perInstance} results are shown only while their instance is still selected (M31B-CDX-35). */
     private JButton button(String label, boolean perInstance, ContractCall call) {
+        return button(label, () -> perInstance, call);
+    }
+
+    /**
+     * An action; a result decided {@code perInstance} (when the action is pressed) is shown only while its instance is
+     * still selected (M31B-CDX-35).
+     */
+    private JButton button(String label, java.util.function.BooleanSupplier perInstanceNow, ContractCall call) {
         JButton b = new JButton(label);
         b.addActionListener(e -> {
             // The session, contract and instance are captured here, on the EDT (M31B-CDX-19).
@@ -388,6 +400,7 @@ public final class JoustRunPanel implements Disposable {
                 return;
             }
             String inst = instanceList.getSelectedValue();
+            boolean perInstance = perInstanceNow.getAsBoolean();
             long seq = ++actionSeq;
             details.setText(label + "…");
             ApplicationManager.getApplication().executeOnPooledThread(() -> {

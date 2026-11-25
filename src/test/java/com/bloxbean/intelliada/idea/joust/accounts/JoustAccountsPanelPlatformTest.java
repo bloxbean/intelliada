@@ -1,27 +1,76 @@
 package com.bloxbean.intelliada.idea.joust.accounts;
 
 import com.bloxbean.intelliada.idea.joust.host.chain.NetworkIdentity.NetworkClass;
+import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 
 import javax.swing.*;
 import java.awt.*;
+import java.nio.file.Files;
+import java.util.function.BooleanSupplier;
 
-/** ADR-005 D13a (M3.2): the Accounts tab offers each class only its own accounts; devnet accounts cannot be imported. */
+/** ADR-005 D13a, I12 (M3.2): the Accounts tab follows the bound session's class; devnet accounts cannot be imported. */
 public class JoustAccountsPanelPlatformTest extends BasePlatformTestCase {
 
+    private String home;
+
+    @Override
+    protected void setUp() throws Exception {
+        super.setUp();
+        home = System.getProperty("user.home");
+        System.setProperty("user.home", Files.createTempDirectory("intelliada-home").toString());
+        JoustAccounts.getInstance().safeForTests(new JoustAccountsPlatformTest.MapSafe());
+    }
+
+    @Override
+    protected void tearDown() throws Exception {
+        try {
+            JoustAccounts.getInstance().safeForTests(JoustAccounts.PASSWORD_SAFE);
+            System.setProperty("user.home", home);
+        } finally {
+            super.tearDown();
+        }
+    }
+
     @SuppressWarnings("unchecked")
-    public void testImportIsOffForDevnetsAndGenesisAccountsAreDevnetOnly() throws Exception {
-        JoustAccountsPanel p = new JoustAccountsPanel(getProject());
-        JComboBox<NetworkClass> cls = (JComboBox<NetworkClass>) find(p.component(), JComboBox.class);
-        JButton importBtn = button(p.component(), "Import…");
-        JList<JoustAccounts.Entry> list = (JList<JoustAccounts.Entry>) find(p.component(), JList.class);
-        cls.setSelectedItem(NetworkClass.DEVNET);
-        assertFalse("devnet accounts are fresh only", importBtn.isEnabled());
-        assertTrue(list.getModel().getSize() >= JoustAccounts.GENESIS_ACCOUNTS);
-        cls.setSelectedItem(NetworkClass.MAINNET);
-        assertTrue(importBtn.isEnabled());
-        for (int i = 0; i < list.getModel().getSize(); i++) {
-            assertFalse("no genesis account outside devnets", list.getModel().getElementAt(i).origin.equals("GENESIS"));
+    public void testTheTabFollowsTheSessionAndOffersNoMainnetYet() throws Exception {
+        JoustAccounts store = JoustAccounts.getInstance();
+        var t = store.createFresh("tab test", NetworkClass.TESTNET);
+        try {
+            JoustAccountsPanel p = new JoustAccountsPanel(getProject());
+            JComboBox<NetworkClass> cls = (JComboBox<NetworkClass>) find(p.component(), JComboBox.class);
+            JList<JoustAccounts.Entry> list = (JList<JoustAccounts.Entry>) find(p.component(), JList.class);
+            JButton importBtn = button(p.component(), "Import…");
+            assertEquals("devnet and testnet only before M5 (M32-DES-9)", 2, cls.getItemCount());
+            // A testnet class is selected when the user starts a devnet session (M32-CDX-6).
+            cls.setSelectedItem(NetworkClass.TESTNET);
+            waitFor(() -> contains(list, t.id));
+            p.bindSession(NetworkClass.DEVNET);
+            assertFalse("the class cannot be switched while a session is bound", cls.isEnabled());
+            assertFalse("devnet accounts are fresh only", importBtn.isEnabled());
+            waitFor(() -> list.getModel().getSize() >= JoustAccounts.GENESIS_ACCOUNTS);
+            assertFalse("I12: the testnet account is absent from a devnet session", contains(list, t.id));
+            for (int i = 0; i < list.getModel().getSize(); i++) {
+                assertEquals("only the session's class", "DEVNET", list.getModel().getElementAt(i).networkClass);
+            }
+            p.bindSession(null);
+            assertTrue(cls.isEnabled());
+        } finally {
+            store.remove(t.id);
+        }
+    }
+
+    private static boolean contains(JList<JoustAccounts.Entry> list, String id) {
+        for (int i = 0; i < list.getModel().getSize(); i++) if (list.getModel().getElementAt(i).id.equals(id)) return true;
+        return false;
+    }
+
+    private static void waitFor(BooleanSupplier c) throws Exception {
+        long end = System.currentTimeMillis() + 15_000;
+        while (!c.getAsBoolean()) {
+            if (System.currentTimeMillis() > end) fail("timed out waiting for the account list");
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            Thread.sleep(20);
         }
     }
 

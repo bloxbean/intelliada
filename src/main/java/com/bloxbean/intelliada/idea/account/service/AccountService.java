@@ -47,6 +47,8 @@ public class AccountService {
     public boolean importAccount(CardanoAccount account) {
         if (account == null)
             return false;
+        if (heldByJoust(account.getAddress()))
+            return false;   // ADR-005 I12: a key the JOUST run panel holds is never also a legacy account (M32-CDX-2)
 
         CardanoAccount existingAcc = getAccountByAddress(account.getAddress());
         if (existingAcc != null) {
@@ -55,6 +57,15 @@ public class AccountService {
 
         accountCacheService.storeAccount(account);
         return true;
+    }
+
+    /** Whether the JOUST run panel's store holds this address's payment key. */
+    public static boolean heldByJoust(String address) {
+        if (address == null) return false;
+        String fp = com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.anyPaymentKeyHash(address);
+        if (fp == null) return false;
+        com.intellij.openapi.application.Application app = com.intellij.openapi.application.ApplicationManager.getApplication();
+        return app != null && com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance().holdsKey(fp);
     }
 
     public List<CardanoAccount> getAccounts() {

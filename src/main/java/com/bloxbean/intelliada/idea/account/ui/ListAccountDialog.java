@@ -201,7 +201,7 @@ public class ListAccountDialog extends DialogWrapper {
                         tableModel.fireTableRowsInserted(tableModel.getRowCount() - 1, tableModel.getRowCount() - 1);
                         Messages.showInfoMessage("Account imported successfully", "Import Account");
                     } else {
-                        Messages.showWarningDialog("Account could not be imported.\nPlease check if account already exists.",
+                        Messages.showWarningDialog("Account could not be imported.\nIt may already exist here, or be held by the JOUST run panel's accounts.",
                                 "Import Account");
                     }
                 });
