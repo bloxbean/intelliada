@@ -272,9 +272,21 @@ public final class JoustRunSession {
     long now() throws Exception {
         long tip = tipSlot(binding.api().get("/blocks/latest"));
         // A chain far below the session's now (a rewind, even with an empty journal; M33B1-CDX-34): the host would refuse
-        // every read as nowImplausible, so it is stopped and must be started again.
+        // every read as nowImplausible, so it is stopped and must be started again. D14: first a transient read, re-read
+        // until three readings span at least 10 s (M33B1-DES-12); a recovered reading is used instead.
         long floor = lastNow.get();
-        if (floor >= 0 && floor - tip > com.bloxbean.intelliada.idea.joust.journal.TimePolicy.MAX_NOW_AHEAD) {
+        long ahead = com.bloxbean.intelliada.idea.joust.journal.TimePolicy.MAX_NOW_AHEAD;
+        if (floor >= 0 && floor - tip > ahead) {
+            long since = System.nanoTime();
+            int reads = 1;
+            while (reads < 3 || System.nanoTime() - since < 10_000_000_000L) {
+                Thread.sleep(2_000);
+                tip = tipSlot(binding.api().get("/blocks/latest"));
+                reads++;
+                if (floor - tip <= ahead || reads > 12) break;
+            }
+        }
+        if (floor >= 0 && floor - tip > ahead) {
             stopHost();
             throw new NetworkIdentity.Refused("the chain went back to slot " + tip + ", far below this session's now (" + floor
                     + "); the dev host was stopped. Start it again");
