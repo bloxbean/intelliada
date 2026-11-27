@@ -281,4 +281,18 @@ public class ChainJournalTest {
         assertTrue(new ChainJournal(new JournalStore(tmp.getRoot().toPath()), CHAIN, MOD_A, 60).devnet());
         assertFalse(new ChainJournal(new JournalStore(tmp.getRoot().toPath()), TESTNET, MOD_A, 2160).devnet());
     }
+
+    /** FAB-11: a live body that can no longer land (an orphaned module's) holds nothing past its validity and margin. */
+    @Test
+    public void aBodyPastItsValidityHoldsNothing() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 400, 400);
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 1050)), 1000, 1000);
+            fail("still valid: held");
+        } catch (ChainJournal.Fenced expected) {
+        }
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 1500)), 1061, 1061);   // 1000 + 60 passed
+        assertEquals(1, j(s, MOD_B).entries().size());
+    }
 }

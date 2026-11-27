@@ -203,7 +203,7 @@ public final class ChainJournal {
             throw new Fenced("the prepared transaction is valid further ahead than a dev host builds");
         }
         try (var held = store.lock(chainKey)) {
-            String conflict = overlap(body);
+            String conflict = overlap(body, Math.max(tip, now));
             if (conflict != null) throw new Fenced(conflict);
             List<Entry> next = new ArrayList<>(mine());
             if (next.stream().anyMatch(x -> x.reservation().equals(e.reservation()))) throw new Fenced("the host reused a reservation id");
@@ -276,7 +276,7 @@ public final class ChainJournal {
      * Why {@code body} conflicts with a live body on the chain, or null (I33; protocol D8's reference rule). Only live
      * bodies hold inputs (Fable S11): an expired or final one is history. A journal that cannot be read is skipped.
      */
-    private @Nullable String overlap(TxCbor.Body body) throws StoreFailed {
+    private @Nullable String overlap(TxCbor.Body body, long tip) throws StoreFailed {
         Set<String> spends = new HashSet<>(body.inputs());
         spends.addAll(body.collateral());
         for (String m : store.journalModules(chainKey)) {
@@ -284,6 +284,10 @@ public final class ChainJournal {
             if (!j.ok()) continue;
             for (Entry x : j.value().entries()) {
                 if (!x.live()) continue;
+                // A body that can no longer move holds nothing (M33B1-FAB-11): a prepared one past its validity and margin
+                // cannot land, an included one past its margin is final; neither is held for a module that never runs again.
+                if (x.state() == JournalStore.State.prepared && tip > x.validTo() + settlementSlots) continue;
+                if (x.state() == JournalStore.State.shallow && x.slot() != null && tip - x.slot() > settlementSlots) continue;
                 TxCbor.Body b;
                 try {
                     b = x.body();

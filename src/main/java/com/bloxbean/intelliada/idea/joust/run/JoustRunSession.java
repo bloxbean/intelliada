@@ -93,6 +93,10 @@ public final class JoustRunSession {
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
     private final @Nullable JoustRunJournal journal;
 
+    /** Hosts this IDE started read-only, without the journal, and why (M33B1-FAB-1, -12): adopted read-only again. */
+    private static final java.util.Map<HostSession, String> READ_ONLY =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
     /**
      * Starts (or reuses) the module's host for a binding (D11, D17): a new host's chain history is classified first, so
      * {@code initialize} carries {@code restoring}, its reverse reads go through the settlement guard, and once its
@@ -128,10 +132,16 @@ public final class JoustRunSession {
                 service.stop(moduleDir);
                 throw new NetworkIdentity.Refused("the dev host it was about to reuse stopped meanwhile; start it again");
             }
-            // A host whose own start has not yet registered its journal is never adopted without it (M33B1-CDX-156).
+            // A host whose own start has not yet registered its journal is never adopted without it (M33B1-CDX-156); one
+            // started read-only, without a journal, is adopted read-only again (M33B1-FAB-12).
             JoustRunJournal existing = JOURNALS.get(r.session());
+            if (journalless == null && fresh == null && existing == null) journalless = READ_ONLY.get(r.session());
             if (journalless == null && fresh == null && (existing == null || !existing.ready())) {   // registered and started (M33B1-CDX-163)
                 throw new NetworkIdentity.Refused("the dev host is still starting; try again in a moment");
+            }
+            if (fresh == null && seen == null && journalless != null && READ_ONLY.putIfAbsent(r.session(), journalless) == null) {
+                HostSession ro = r.session();
+                ro.onEnded(why -> READ_ONLY.remove(ro));
             }
             owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;
             if (owned) {
