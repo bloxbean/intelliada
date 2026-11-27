@@ -796,4 +796,21 @@ public class ChainJournalTest {
             // refused
         }
     }
+
+    /** DES-14: a failed inclusion read at open fails that open only; nothing is recorded. */
+    @Test
+    public void aFailedInclusionReadAtOpenRecordsNothing() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 90, 90);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.shallow, 100L).withInclusion(new JournalStore.Inclusion(100, 100, "11".repeat(32))));
+        try {
+            j(s, MOD_B).open(120, h -> {
+                throw new java.io.IOException("timeout");
+            });
+            fail("opened");
+        } catch (JournalStore.StoreFailed expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("start again"));
+        }
+        assertNull("no rewind recorded", j(s, MOD_A).record().rewind());
+    }
 }

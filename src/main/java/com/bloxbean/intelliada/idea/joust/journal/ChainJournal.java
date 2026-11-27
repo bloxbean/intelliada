@@ -198,11 +198,31 @@ public final class ChainJournal {
      * host ran is found even at a higher tip (M33B1-CDX-21).
      */
     public Opening open(long tipAtDetection, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
-        Opening o = open0(tipAtDetection, inclusions);
-        return o;
+        // The retained inclusions are read before the chain lock is taken (M33B1-DES-14): the network never holds every
+        // other module's admission and settlement. A failed read fails this open only; it is not evidence of a rewind.
+        Map<String, JournalStore.Inclusion> now = null;
+        if (inclusions != null) {
+            Map<String, JournalStore.Inclusion> recorded = new LinkedHashMap<>();
+            try (var held = store.lock(chainKey)) {
+                for (var j : load().journals().values()) {
+                    if (j.ok()) for (Entry e : j.value().entries()) if (e.inclusion() != null) recorded.put(e.txHash(), e.inclusion());
+                }
+            }
+            now = new LinkedHashMap<>();
+            for (String h : recorded.keySet()) {
+                try {
+                    now.put(h, inclusions.of(h));
+                } catch (InterruptedException e) {
+                    throw e;
+                } catch (Exception unread) {
+                    throw new StoreFailed("the node could not be read for IntelliAda's journal (" + unread.getClass().getSimpleName() + "); start again");
+                }
+            }
+        }
+        return open0(tipAtDetection, now);
     }
 
-    private Opening open0(long tipAtDetection, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
+    private Opening open0(long tipAtDetection, @Nullable Map<String, JournalStore.Inclusion> inclusions) throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
             Classified k = judge(f);   // both lost: persisted, so a restored backup cannot lift it (ADR5-SEC-19, ADR5-CDX-3)
@@ -257,18 +277,14 @@ public final class ChainJournal {
     }
 
     /** Why {@code tip} (or the chain's present inclusions) reopens a journaled body of any module (D14's touch rules), or null. */
-    private @Nullable String reopened(Files f, long tip, @Nullable Inclusions inclusions) {
+    private @Nullable String reopened(Files f, long tip, @Nullable Map<String, JournalStore.Inclusion> inclusions) {
         for (var j : f.journals().values()) {
             if (!j.ok()) continue;
             for (Entry e : j.value().entries()) {
-                if (e.inclusion() != null && inclusions != null) {
-                    JournalStore.Inclusion now;
-                    try {
-                        now = inclusions.of(e.txHash());
-                    } catch (Exception unread) {
-                        return "a recorded inclusion could not be read again (" + unread.getClass().getSimpleName() + ")";
-                    }
-                    if (!e.inclusion().equals(now)) return "the chain no longer shows a recorded inclusion where it was";
+                // Only an inclusion read and found different is evidence (an entry written since the read is not checked).
+                if (e.inclusion() != null && inclusions != null && inclusions.containsKey(e.txHash())
+                        && !e.inclusion().equals(inclusions.get(e.txHash()))) {
+                    return "the chain no longer shows a recorded inclusion where it was";
                 }
                 if (e.inclusion() != null && e.inclusion().slot() > tip) return "the chain is at slot " + tip + ", below a recorded inclusion";
                 if (e.state() == JournalStore.State.confirmed && e.slot() != null && tip - e.slot() <= settlementSlots) {
