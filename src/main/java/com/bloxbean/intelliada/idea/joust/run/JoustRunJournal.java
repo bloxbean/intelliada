@@ -116,6 +116,7 @@ public final class JoustRunJournal implements AutoCloseable {
     void started(HostSession s, Object callLock, Check check) throws Exception {
         session.set(s);
         s.onEnded(why -> close());
+        settlement.chainCheck(check::run);   // around the restore's observation and every pass (M33B1-CDX-12)
         settlement.restore(opening);
         long every = tickMillis();
         timer.scheduleWithFixedDelay(() -> {
@@ -123,8 +124,7 @@ public final class JoustRunJournal implements AutoCloseable {
                 try {
                     if (session.get() == null || session.get().ended() != null) return;
                     if (!settlement.restoring() && journal.entries().isEmpty()) return;
-                    check.run();
-                    settlement.poll();
+                    settlement.poll();   // the chain check runs inside, after the observation
                 } catch (Exception e) {
                     LOG.info("JOUST settlement pass: " + e.getClass().getSimpleName());
                 }
@@ -207,13 +207,25 @@ public final class JoustRunJournal implements AutoCloseable {
 
     /** Journals a body being handed out (I25; M3.3b2, behind the signing gate). */
     void admit(JournalStore.Entry e, long tip, long now) throws Exception {
+        String blocked = buildingBlocked();   // a fenced or blocked session admits nothing (M33B1-CDX-33)
+        if (blocked != null) throw new ChainJournal.Fenced(blocked);
         journal.admit(e, tip, now);
     }
 
-    /** Records how a journaled body was handed out (submitted, exported). */
+    /**
+     * Records how a journaled body was handed out. Handouts only move forward (M33B1-CDX-27): approval pending to
+     * submitted or exported; a submitted or exported body never becomes discardable again.
+     */
     void handedOut(String reservation, JournalStore.Handout h) throws Exception {
-        if (h == JournalStore.Handout.none) throw new IllegalArgumentException("a handout is never undone");
-        if (!journal.update(reservation, e -> e.withHandout(h))) throw new ChainJournal.Fenced("the body is not journaled");
+        if (h == JournalStore.Handout.none || h == JournalStore.Handout.approvalPending) {
+            throw new IllegalArgumentException("a handout only moves to submitted or exported");
+        }
+        JournalStore.Entry cur = journal.entries().stream().filter(x -> x.reservation().equals(reservation)).findFirst().orElse(null);
+        if (cur == null) throw new ChainJournal.Fenced("the body is not journaled");
+        if (cur.handout() != JournalStore.Handout.approvalPending && cur.handout() != h) {
+            throw new ChainJournal.Fenced("a " + cur.handout() + " body cannot become " + h);
+        }
+        journal.update(reservation, e -> e.withHandout(h));
     }
 
     /** D17: at least every {@code settlementSlots/2} slots while anything is live. */

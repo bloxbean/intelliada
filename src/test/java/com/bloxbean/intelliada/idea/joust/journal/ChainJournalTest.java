@@ -222,7 +222,7 @@ public class ChainJournalTest {
     public void aPublicChainInTheRegistryWithNeitherRecordNorJournalWaitsForTheDerivedBound() throws Exception {
         JournalStore s = store();
         String pub = "public-1";
-        new ChainJournal(s, pub, MOD_A, 2160).admit(submitted("1", tx(List.of(ref(1, 0)), 90_000)), 80_000, 80_100);
+        new ChainJournal(s, pub, MOD_A, 2160).admit(submitted("1", tx(List.of(ref(1, 0)), 85_000)), 80_000, 80_100);
         String k = JournalStore.key(pub);
         Files.delete(s.recordFile(k));
         Files.delete(s.journalFile(k, MOD_A));
@@ -331,7 +331,7 @@ public class ChainJournalTest {
         a.admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
         a.beginRewind(500, "test");
         assertFalse(a.observed(10_000));
-        a.endRewind();
+        a.endRewind(a.record().rewind().id());
         assertTrue(a.observed(10_000));
     }
 
@@ -443,10 +443,10 @@ public class ChainJournalTest {
     public void aRebuiltRegistryKeepsTheBoundConservative() throws Exception {
         JournalStore s = store();
         String k = JournalStore.key(CHAIN);
-        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 100_000)), 90_000, 90_000);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 95_000)), 90_000, 90_000);
         Files.delete(s.registryFile(k));
         long first = j(s, MOD_A).open(100).completeAbove();
-        assertTrue("covers the handed-out body: " + first, first > 100_060);
+        assertTrue("covers the handed-out body: " + first, first > 95_060);
         Files.delete(s.recordFile(k));
         Files.delete(s.journalFile(k, MOD_A));
         long second = j(s, MOD_A).open(100).completeAbove();
@@ -502,7 +502,7 @@ public class ChainJournalTest {
         j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
         j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 1000)), 0, 0);
         j(s, MOD_A).beginRewind(500, "test");
-        j(s, MOD_B).endRewind();
+        j(s, MOD_B).endRewind(j(s, MOD_A).record().rewind().id());
         assertNotNull("A still pending", j(s, MOD_A).record().rewind());
         try {
             j(s, MOD_B).admit(submitted("2", tx(List.of(ref(3, 0)), 1000)), 0, 0);
@@ -510,7 +510,7 @@ public class ChainJournalTest {
         } catch (ChainJournal.Fenced expected) {
             // closed
         }
-        j(s, MOD_A).endRewind();
+        j(s, MOD_A).endRewind(j(s, MOD_A).record().rewind().id());
         assertNull(j(s, MOD_A).record().rewind());
     }
 
@@ -549,6 +549,125 @@ public class ChainJournalTest {
             fail("B's reservation was released");
         } catch (ChainJournal.Fenced expected) {
             // still reserved
+        }
+    }
+
+    // ---- round 2 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-2: a journal restored from before a handout change is behind its record (every write bumps the revision). */
+    @Test
+    public void aJournalFromBeforeAHandoutChangeIsLostHistory() throws Exception {
+        JournalStore s = store();
+        Path f = s.journalFile(JournalStore.key(CHAIN), MOD_A);
+        j(s, MOD_A).admit(entry("1", tx(List.of(ref(1, 0)), 1000), JournalStore.Handout.approvalPending), 0, 0);
+        byte[] before = Files.readAllBytes(f);
+        j(s, MOD_A).update("1", e -> e.withHandout(JournalStore.Handout.exported));
+        Files.write(f, before);
+        assertEquals(ChainJournal.History.LOST_JOURNAL, j(s, MOD_A).open(0).history());
+    }
+
+    /** CDX-22: a journal newer than its record shows the record is stale: a lost mark. */
+    @Test
+    public void aJournalAheadOfItsRecordIsALostMark() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 100, 100);
+        byte[] rec = Files.readAllBytes(s.recordFile(k)), reg = Files.readAllBytes(s.registryFile(k));
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 900)), 100, 100);
+        Files.write(s.recordFile(k), rec);
+        Files.write(s.registryFile(k), reg);
+        ChainJournal.Opening o = j(s, MOD_A).open(100);
+        assertEquals(ChainJournal.History.LOST_MARK, o.history());
+        assertTrue("covers the body valid to 900: " + o.completeAbove(), o.completeAbove() > 960);
+    }
+
+    /** CDX-5: a host acknowledges only the rewind it was restored after. */
+    @Test
+    public void anOldRestoreDoesNotAcknowledgeANewerRewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        j(s, MOD_A).beginRewind(1100, "first");
+        String first = j(s, MOD_A).record().rewind().id();
+        j(s, MOD_A).beginRewind(100, "second");
+        j(s, MOD_A).endRewind(first);
+        assertTrue("still pending for the newer rewind", j(s, MOD_A).record().rewind().pending().contains(MOD_A));
+    }
+
+    /** CDX-20: a refused admission on lost history persists the irreversible marker. */
+    @Test
+    public void aBothLostRefusalIsPersisted() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        byte[] rec = Files.readAllBytes(s.recordFile(k)), reg = Files.readAllBytes(s.registryFile(k));
+        Files.delete(s.recordFile(k));
+        Files.delete(s.registryFile(k));
+        try {
+            j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+        Files.write(s.recordFile(k), rec);
+        Files.write(s.registryFile(k), reg);
+        assertEquals("an older metadata pair does not lift it", ChainJournal.History.BOTH_LOST, j(s, MOD_A).open(0).history());
+    }
+
+    /** CDX-21: another module's open after an offline rewind finds A's reopened entry; admission closes. */
+    @Test
+    public void anOfflineRewindIsFoundByAnyModulesOpen() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        ChainJournal.Opening o = j(s, MOD_B).open(100);   // the chain went back below A's expired body's validTo
+        assertEquals(ChainJournal.History.FENCED, o.history());
+        assertTrue(j(s, MOD_B).record().rewind().pending().contains(MOD_A));
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 100, 100);
+            fail("B spent A's input");
+        } catch (ChainJournal.Fenced expected) {
+            // closed until A reconciles
+        }
+    }
+
+    /** CDX-23: a restart keeps the lost-mark bound rather than deriving another. */
+    @Test
+    public void aRestartKeepsTheLostMarkBound() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 100, 100);
+        Files.writeString(s.journalFile(k, MOD_B), "{not json");
+        long a = j(s, MOD_A).open(100).completeAbove();
+        long b = j(s, MOD_A).open(100).completeAbove();
+        assertEquals(a, b);
+    }
+
+    /** CDX-31: admission refuses a validity beyond what lost-mark recovery can bound. */
+    @Test
+    public void aValidityBeyondTheRecoveryBoundIsRefused() throws Exception {
+        JournalStore s = store();
+        try {
+            j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 50_000)), 100, 100);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("valid beyond"));
+        }
+    }
+
+    /** CDX-10: a journal file this user cannot read is lost history, not a storage failure. */
+    @Test
+    public void aJournalThatCannotBeReadIsLostHistory() throws Exception {
+        org.junit.Assume.assumeTrue(java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        Path f = s.journalFile(k, MOD_A);
+        Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("---------"));
+        try {
+            assertTrue(s.journal(k, MOD_A).lost());
+            assertEquals(ChainJournal.History.LOST_JOURNAL, j(s, MOD_A).open(0).history());
+        } finally {
+            Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
         }
     }
 }

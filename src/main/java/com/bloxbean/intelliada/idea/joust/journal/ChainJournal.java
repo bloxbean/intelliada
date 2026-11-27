@@ -148,11 +148,26 @@ public final class ChainJournal {
         List<String> lost = new ArrayList<>();
         for (var m : c.modules().entrySet()) {
             Loaded<ModuleJournal> j = f.journals().getOrDefault(m.getKey(), Loaded.missing());
-            // Missing, unreadable, or behind the admission the record holds for it (M33B1-CDX-2, -DES-8).
+            // Every journal write bumps the module's revision in the record first (M33B1-CDX-2): a journal ahead of its
+            // record shows the record is stale (M33B1-CDX-22).
+            if (j.ok() && j.value().generation() > m.getValue()) {
+                return new Classified(Kind.LOST_MARK, List.of(), "a journal on this chain is newer than its record");
+            }
+        }
+        for (var m : c.modules().entrySet()) {
+            Loaded<ModuleJournal> j = f.journals().getOrDefault(m.getKey(), Loaded.missing());
+            // Missing, unreadable, or behind the revision the record holds for it (M33B1-CDX-2, -DES-8).
             if (!j.ok() || j.value().generation() < m.getValue()) lost.add(m.getKey());
         }
         if (!lost.isEmpty()) return new Classified(Kind.LOST_JOURNALS, lost, "a module's journal on this chain is missing, unreadable or older than its record");
         return new Classified(Kind.INTACT, List.of(), "complete");
+    }
+
+    /** The classification, with the irreversible both-lost marker persisted wherever it is found (M33B1-CDX-20). */
+    private Classified judge(Files f) throws StoreFailed {
+        Classified k = classify(f);
+        if (k.kind() == Kind.BOTH_LOST && !f.permanent()) store.writePermanentFence(chain, PERMANENT);
+        return k;
     }
 
     static final String PERMANENT = "IntelliAda lost both its record and its registry entry for this chain while its history survives; "
@@ -168,14 +183,12 @@ public final class ChainJournal {
     public Opening open(long tipAtDetection) throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
-            Classified k = classify(f);
+            Classified k = judge(f);   // both lost: persisted, so a restored backup cannot lift it (ADR5-SEC-19, ADR5-CDX-3)
             ChainRecord c = f.record();
             Loaded<ModuleJournal> mine = f.journals().getOrDefault(module, Loaded.missing());
             List<Entry> survivors = mine.ok() ? mine.value().entries() : List.of();
             switch (k.kind()) {
                 case BOTH_LOST -> {
-                    // Persisted, so a restored backup cannot lift it (ADR5-SEC-19, ADR5-CDX-3).
-                    if (!f.permanent()) store.writePermanentFence(chain, PERMANENT);
                     return new Opening(List.of(), false, null, PERMANENT, History.BOTH_LOST);
                 }
                 case NEW -> {
@@ -191,6 +204,13 @@ public final class ChainJournal {
                     return new Opening(survivors, true, bound, null, History.LOST_MARK);
                 }
                 default -> {
+                    // A rewind while no host ran (M33B1-CDX-21): any module's retained entry the tip now reopens makes
+                    // every module with entries reconcile before admission reopens.
+                    String touched = c.rewind() == null ? reopened(f, tipAtDetection) : null;
+                    if (touched != null) {
+                        c = c.withRewind(new Rewind(tipAtDetection, touched, pendingModules(f), Rewind.newId()));
+                        store.writeRecord(c);
+                    }
                     boolean restoring = !survivors.isEmpty() || c.fence() != null || c.rewind() != null;
                     Long above = c.fence() == null ? null : c.fence().until();
                     History h = c.fence() == null && c.rewind() == null ? History.COMPLETE : History.FENCED;
@@ -198,6 +218,31 @@ public final class ChainJournal {
                 }
             }
         }
+    }
+
+    /** Why {@code tip} reopens a journaled body of any module on the chain (D14's touch rules), or null. */
+    private @Nullable String reopened(Files f, long tip) {
+        for (var j : f.journals().values()) {
+            if (!j.ok()) continue;
+            for (Entry e : j.value().entries()) {
+                if (e.inclusion() != null && e.inclusion().slot() > tip) return "the chain is at slot " + tip + ", below a recorded inclusion";
+                if (e.state() == JournalStore.State.confirmed && e.slot() != null && tip - e.slot() <= settlementSlots) {
+                    return "the chain is at slot " + tip + ", inside a final inclusion's margin";
+                }
+                if (e.state() == JournalStore.State.expired && e.validTo() > tip) return "the chain is at slot " + tip + ", where an expired body can land again";
+            }
+        }
+        return null;
+    }
+
+    /** Every module with a journaled body on the chain (a rewind's pending reconciliations). */
+    private Set<String> pendingModules(Files f) {
+        Set<String> pending = new LinkedHashSet<>();
+        for (var e : f.journals().entrySet()) {
+            if (e.getValue().ok() && !e.getValue().value().entries().isEmpty()) pending.add(e.getKey());
+        }
+        pending.add(module);
+        return pending;
     }
 
     /**
@@ -223,6 +268,9 @@ public final class ChainJournal {
             modules.putAll(c.modules());
         }
         for (var e : f.journals().entrySet()) {
+            // An unreadable journal stays listed (lost), so a restart keeps this bound rather than deriving another
+            // (M33B1-CDX-23); it is set aside once the fence lifts.
+            if (e.getValue().lost()) modules.merge(e.getKey(), 1L, Math::max);
             if (!e.getValue().ok()) continue;
             ModuleJournal j = e.getValue().value();
             if (j.generation() > 0 || !j.entries().isEmpty()) modules.merge(e.getKey(), Math.max(1, j.generation()), Math::max);
@@ -269,9 +317,13 @@ public final class ChainJournal {
             throw new Fenced("the prepared transaction's hash or validity differs from the journal entry's");
         }
         if (!JournalStore.readsBack(e)) throw new Fenced("the journal entry would not read back as written");
+        // Within what lost-mark recovery can bound (M33B1-CDX-31): validTo at most the largest TTL past tip or now.
+        if (e.validTo() > Math.max(tip, now) + TimePolicy.LARGEST_TTL) {
+            throw new Fenced("the prepared transaction is valid beyond what IntelliAda's journal can recover");
+        }
         try (var held = store.lock(chainKey)) {
             Files f = load();
-            Classified k = classify(f);
+            Classified k = judge(f);
             if (k.kind() != Kind.NEW && k.kind() != Kind.INTACT) {
                 throw new Fenced(k.kind() == Kind.BOTH_LOST ? PERMANENT : k.why() + "; start the session again to recover");
             }
@@ -283,8 +335,10 @@ public final class ChainJournal {
             RegistryEntry reg = f.reg().value();
             long gen = Math.max(c == null ? 0 : c.generation(), reg == null ? 0 : reg.generation()) + 1;
             long mark = Math.max(c == null || c.mark() == null ? 0 : c.mark(), Math.addExact(e.validTo(), settlementSlots));
+            Loaded<ModuleJournal> current = f.journals().getOrDefault(module, Loaded.missing());
+            long revision = Math.max(c == null ? 0 : c.modules().getOrDefault(module, 0L), current.ok() ? current.value().generation() : 0) + 1;
             Map<String, Long> modules = new LinkedHashMap<>(c == null ? Map.of() : c.modules());
-            modules.put(module, gen);
+            modules.put(module, revision);
             ChainRecord next = new ChainRecord(chain, mark, modules, gen, null, null, c == null ? List.of() : c.registrations());
             RegistryEntry r = new RegistryEntry(chain, Math.max(tip, reg == null ? 0 : reg.highestTip()),
                     Math.max(now, reg == null ? 0 : reg.highestNow()), gen);
@@ -296,8 +350,25 @@ public final class ChainJournal {
             // its record's generation is then lost history, fenced until the mark).
             store.writeRecord(next);
             store.writeRegistry(r);
-            store.writeJournal(new ModuleJournal(chain, module, gen, entries));
+            store.writeJournal(new ModuleJournal(chain, module, revision, entries));
         }
+    }
+
+    /**
+     * Writes this module's journal under the lock, bumping its revision in the record first (M33B1-CDX-2): a journal
+     * restored from before any write, a handout's included, is then behind its record. Needs an intact record.
+     */
+    private void writeMine(List<Entry> entries) throws StoreFailed, Fenced {
+        Files f = load();
+        ChainRecord c = f.record();
+        if (c == null) throw new Fenced("the chain record is missing or unreadable");
+        Loaded<ModuleJournal> j = f.journals().getOrDefault(module, Loaded.missing());
+        if (j.lost()) throw new Fenced("this module's journal on the chain is unreadable");
+        long revision = Math.max(c.modules().getOrDefault(module, 0L), j.ok() ? j.value().generation() : 0) + 1;
+        Map<String, Long> modules = new LinkedHashMap<>(c.modules());
+        modules.put(module, revision);
+        store.writeRecord(c.withModules(modules));
+        store.writeJournal(new ModuleJournal(chain, module, revision, entries));
     }
 
     /** Why {@code body} conflicts with a live entry on the chain, or null (I33; protocol D8's reference rule). */
@@ -360,7 +431,7 @@ public final class ChainJournal {
                         throw new IllegalArgumentException("an update keeps the reservation and the body");
                     }
                     next.set(i, e);
-                    store.writeJournal(new ModuleJournal(chain, module, j.generation(), next));
+                    writeMine(next);
                     return true;
                 }
             }
@@ -373,7 +444,7 @@ public final class ChainJournal {
         try (var held = store.lock(chainKey)) {
             ModuleJournal j = mine();
             List<Entry> next = j.entries().stream().filter(e -> !reservations.contains(e.reservation())).toList();
-            if (next.size() != j.entries().size()) store.writeJournal(new ModuleJournal(chain, module, j.generation(), next));
+            if (next.size() != j.entries().size()) writeMine(next);
         }
     }
 
@@ -389,8 +460,7 @@ public final class ChainJournal {
             Loaded<ModuleJournal> j = store.journal(chainKey, module);
             if (entries.isEmpty() && !j.ok()) return;
             if (j.lost()) throw new Fenced("this module's journal on the chain is unreadable");
-            long gen = j.ok() ? j.value().generation() : 0;
-            store.writeJournal(new ModuleJournal(chain, module, gen, entries));
+            writeMine(entries);
         }
     }
 
@@ -412,6 +482,14 @@ public final class ChainJournal {
 
     // ---- fences, rewinds, registrations -------------------------------------------------------------------------------
 
+    /** Whether the chain's history is complete now (the classification admission needs). */
+    public boolean intact() throws StoreFailed, InterruptedException {
+        try (var held = store.lock(chainKey)) {
+            Kind k = judge(load()).kind();
+            return k == Kind.INTACT || k == Kind.NEW;
+        }
+    }
+
     /** The chain record now, or null when there is none (or it is unreadable). */
     public @Nullable ChainRecord record() throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
@@ -428,13 +506,14 @@ public final class ChainJournal {
     public boolean observed(long tip) throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
+            if (judge(f).kind() == Kind.BOTH_LOST) return false;
             ChainRecord c = f.record();
-            if (f.permanent() || c == null) return false;
+            if (c == null) return false;
             if (c.fence() != null && tip > c.fence().until()) {
                 Map<String, Long> modules = new LinkedHashMap<>();
                 for (var m : c.modules().entrySet()) {
                     Loaded<ModuleJournal> j = f.journals().getOrDefault(m.getKey(), Loaded.missing());
-                    if (j.ok()) modules.put(m.getKey(), Math.min(m.getValue(), Math.max(1, j.value().generation())));
+                    if (j.ok()) modules.put(m.getKey(), Math.max(1, j.value().generation()));
                     else if (j.exists()) store.setAside(chainKey, m.getKey());
                 }
                 for (var e : f.journals().entrySet()) {
@@ -459,23 +538,25 @@ public final class ChainJournal {
             Files f = load();
             ChainRecord c = existing(f);
             Set<String> pending = new LinkedHashSet<>(c.rewind() == null ? Set.of() : c.rewind().pending());
-            for (var e : f.journals().entrySet()) {
-                if (e.getValue().ok() && !e.getValue().value().entries().isEmpty()) pending.add(e.getKey());
-            }
-            pending.add(module);
+            pending.addAll(pendingModules(f));
             long at = c.rewind() == null ? tip : Math.min(tip, c.rewind().tip());
-            store.writeRecord(c.withRewind(new Rewind(at, reason, pending)));
+            // A new id each time (M33B1-CDX-5): a restore observed before this rewind cannot acknowledge it.
+            store.writeRecord(c.withRewind(new Rewind(at, reason, pending, Rewind.newId())));
         }
     }
 
-    /** This module reconciled (the final restore response): it leaves the rewind, which clears once none is pending. */
-    public void endRewind() throws StoreFailed, InterruptedException {
+    /**
+     * This module reconciled rewind {@code id} (the final restore response of a host restored after it): it leaves that
+     * rewind, which clears once none is pending. A different (newer) rewind is untouched (M33B1-CDX-5).
+     */
+    public void endRewind(String id) throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             ChainRecord c = existing(load());
-            if (c.rewind() == null || !c.rewind().pending().contains(module)) return;
+            if (c.rewind() == null || !c.rewind().id().equals(id) || !c.rewind().pending().contains(module)) return;
             Set<String> pending = new LinkedHashSet<>(c.rewind().pending());
             pending.remove(module);
-            store.writeRecord(c.withRewind(pending.isEmpty() ? null : new Rewind(c.rewind().tip(), c.rewind().reason(), pending)));
+            store.writeRecord(c.withRewind(pending.isEmpty() ? null
+                    : new Rewind(c.rewind().tip(), c.rewind().reason(), pending, c.rewind().id())));
         }
     }
 
@@ -499,10 +580,12 @@ public final class ChainJournal {
         }
     }
 
+    /** The record, or a fresh one only for a new chain; any other state refuses (and both-lost is persisted; M33B1-CDX-20). */
     private ChainRecord existing(Files f) throws StoreFailed {
         if (f.rec().ok()) return f.rec().value();
-        if (f.rec().exists()) throw new StoreFailed("the chain record is unreadable");
-        return new ChainRecord(chain, null, Map.of(), 0, null, null, List.of());
+        Classified k = judge(f);
+        if (k.kind() == Kind.NEW) return new ChainRecord(chain, null, Map.of(), 0, null, null, List.of());
+        throw new StoreFailed("the chain record is missing or unreadable (" + k.why() + ")");
     }
 
     /** Every live entry on the chain, of every module (I33: admission and the panel). */

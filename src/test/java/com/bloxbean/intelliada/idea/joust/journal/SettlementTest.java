@@ -2,6 +2,7 @@ package com.bloxbean.intelliada.idea.joust.journal;
 
 import com.bloxbean.intelliada.idea.joust.host.HostError;
 import com.bloxbean.intelliada.idea.joust.host.HostJson;
+import com.bloxbean.intelliada.idea.joust.host.HostSession;
 import com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry;
 import com.bloxbean.intelliada.idea.joust.journal.JournalStore.Inclusion;
 import com.bloxbean.intelliada.idea.joust.journal.JournalStore.State;
@@ -125,7 +126,7 @@ public class SettlementTest {
     private Settlement restored(List<Entry> entries, List<String> ids) throws Exception {
         JournalStore s = new JournalStore(tmp.getRoot().toPath().resolve("j"));
         ChainJournal seed = new ChainJournal(s, CHAIN, MOD, 60);
-        for (Entry e : entries) seed.admit(e, 0, 0);
+        for (Entry e : entries) seed.admit(e, chain.tip.slot(), chain.tip.slot());
         store = s;
         ChainJournal.Opening o = seed.open(chain.tip.slot());
         HostTable t = new HostTable(60, o.restoring());
@@ -200,6 +201,7 @@ public class SettlementTest {
         Settlement s = settlement(t);
         t.committed("1", "aa".repeat(32), 0L, 2025);
         assertTrue(t.reply(t.expect("1", "aa".repeat(32), "confirmed", 2005L, 2005), HostTable.St.shallow, null));
+        chain.in.put("aa".repeat(32), new Inclusion(2005, 2005, "11".repeat(32)));   // still on chain (M33B1-CDX-25)
         s.beginCall();
         read(s, "datum", "value", 2100, false);
         s.endCall("prepare", null, null);
@@ -217,6 +219,7 @@ public class SettlementTest {
             Settlement s = settlement(t);
             t.committed("1", "aa".repeat(32), 0L, 2025);
             assertTrue(t.reply(t.expect("1", "aa".repeat(32), "confirmed", 2005L, 2005), HostTable.St.shallow, null));
+            chain.in.put("aa".repeat(32), new Inclusion(2005, 2005, "11".repeat(32)));
             s.beginCall();
             read(s, "utxos", "value", 2100, ending.equals("bad/readLimit"));   // a first chunk with a continuation
             s.endCall("prepare", null, ending);
@@ -228,6 +231,7 @@ public class SettlementTest {
         Settlement s = settlement(t);
         t.committed("1", "aa".repeat(32), 0L, 2025);
         assertTrue(t.reply(t.expect("1", "aa".repeat(32), "confirmed", 2005L, 2005), HostTable.St.shallow, null));
+        chain.in.put("aa".repeat(32), new Inclusion(2005, 2005, "11".repeat(32)));
         s.beginCall();
         read(s, "utxos", "value", 2100, true);
         read(s, "utxos", "value", 2100, false);
@@ -492,7 +496,8 @@ public class SettlementTest {
         host.answer("prepared", "prepared");
         s.poll();
         assertNull(fence.get());
-        assertEquals(List.of("settled rolledBack/100", "settled rolledBack/105"), host.calls.subList(3, 5));
+        // Both at the lowest vanished slot, in ascending order (M33B1-CDX-6).
+        assertEquals(List.of("settled rolledBack/100", "settled rolledBack/100"), host.calls.subList(3, 5));
         assertEquals(List.of(State.prepared, State.prepared), journal.entries().stream().map(Entry::state).toList());
     }
 
@@ -676,5 +681,143 @@ public class SettlementTest {
         assertNotNull("fenced by the rewind it never reconciled", fence.get());
         assertEquals("restore was not completed into the rewind", 1, host.calls.size());
         assertTrue("still pending", journal.record().rewind().pending().contains(MOD));
+    }
+
+    // ---- round 2 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-24: a read answered after its call ended is charged to no later call. */
+    @Test
+    public void aLateReadIsChargedToNoLaterCall() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        t.committed("1", "aa".repeat(32), 0L, 2025);
+        s.beginCall();
+        HostSession.Reads guarded = s.guard((id, p) -> {
+            s.endCall("view", null, "internal/cancelled");   // the call ends while its read is still being answered
+            s.beginCall();                                     // and the next one begins
+            ObjectNode a = HostJson.object();
+            a.putObject("tip").put("slot", 2100).put("height", 2100).put("hash", String.format("%064x", 2100));
+            a.putArray("value");
+            return a;
+        });
+        guarded.read("1.1", HostJson.object().put("kind", "utxos"));
+        s.endCall("view", HostJson.object(), null);
+        assertEquals(HostTable.St.prepared, t.lower("1").st());
+        assertEquals(HostTable.St.prepared, t.upper("1").st());
+    }
+
+    /** CDX-25: a read that would finalize a shallow body that vanished answers failed; the rollback is reported first. */
+    @Test
+    public void aReadThatWouldFinalizeAVanishedShallowBodyFails() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        t.committed("1", "aa".repeat(32), 0L, 2025);
+        assertTrue(t.reply(t.expect("1", "aa".repeat(32), "confirmed", 100L, 100), HostTable.St.shallow, null));
+        s.beginCall();
+        ObjectNode a = HostJson.object();
+        a.putObject("tip").put("slot", 180).put("height", 180).put("hash", String.format("%064x", 180));
+        a.putArray("value");
+        ObjectNode got = s.guard((id, p) -> a).read("1.1", HostJson.object().put("kind", "utxos"));
+        assertTrue(got.has("failed"));
+        assertTrue(s.pollNeeded());
+    }
+
+    /** CDX-26: a rollback the host answers with deepRollback is a chain rewind, persisted, and the host fenced. */
+    @Test
+    public void aDeepRollbackReplyIsAChainRewind() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        chain.include(hash(a), 2000);
+        chain.at(2001);
+        host.answer("shallow");
+        s.poll();
+        s.beginCall();
+        read(s, "utxos", "value", 2100, true);   // a partial listing: the upper copy holds it final
+        s.endCall("view", null, "bad/readLimit");
+        chain.in.clear();
+        chain.at(2002);
+        host.answer(new HostError("refusal", "deepRollback", "scripted", List.of(), null));
+        s.poll();
+        assertNotNull(fence.get());
+        assertNotNull("persisted before anything is released", journal.record().rewind());
+        assertNotNull("the inclusion evidence is kept", journal.entries().get(0).inclusion());
+    }
+
+    /** CDX-27: a restored reservation is never discarded, even with its journal entry gone. */
+    @Test
+    public void aRestoredReservationIsNeverDiscarded() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        journal.remove(java.util.Set.of("1"));
+        try {
+            s.discard("1");
+            fail("discarded");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("I30"));
+        }
+    }
+
+    /** CDX-28: discard runs a settlement pass first, so a landed body is reported before the discard's tip. */
+    @Test
+    public void aDiscardReportsALandedBodyFirst() throws Exception {
+        String a = tx(List.of(ref(1)), 500);
+        chain.at(90);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        s.endCall("prepare", prepared("2", tx(List.of(ref(2)), 2000)), null);
+        chain.include(hash(a), 100);
+        chain.at(600);
+        host.answer("shallow", "confirmed", "discarded");
+        s.discard("2");
+        assertEquals(List.of("settled confirmed100/100", "settled confirmed100/600", "settled discarded/600"),
+                host.calls.subList(host.calls.size() - 3, host.calls.size()));
+        assertNull(fence.get());
+    }
+
+    /** CDX-29: a prepared reply reusing an existing reservation id fences the host. */
+    @Test
+    public void aReusedReservationIdFences() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        s.beginCall();
+        s.endCall("prepare", prepared("1", tx(List.of(ref(1)), 500)), null);
+        s.beginCall();
+        s.endCall("prepare", prepared("1", tx(List.of(ref(2)), 120)), null);
+        assertNotNull(fence.get());
+        assertEquals(500, t.lower("1").to());
+    }
+
+    /** CDX-30: after a lower tip is adopted, settlement uses a whole observation at it. */
+    @Test
+    public void aRebasedPassObservesAgain() throws Exception {
+        String a = tx(List.of(ref(1)), 3000);
+        chain.at(100);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        chain.include(hash(a), 150);
+        chain.at(190);
+        host.answer("shallow");
+        s.poll();
+        chain.at(180);   // persistently lower, touching nothing recorded (150 < 180; a shallow margin is open anyway)
+        chain.in.clear();   // and the inclusion is gone at the new point
+        host.answer("prepared");
+        s.poll();
+        assertEquals(State.prepared, journal.entries().get(0).state());
+    }
+
+    /** CDX-33: a build the model refused surfaces as an error, never as a result. */
+    @Test
+    public void aRefusedBuildSurfaces() throws Exception {
+        Settlement s = settlement(new HostTable(60, false));
+        ObjectNode r = prepared("1", tx(List.of(ref(1)), 2025));
+        ((ObjectNode) r.get("prepared")).put("validTo", 9999);
+        s.beginCall();
+        try {
+            s.complete("prepare", r, null);
+            fail("returned");
+        } catch (ChainJournal.Fenced expected) {
+            assertNotNull(fence.get());
+        }
     }
 }

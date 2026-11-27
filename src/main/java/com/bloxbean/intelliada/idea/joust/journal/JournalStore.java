@@ -157,9 +157,14 @@ public final class JournalStore {
     }
 
     /** A rewind's outstanding reconciliation, persisted before any host is restarted (D17 "Rewind"). */
-    public record Rewind(long tip, String reason, Set<String> pending) {
+    public record Rewind(long tip, String reason, Set<String> pending, String id) {
         public Rewind {
             pending = Set.copyOf(pending);
+        }
+
+        /** A new rewind's unique id (M33B1-CDX-5): a host acknowledges only the rewind it was restored after. */
+        public static String newId() {
+            return HexFormat.of().formatHex(random(8));
         }
     }
 
@@ -424,14 +429,16 @@ public final class JournalStore {
             JsonNode r = n.get("rewind");
             if (r == null) throw new Bad();
             if (!r.isNull()) {
-                fields(r, "tip", "reason", "pending");
+                fields(r, "tip", "reason", "pending", "id");
                 Set<String> pending = new LinkedHashSet<>();
                 JsonNode ps = r.get("pending");
                 if (!ps.isArray()) throw new Bad();
                 for (JsonNode x : ps) {
                     if (!x.isTextual() || !KEY.matcher(x.textValue()).matches() || !pending.add(x.textValue())) throw new Bad();
                 }
-                rewind = new Rewind(slot(r, "tip"), boundedText(r, "reason"), pending);
+                String id = text(r, "id");
+                if (!id.matches("[0-9a-f]{16}")) throw new Bad();
+                rewind = new Rewind(slot(r, "tip"), boundedText(r, "reason"), pending, id);
             }
             List<Registration> regs = new ArrayList<>();
             JsonNode rs = n.get("registrations");
@@ -448,7 +455,6 @@ public final class JournalStore {
             long generation = slot(n, "generation");
             // A record that lists handouts has a mark, and no module is ahead of the record (M33B1-CDX-18).
             if (!modules.isEmpty() && mark == null) throw new Bad();
-            for (long g : modules.values()) if (g > generation) throw new Bad();
             return new Loaded<>(new ChainRecord(chain, mark, modules, generation, fence, rewind, regs), true);
         } catch (Bad b) {
             return Loaded.unreadable();
@@ -524,7 +530,7 @@ public final class JournalStore {
         else n.putObject("fence").put("until", c.fence().until()).put("reason", c.fence().reason());
         if (c.rewind() == null) n.putNull("rewind");
         else {
-            ObjectNode r = n.putObject("rewind").put("tip", c.rewind().tip()).put("reason", c.rewind().reason());
+            ObjectNode r = n.putObject("rewind").put("tip", c.rewind().tip()).put("reason", c.rewind().reason()).put("id", c.rewind().id());
             ArrayNode ps = r.putArray("pending");
             c.rewind().pending().stream().sorted().forEach(ps::add);
         }
@@ -733,6 +739,10 @@ public final class JournalStore {
             b = Files.readAllBytes(f);
         } catch (NoSuchFileException e) {
             return null;
+        } catch (java.nio.file.AccessDeniedException e) {
+            // A file that exists but stays unreadable is lost history, never a storage failure that blocks recovery
+            // (M33B1-CDX-10); it is set aside once the fence over it lifts.
+            return HostJson.object().put("$denied", true);
         } catch (IOException e) {
             throw new StoreFailed("a journal file cannot be read (" + e.getClass().getSimpleName() + "): " + f, e);
         }
@@ -754,6 +764,8 @@ public final class JournalStore {
         try {
             privateDir(dir);
             byte[] bytes = (HostJson.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(value) + "\n").getBytes(StandardCharsets.UTF_8);
+            // Never write what the loader would refuse (M33B1-CDX-13).
+            if (bytes.length > MAX_FILE) throw new StoreFailed("a journal file would exceed " + (MAX_FILE >> 20) + " MiB: " + f.getFileName());
             tmp = dir.resolve(f.getFileName() + "." + HexFormat.of().formatHex(random(6)) + ".tmp");
             try (FileChannel ch = FileChannel.open(tmp, Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
                     posix(dir) ? new java.nio.file.attribute.FileAttribute<?>[]{
@@ -825,7 +837,18 @@ public final class JournalStore {
         if (rel.startsWith("..")) throw new IOException("outside the journal's root");
         List<Path> chain = new ArrayList<>();
         for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) chain.add(0, p);
-        if (!Files.isDirectory(root.getParent() == null ? root : root.getParent())) Files.createDirectories(root.getParent());
+        // Every ancestor this store creates, up to the first that exists (the IDE system directory), is made durable in its
+        // parent before anything is written beneath it (M33B1-CDX-15).
+        List<Path> missing = new ArrayList<>();
+        for (Path a = root.getParent(); a != null && !Files.isDirectory(a); a = a.getParent()) missing.add(0, a);
+        for (Path a : missing) {
+            try {
+                Files.createDirectory(a);
+            } catch (FileAlreadyExistsException raced) {
+                // made meanwhile
+            }
+            if (a.getParent() != null) forceDir(a.getParent());
+        }
         for (Path p : chain) {
             if (Files.isSymbolicLink(p)) throw new IOException("a journal directory is a symbolic link");
             if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {

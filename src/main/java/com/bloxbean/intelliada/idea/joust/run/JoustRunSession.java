@@ -109,6 +109,10 @@ public final class JoustRunSession {
             r = launcher.launch(init, b.key(), reads);
             adopted.accept(r);
             owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;
+            if (owned) {
+                HostSession ended = r.session();
+                ended.onEnded(why -> JOURNALS.remove(ended));   // no entry outlives its session (M33B1-CDX-35)
+            }
             JoustRunSession made = new JoustRunSession(b, r);
             made.verifyCatalog();   // the host's catalog is the build's, or the host is stopped (M33A-CDX-2)
             if (owned) {
@@ -265,8 +269,17 @@ public final class JoustRunSession {
     }
 
     /** {@code max(previous now, the bound node's tip slot)}: never decreasing within the session (I28). */
-    long now() throws BlockfrostApi.Failed, InterruptedException {
-        return monotone(lastNow, tipSlot(binding.api().get("/blocks/latest")));
+    long now() throws Exception {
+        long tip = tipSlot(binding.api().get("/blocks/latest"));
+        // A chain far below the session's now (a rewind, even with an empty journal; M33B1-CDX-34): the host would refuse
+        // every read as nowImplausible, so it is stopped and must be started again.
+        long floor = lastNow.get();
+        if (floor >= 0 && floor - tip > com.bloxbean.intelliada.idea.joust.journal.TimePolicy.MAX_NOW_AHEAD) {
+            stopHost();
+            throw new NetworkIdentity.Refused("the chain went back to slot " + tip + ", far below this session's now (" + floor
+                    + "); the dev host was stopped. Start it again");
+        }
+        return monotone(lastNow, tip);
     }
 
     /**

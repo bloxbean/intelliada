@@ -163,6 +163,7 @@ public final class Settlement {
         restoreOpen = true;
         Observation o = observe(opening.survivors());
         if (o == null) throw new ChainJournal.Fenced("the chain kept moving while the journal was read; start again");
+        chainCheck.run();   // the observation is the bound chain's, before it decides anything (M33B1-CDX-12)
         long t = o.tip.slot();
         highest = o.tip;
         List<Entry> kept = new ArrayList<>();
@@ -227,14 +228,27 @@ public final class Settlement {
     private @Nullable JournalStore.Rewind reconciling;
 
     private static boolean same(@Nullable JournalStore.Rewind a, @Nullable JournalStore.Rewind b) {
-        return a != null && b != null && a.tip() == b.tip() && a.reason().equals(b.reason());
+        return a != null && b != null && a.id().equals(b.id());   // each rewind's own id (M33B1-CDX-5)
+    }
+
+    /** Checks the bound chain's identity (D14's block 1) around observations before they change the journal. */
+    @FunctionalInterface
+    public interface ChainCheck {
+        void run() throws Exception;
+    }
+
+    private ChainCheck chainCheck = () -> { };
+
+    /** The session's identity check, run after each observation and before anything is settled (M33B1-CDX-12). */
+    public void chainCheck(ChainCheck c) {
+        this.chainCheck = c;
     }
 
     private void completed(long t) throws Exception {
         restoreOpen = false;
         // This host leaves only the rewind it was restored after (M33B1-SEC-6).
         JournalStore.ChainRecord rec = journal.record();
-        if (rec != null && same(rec.rewind(), reconciling)) journal.endRewind();
+        if (rec != null && same(rec.rewind(), reconciling)) journal.endRewind(reconciling.id());
         journal.observed(t);
     }
 
@@ -317,8 +331,20 @@ public final class Settlement {
         }
         Observation o = observe(entries);
         if (o == null) return false;   // no chain point held: the next pass reads again
+        chainCheck.run();
+        rebased = false;
         String trigger = rewindTrigger(o, entries);
         if (trigger == TRANSIENT) return false;   // the lower tip recovered while it was re-read: read again
+        if (trigger == null && rebased) {
+            // A lower tip adopted as the baseline: settle against a whole observation at it, never the first one's
+            // inclusions (M33B1-CDX-30).
+            o = observe(entries);
+            if (o == null) return false;
+            chainCheck.run();
+            rebased = false;
+            trigger = rewindTrigger(o, entries);
+            if (trigger == TRANSIENT || (trigger == null && rebased)) return false;
+        }
         if (trigger != null) {
             // Persisted before anything else (D17 "Rewind"); every host on the chain stops, and a new one is restored
             // from the re-read chain when the user starts it again (M33B1-DES-4).
@@ -331,12 +357,29 @@ public final class Settlement {
         long t = o.tip.slot();
         // 1. A shallow inclusion the chain no longer shows: rolled back (its inputs stay reserved). Reported at its own
         //    inclusion slot, a tip the host already holds, so the event finalizes no other body (M33B1-CDX-6).
+        //    All are reported in ascending slot order at the lowest vanished slot, so no rollback's tip finalizes another
+        //    (M33B1-CDX-6). The inclusion evidence stays until the host's reply shows the body back to prepared; a reply of
+        //    deepRollback (the host held it final) is a chain rewind, persisted before anything is released (M33B1-CDX-26).
+        List<Entry> vanished = new ArrayList<>();
         for (Entry e : journal.entries()) {
             HostTable.Res r = table.lower(e.reservation());
-            if (r != null && r.st() == HostTable.St.shallow && o.inclusions.containsKey(e.txHash()) && o.inclusions.get(e.txHash()) == null) {
+            if (r != null && r.st() == HostTable.St.shallow && o.inclusions.containsKey(e.txHash()) && o.inclusions.get(e.txHash()) == null) vanished.add(e);
+        }
+        vanished.sort(Comparator.comparingLong(e -> table.lower(e.reservation()).slot()));
+        long lowest = vanished.isEmpty() ? 0 : table.lower(vanished.get(0).reservation()).slot();
+        for (Entry e : vanished) {
+            settle(e, "rolledBack", null, lowest);
+            if (table.deepRollback()) {
+                String why = "a final inclusion (" + e.label() + ") was rolled back";
+                journal.beginRewind(t, why);
+                rewind = why;
+                fence(why + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
+                return false;
+            }
+            if (fenced != null) return false;
+            HostTable.Res after = table.lower(e.reservation());
+            if (after != null && after.st() == HostTable.St.prepared) {
                 journal.update(e.reservation(), x -> x.withInclusion(null).withEvent("rolledBack@" + t));
-                settle(e, "rolledBack", null, r.slot());
-                if (fenced != null) return false;
             }
         }
         // 2. Newly seen inclusions, in slot order, each with its own slot as tip (ADR5-CDX-25).
@@ -412,15 +455,20 @@ public final class Settlement {
         }
         long tip = t.slot();
         for (Entry e : entries) {
-            if (e.inclusion() != null && (e.inclusion().slot() > tip || tip - e.inclusion().slot() <= margin)) {
+            // Below a recorded inclusion, or back inside a final inclusion's margin (a shallow one's margin is open anyway).
+            if (e.inclusion() != null && (e.inclusion().slot() > tip
+                    || (e.state() == State.confirmed && tip - e.inclusion().slot() <= margin))) {
                 return "the chain went back to slot " + tip + ", across a recorded inclusion";
             }
             if (e.state() == State.expired && e.validTo() > tip) return "the chain went back to slot " + tip + ", where an expired body can land again";
         }
         if (lastNow.getAsLong() - tip > TimePolicy.MAX_NOW_AHEAD) return "the chain went back to slot " + tip + ", far below the session's now";
         highest = t;   // a lower tip that touches nothing: the new baseline (I31: the journal and the mark are kept)
+        rebased = true;
         return null;
     }
+
+    private boolean rebased;
 
     private boolean lower(ChainView.Tip t) {
         return highest != null && (t.slot() < highest.slot() || t.height() < highest.height()
@@ -495,12 +543,23 @@ public final class Settlement {
         if (lo.st() != HostTable.St.prepared || up == null || up.st() != HostTable.St.prepared) {
             throw new ChainJournal.Fenced("only a prepared body can be discarded");
         }
+        // Only a body this host built in this session, on intact history (a restored or missing entry was handed out;
+        // M33B1-CDX-27); and after a settlement pass, so the event's tip expires no body that landed (M33B1-CDX-28).
+        if (!builtHere.contains(reservation)) throw new ChainJournal.Fenced("only a body prepared in this session is discarded (I30)");
+        // (After a failed write of this session's own, the history reads incomplete for that reason alone: the body is
+        // this session's and was never journaled, so the recovery discard goes ahead.)
+        if (!deferJournal && !journal.intact()) throw new ChainJournal.Fenced("IntelliAda's journal for this chain is incomplete; nothing is discarded");
+        if (!deferJournal && !poll()) throw new ChainJournal.Fenced("the chain kept moving; the body was not discarded. Try again");
         long tip = highest != null ? highest.slot() : chain.tip().slot();
         if (!settle(reservation, lo.txHash(), "discarded", null, tip)) {
             throw new ChainJournal.Fenced("the dev host did not discard the body as expected; it was stopped");
         }
+        builtHere.remove(reservation);
         if (e != null && !deferJournal) journal.remove(Set.of(reservation));
     }
+
+    /** Reservations this host prepared in this session (never restored): the only ones discard may release. */
+    private final Set<String> builtHere = new HashSet<>();
 
     private static String describe(HostTable.Outcome o) {
         return o.state() != null ? o.state().name() : o.error();
@@ -508,8 +567,11 @@ public final class Settlement {
 
     // ---- inside a call ------------------------------------------------------------------------------------------------
 
+    private final java.util.concurrent.atomic.AtomicLong callEpoch = new java.util.concurrent.atomic.AtomicLong();
+
     /** Starts a forward call's bookkeeping. */
     public synchronized void beginCall() {
+        callEpoch.incrementAndGet();
         callTips.clear();
     }
 
@@ -520,7 +582,10 @@ public final class Settlement {
      */
     public HostSession.Reads guard(HostSession.Reads delegate) {
         return (id, params) -> {
+            // The call this read belongs to (M33B1-CDX-24): an answer that returns after its call ended is charged to none.
+            long epoch = callEpoch.get();
             ObjectNode a = delegate.read(id, params);
+            if (callEpoch.get() != epoch) return a;
             String kind = params.path("kind").textValue();
             JsonNode tip = a.path("tip").path("slot");
             if (kind == null || !tip.isIntegralNumber()) return a;
@@ -535,13 +600,13 @@ public final class Settlement {
                     f.putObject("failed").put("message", "a transaction landed and its settlement is not reported yet (" + landed
                             + "); try again in a moment");
                     synchronized (this) {
-                        callTips.add(new ReadTip(kind, "failed", t, false));
+                        if (callEpoch.get() == epoch) callTips.add(new ReadTip(kind, "failed", t, false));
                     }
                     return f;
                 }
             }
             synchronized (this) {
-                callTips.add(new ReadTip(kind, outcome, t, a.has("more")));
+                if (callEpoch.get() == epoch) callTips.add(new ReadTip(kind, outcome, t, a.has("more")));
             }
             return a;
         };
@@ -557,6 +622,13 @@ public final class Settlement {
         for (HostTable.Res r : table.lowerAll()) {
             boolean told = !unreported.contains(r.id());
             if (!told && t - r.to() > margin) return r.txHash().substring(0, 16) + "…";
+            // A shallow body this tip would finalize must still be where IntelliAda recorded it (M33B1-CDX-25): a rollback
+            // is reported first.
+            if (r.st() == HostTable.St.shallow && t - r.slot() > margin) {
+                Inclusion in = chain.inclusion(r.txHash());
+                if (in == null || in.slot() != r.slot()) return r.txHash().substring(0, 16) + "… (rolled back)";
+                continue;
+            }
             if (r.st() != HostTable.St.prepared || t - r.to() <= margin) continue;
             Inclusion in = chain.inclusion(r.txHash());
             if (in != null && in.slot() >= r.from() && in.slot() < r.to() && in.slot() <= t) return r.txHash().substring(0, 16) + "…";
@@ -592,6 +664,7 @@ public final class Settlement {
             else table.uncertain(r.tip());
         }
         callTips.clear();
+        callEpoch.incrementAndGet();   // late answers of this call are charged to no other
         if (error == null && result != null && (method.equals("prepare") || method.equals("publish"))) {
             JsonNode p = result.path("prepared");
             if (p.isObject()) {
@@ -614,8 +687,12 @@ public final class Settlement {
                         why = "its prepared transaction's hash or validity differs from what it stated";
                     }
                 }
+                if (why == null && table.lower(id) != null) why = "it reused reservation id " + id;   // M33B1-CDX-29
                 if (why != null) fence(why);
-                else table.committed(id, b.txHash(), b.validFrom(), b.validTo());
+                else {
+                    table.committed(id, b.txHash(), b.validFrom(), b.validTo());
+                    builtHere.add(id);
+                }
             }
         }
     }
@@ -630,6 +707,9 @@ public final class Settlement {
      */
     public synchronized void complete(String method, @Nullable JsonNode result, @Nullable String error) throws Exception {
         endCall(method, result, error);
+        boolean build = error == null && result != null && (method.equals("prepare") || method.equals("publish"));
+        // A body the model refused (another hash, validity or a reused id) is never exposed (M33B1-CDX-33).
+        if (build && fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);
         try {
             sync();
             syncPending = false;
@@ -671,6 +751,10 @@ public final class Settlement {
         for (Entry j : journal.entries()) {
             HostTable.Res r = table.lower(j.reservation());
             if (r == null) continue;
+            if (!r.txHash().equals(j.txHash())) {
+                fence("its reservation " + j.reservation() + " holds another body than IntelliAda journaled");
+                throw new ChainJournal.Fenced("the dev host's reservation " + j.reservation() + " holds another body; it was stopped");
+            }
             State js = State.valueOf(r.st().name());
             if (js != j.state() || !java.util.Objects.equals(r.slot(), j.slot())) {
                 journal.update(j.reservation(), y -> y.withState(js, r.slot()).withEvent("read tip -> " + js));

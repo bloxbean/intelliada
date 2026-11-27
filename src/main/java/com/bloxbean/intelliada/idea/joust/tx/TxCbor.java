@@ -361,13 +361,16 @@ public final class TxCbor {
                 case 0, 1 -> {
                 }
                 case 2, 3 -> {
+                    // Text is valid UTF-8, each chunk on its own as CBOR requires (M33B1-CDX-32).
                     if (!h.indefinite) {
-                        take(h.value);
+                        byte[] v = take(h.value);
+                        if (h.major == 3) utf8(v);
                     } else {
                         while (!peekBreak()) {
                             Head c = head();
                             if (c.major != h.major || c.indefinite) throw new Malformed("a string chunk of another type");
-                            take(c.value);
+                            byte[] v = take(c.value);
+                            if (h.major == 3) utf8(v);
                         }
                         pos++;
                     }
@@ -384,8 +387,19 @@ public final class TxCbor {
                 }
                 case 6 -> skip(depth + 1);
                 case 7 -> {
+                    // A one-byte simple value below 32 is not well-formed (M33B1-CDX-32).
+                    if (h.ai == 24 && h.value < 32) throw new Malformed("a malformed simple value");
                 }
                 default -> throw new Malformed("an unknown major type");
+            }
+        }
+
+        private static void utf8(byte[] v) throws Malformed {
+            try {
+                java.nio.charset.StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(v));
+            } catch (java.nio.charset.CharacterCodingException e) {
+                throw new Malformed("a text string is not UTF-8");
             }
         }
     }

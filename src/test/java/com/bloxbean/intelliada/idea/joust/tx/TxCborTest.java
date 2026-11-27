@@ -238,4 +238,17 @@ public class TxCborTest {
         assertEquals(20_000, TxCbor.body(TxCbor.transaction(tx(body))).requiredSigners().size());
         assertTrue("linear", System.nanoTime() - t0 < 2_000_000_000L);
     }
+
+    /** M33B1-CDX-32: skipped items are well-formed: no one-byte simple value below 32, text is UTF-8. */
+    @Test
+    public void skippedItemsAreWellFormed() {
+        for (String aux : new String[]{"f815", "61ff"}) {
+            try {
+                TxCbor.body(TxCbor.transaction("84" + body() + "a0" + "f5" + aux));
+                fail("auxiliary data " + aux);
+            } catch (TxCbor.Malformed expected) {
+                // refused
+            }
+        }
+    }
 }
