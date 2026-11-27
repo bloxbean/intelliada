@@ -1800,4 +1800,48 @@ public class ChainJournalTest {
         a.update("1", e -> e.withEvent("second try"));
         assertTrue(a.entries().get(0).events().contains("second try"));
     }
+
+    // ---- round 21 (M33B1-CDX-139, -140) --------------------------------------------------------------------------------
+
+    /** CDX-139: a retry that fails before its rename keeps the owner's known failed write. */
+    @Test
+    public void aPreRenameRetryKeepsTheKnownFailedWrite() throws Exception {
+        JournalStore s = store();
+        ChainJournal a = j(s, MOD_A);
+        a.admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        s.failWritesForTests = p -> p.getFileName().toString().endsWith(".journal.json");
+        try {
+            a.update("1", e -> e.withEvent("first"));
+            fail("the journal write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failWritesForTests = p -> true;   // the whole outage: the retry fails before its record rename
+        try {
+            a.update("1", e -> e.withEvent("second"));
+            fail("the retry was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failWritesForTests = p -> false;
+        a.update("1", e -> e.withEvent("third"));
+        assertTrue(a.entries().get(0).events().contains("third"));
+    }
+
+    /** CDX-140: a newly lost journal is fenced at its mark, never at a lower recovered bound. */
+    @Test
+    public void aLostJournalIsFencedAtItsMarkFirst() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(k, MOD_A));
+        j(s, MOD_B).open(0);
+        assertTrue(j(s, MOD_B).observed(561));
+        long recovered = s.record(k).value().recovered();
+        j(s, MOD_B).admit(submitted("2", tx(List.of(ref(3, 0)), 5000)), 600, 600);   // the mark rises above the bound
+        long mark = s.record(k).value().mark();
+        assertTrue(mark > recovered);
+        Files.delete(s.journalFile(k, MOD_B));
+        j(s, MOD_A).observed(recovered - 1);
+        assertEquals("fenced at the mark", mark, s.record(k).value().fence().until());
+    }
 }

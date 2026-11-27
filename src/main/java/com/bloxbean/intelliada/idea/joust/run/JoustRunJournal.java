@@ -198,6 +198,7 @@ public final class JoustRunJournal implements AutoCloseable {
     /** {@code tip}: the chain's tip as read for this call (−1 unknown), apart from the host's monotone {@code now}. */
     void beforeCall(String method, long now, long tip) throws Exception {
         lastNow.accumulateAndGet(now, Math::max);
+        settlement.resetPassTip();
         if (mustSettleFirst(journal.entries(), settlement.pollNeeded())) {
             if (!settlement.poll()) {
                 String why = settlement.fenced() != null ? "the dev host was stopped: " + settlement.fenced()
@@ -216,6 +217,9 @@ public final class JoustRunJournal implements AutoCloseable {
         // A chain back at or below where lost history was recovered, by the tip read for this call, not the host's
         // clock (M33B1-CDX-126): opening or admission there would refuse too.
         Long recovered = settlement.lastRecovered();
+        // The lowest tip this call saw: its own read, and any settlement pass it ran (M33B1-CDX-137).
+        long pass = settlement.passTip();
+        if (pass >= 0) tip = tip < 0 ? pass : Math.min(tip, pass);
         if (build && recovered != null && tip >= 0 && tip <= recovered) {
             throw new ChainJournal.Fenced("the chain is back at slot " + tip + ", at or below where IntelliAda recovered lost history (slot "
                     + recovered + "); stop the dev host and start it again");

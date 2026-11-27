@@ -247,6 +247,17 @@ public final class Settlement {
     /** Whether this host has read the chain's record (a new chain has none until its first write; M33B1-CDX-101). */
     private boolean recordSeen;
 
+    /** The lowest tip a settlement pass checked since {@link #resetPassTip} (−1: none; M33B1-CDX-137). */
+    private volatile long passTip = -1;
+
+    public void resetPassTip() {
+        passTip = -1;
+    }
+
+    public long passTip() {
+        return passTip;
+    }
+
     /** The fence the last {@link #rewindMissed} snapshot showed, or null (M33B1-CDX-116). */
     private volatile JournalStore.@Nullable Fence lastFence;
 
@@ -460,6 +471,7 @@ public final class Settlement {
             return true;
         }
         Observation o = observe(entries);
+        if (o != null) passTip = passTip < 0 ? o.tip.slot() : Math.min(passTip, o.tip.slot());
         if (o == null) return false;   // no chain point held: the next pass reads again
         chainCheck.run();
         rebased = false;
@@ -1030,10 +1042,31 @@ public final class Settlement {
                 throw new ChainJournal.Fenced("the bound chain changed; the dev host was stopped");
             }
         }
+        // The lowest tip the host's own reads in this call answered at (M33B1-CDX-138).
+        long lowRead = callTips.stream().filter(r -> (call < 0 || r.call() == call) && advancing(r.kind(), r.outcome()))
+                .mapToLong(ReadTip::tip).min().orElse(-1);
         endCall(method, result, error, call);
         boolean build = error == null && result != null && (method.equals("prepare") || method.equals("publish"));
         // A body the model refused (another hash, validity or a reused id) is never exposed (M33B1-CDX-33).
         if (build && fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);
+        // A body built while the host's reads saw the chain at or below where lost history was recovered is never
+        // exposed (M33B1-CDX-138): the fence is put back by that observation, and the unsigned reservation discarded.
+        if (build && lowRead >= 0) {
+            JournalStore.ChainRecord rec = journal.record();
+            if (rec != null && rec.recovered() != null && lowRead <= rec.recovered()) {
+                journal.observed(lowRead);
+                String id = result.path("prepared").path("reservation").textValue();
+                if (id != null && table.lower(id) != null) {
+                    try {
+                        discard(id);
+                    } catch (Exception notDiscarded) {
+                        fence("a body was built below where IntelliAda recovered lost history, and could not be discarded");
+                    }
+                }
+                throw new ChainJournal.Fenced("the chain is back at slot " + lowRead + ", at or below where IntelliAda recovered lost history (slot "
+                        + rec.recovered() + "); the prepared body was discarded");
+            }
+        }
         try {
             sync();
             syncPending = false;

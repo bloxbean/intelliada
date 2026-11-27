@@ -316,7 +316,9 @@ public final class JournalStore {
             real = Path.of(identity()).resolve(root.relativize(dir.toAbsolutePath().normalize()));
         }
         // Every chain whose rename it holds, until one successful sync covers them all (M33B1-CDX-134).
-        UNSYNCED.computeIfAbsent(real, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(chain == null ? "" : chain);
+        synchronized (UNSYNCED) {   // adding, forcing and clearing are serialized (M33B1-CDX-141)
+            UNSYNCED.computeIfAbsent(real, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(chain == null ? "" : chain);
+        }
     }
 
     /** The chain a store directory belongs to ({@code chains/<key>/...}), or null for a shared one. */
@@ -332,11 +334,16 @@ public final class JournalStore {
             // This store's, and this chain's or shared (M33B1-CDX-128, -130).
             if (!d.startsWith(me) || !(en.getValue().contains("") || en.getValue().contains(chainKey))) continue;
             try {
-                if (failSyncsForTests) throw new IOException("a test's sync failure");
-                forceDir(d);
-                UNSYNCED.remove(d);
+                // A rename recorded after this force would be cleared by it: serialized (M33B1-CDX-141).
+                synchronized (UNSYNCED) {
+                    if (failSyncsForTests) throw new IOException("a test's sync failure");
+                    forceDir(d);
+                    UNSYNCED.remove(d);
+                }
             } catch (NoSuchFileException gone) {
-                UNSYNCED.remove(d);
+                synchronized (UNSYNCED) {
+                    UNSYNCED.remove(d);
+                }
             } catch (IOException e) {
                 throw new StoreFailed("a journal directory cannot be made durable (" + e.getClass().getSimpleName() + ")", e);
             }

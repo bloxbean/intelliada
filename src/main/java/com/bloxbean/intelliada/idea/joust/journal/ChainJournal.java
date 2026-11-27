@@ -712,7 +712,14 @@ public final class ChainJournal {
             PENDING_REGISTRY.remove(unsavedKey(), entry);
             store.writeJournal(new ModuleJournal(chain, module, revision, entries));
         } catch (StoreFailed failed) {
-            failedAt = revision;   // the record holds this revision; the journal stays at lastWritten (a known failed write)
+            // Only a revision the record now holds is this owner's known failed write (M33B1-CDX-139): a retry that failed
+            // before its rename keeps the earlier one.
+            try {
+                ChainRecord now = store.record(chainKey).value();
+                if (now != null && now.modules().getOrDefault(module, -1L) == revision) failedAt = revision;
+            } catch (StoreFailed unreadable) {
+                // the earlier failedAt stands
+            }
             throw failed;
         }
         lastWritten = revision;
@@ -976,15 +983,15 @@ public final class ChainJournal {
             }
             ChainRecord c = f.record();
             if (c == null) return false;
-            // Back at or below where lost history was recovered (M33B1-CDX-132): fenced again, as an open there would be.
-            if (c.recovered() != null && tip <= c.recovered() && c.fence() == null) {
-                persist(f, c.withFence(new Fence(c.recovered(), "the chain is back below where IntelliAda recovered lost history")));
-                return false;
-            }
             // Newly lost journals: a fence covering the current mark first (M33B1-CDX-54); an older, lower fence never
             // releases them.
             if (now.kind() == Kind.LOST_JOURNALS && c.mark() != null && (c.fence() == null || c.fence().until() < c.mark())) {
                 persist(f, c.withFence(new Fence(c.mark(), now.why())));
+                return false;
+            }
+            // Back at or below where lost history was recovered (M33B1-CDX-132), after a lost journal's fence over the mark (-140): fenced again, as an open there would be.
+            if (c.recovered() != null && tip <= c.recovered() && c.fence() == null) {
+                persist(f, c.withFence(new Fence(c.recovered(), "the chain is back below where IntelliAda recovered lost history")));
                 return false;
             }
             if (c.fence() != null && tip > c.fence().until()) {

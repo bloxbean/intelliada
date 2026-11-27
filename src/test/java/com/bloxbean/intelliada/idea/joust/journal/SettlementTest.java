@@ -1377,4 +1377,33 @@ public class SettlementTest {
         assertFalse("a fence alone does not stop the host", s.rewindMissed());
         assertEquals(9000, s.lastFence().until());
     }
+
+    // ---- round 21 (M33B1-CDX-138) -------------------------------------------------------------------------------------
+
+    /** CDX-138: a body built while the host's reads saw the chain below the recovered bound is discarded, never exposed. */
+    @Test
+    public void aBodyBuiltBelowTheRecoveredBoundIsDiscarded() throws Exception {
+        chain.at(1990);
+        Settlement s = restored(List.of(), List.of());
+        String k = JournalStore.key(CHAIN);
+        JournalStore.ChainRecord c = store.record(k) .value();
+        if (c == null) {
+            new ChainJournal(store, CHAIN, JournalStore.key("/work/b"), 60).admit(submitted("x", tx(List.of(ref(9)), 2400)), 1990, 1990);
+            c = store.record(k).value();
+        }
+        store.writeRecord(c.withRecovered(1980L));
+        store.writeRegistry(new JournalStore.RegistryEntry(CHAIN, 1990, 1990, c.generation()));
+        s.beginCall();
+        read(s, "utxos", "value", 1970, false);
+        chain.at(1970);   // the chain as the host's read saw it (the discard's own pass observes it too)
+        host.answer("discarded");
+        try {
+            s.complete("prepare", prepared("2", tx(List.of(ref(2)), 2025)), null);
+            fail("exposed a body built below the recovered bound");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("recovered lost history"));
+        }
+        assertTrue(host.calls.get(host.calls.size() - 1).startsWith("settled discarded"));
+        assertNotNull("fenced again", store.record(k).value().fence());
+    }
 }
