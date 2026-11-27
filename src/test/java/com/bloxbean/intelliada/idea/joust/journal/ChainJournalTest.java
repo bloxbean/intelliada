@@ -1018,4 +1018,101 @@ public class ChainJournalTest {
         j(s, MOD_B).admit(submitted("1", tx(List.of(ref(3, 0)), 700)), 100, 100);
         assertTrue("the base kept: " + s.registry(k).value().highestTip(), s.registry(k).value().highestTip() >= 57_060);
     }
+
+    // ---- round 7 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-46, -61: a final body still journaled holds its inputs, whatever tip the admission saw. */
+    @Test
+    public void aFinalBodyStillJournaledHoldsItsInputs() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.confirmed, 490L).withInclusion(new JournalStore.Inclusion(490, 490, "11".repeat(32))));
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 600, 600);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("reserved"));
+        }
+    }
+
+    /** CDX-56: the same evidence seen again keeps the rewind's id; new evidence renews it. */
+    @Test
+    public void aRewindRenewsOnlyOnNewEvidence() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 900)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        JournalStore.Inclusion i = new JournalStore.Inclusion(450, 450, "11".repeat(32));
+        j(s, MOD_A).update("2", e -> e.withState(JournalStore.State.confirmed, 450L).withInclusion(i));
+        String h2 = Bodies.hash(tx(List.of(ref(2, 0)), 900));
+        j(s, MOD_B).open(() -> 480, h -> i);   // only the expired body's validity (480 < 500)
+        String first = j(s, MOD_B).record().rewind().id();
+        j(s, MOD_B).open(() -> 480, h -> i);
+        assertEquals("the same evidence keeps the id", first, j(s, MOD_B).record().rewind().id());
+        j(s, MOD_B).open(() -> 480, h -> h.equals(h2) ? null : i);   // and now the inclusion is gone
+        assertFalse("fork evidence renews it", first.equals(j(s, MOD_B).record().rewind().id()));
+    }
+
+    /** CDX-62: a rewind is never recorded over a record the registry proves stale. */
+    @Test
+    public void aRewindIsNotRecordedOverAStaleRecord() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        byte[] old = Files.readAllBytes(s.recordFile(k));
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+        Files.write(s.recordFile(k), old);
+        try {
+            j(s, MOD_A).beginRewind(0, "test");
+            fail("advanced a stale record");
+        } catch (JournalStore.StoreFailed expected) {
+            // refused: recover first
+        }
+        assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_A).open(0).history());
+    }
+
+    /** CDX-63: a module admitted again after removal never reuses a revision. */
+    @Test
+    public void revisionsAreNeverReused() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        long first = s.journal(k, MOD_A).value().generation();
+        Files.delete(s.journalFile(k, MOD_A));
+        j(s, MOD_B).open(0);
+        assertTrue(j(s, MOD_B).observed(561));
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 2000)), 562, 562);
+        assertTrue(s.journal(k, MOD_A).value().generation() > first);
+    }
+
+    /** CDX-66: a chain that only advanced while an open read its inclusions is not a rewind. */
+    @Test
+    public void aChainThatOnlyAdvancedIsNotARewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 390, 390);
+        JournalStore.Inclusion early = new JournalStore.Inclusion(395, 395, "11".repeat(32)), late = new JournalStore.Inclusion(410, 410, "22".repeat(32));
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.shallow, 395L).withInclusion(early));
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 900)), 390, 390);
+        String h2 = Bodies.hash(tx(List.of(ref(2, 0)), 900));
+        java.util.concurrent.atomic.AtomicLong tip = new java.util.concurrent.atomic.AtomicLong(400);
+        java.util.concurrent.atomic.AtomicBoolean once = new java.util.concurrent.atomic.AtomicBoolean();
+        ChainJournal.Opening o = j(s, MOD_B).open(tip::get, h -> {
+            if (once.compareAndSet(false, true)) {
+                tip.set(420);
+                j(s, MOD_A).update("2", e -> e.withState(JournalStore.State.shallow, 410L).withInclusion(late));
+            }
+            return h.equals(h2) ? late : early;
+        });
+        assertEquals(ChainJournal.History.COMPLETE, o.history());
+        assertNull(j(s, MOD_B).record().rewind());
+    }
+
+    /** CDX-67: a first rewind on a new chain creates the registry entry, so a restored older record is behind it. */
+    @Test
+    public void aFirstRewindCreatesTheRegistryEntry() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).beginRewind(100, "first");
+        assertTrue(s.registry(k).ok());
+    }
 }

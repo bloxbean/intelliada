@@ -198,25 +198,61 @@ public final class ChainJournal {
      * host ran is found even at a higher tip (M33B1-CDX-21).
      */
     public Opening open(long tipAtDetection, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
+        return open(() -> tipAtDetection, inclusions);
+    }
+
+    /** A chain point read now (each round of an open reads it again; M33B1-CDX-66). */
+    @FunctionalInterface
+    public interface Tip {
+        long slot() throws Exception;
+    }
+
+    /**
+     * As {@link #open(long, Inclusions)}, with the tip read afresh for each round, so a chain that only advanced while
+     * the inclusions were read is never taken for a rewind (M33B1-CDX-66).
+     */
+    public Opening open(Tip tip, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
+        long first;
+        try {
+            first = tip.slot();
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception unread) {
+            throw new StoreFailed("the node could not be read for IntelliAda's journal (" + unread.getClass().getSimpleName() + "); start again");
+        }
+        long tipAtDetection = first;
         // The retained inclusions are read before the chain lock is taken (M33B1-DES-14): the network never holds every
         // other module's admission and settlement. A failed read fails this open only; it is not evidence of a rewind.
         if (inclusions == null) return open0(tipAtDetection, null, null);
         Map<String, JournalStore.Inclusion> now = new LinkedHashMap<>();
-        // An inclusion recorded after the snapshot is read too before the open completes (M33B1-CDX-55): a few rounds,
-        // then the open fails ("start again") rather than certify evidence it never checked.
+        Map<String, JournalStore.Inclusion> readFor = new LinkedHashMap<>();   // the recorded inclusion each answer was read against
+        // An inclusion recorded after the snapshot, or recorded differently since it was read, is read (again) before the
+        // open completes (M33B1-CDX-55, -CDX-66): a few rounds, then the open fails ("start again").
         for (int round = 0; round < 4; round++) {
-            Set<String> wanted;
+            Map<String, JournalStore.Inclusion> recorded;
             try (var held = store.lock(chainKey)) {
                 Files f = load();
-                // Irreversible loss is persisted under this first lock, before any provider read (M33B1-CDX-58).
-                if (judge(f).kind() == Kind.BOTH_LOST) return new Opening(List.of(), false, null, PERMANENT, History.BOTH_LOST);
-                wanted = retainedInclusions(f);
+                // Irreversible loss, and a lost mark the registry already proves, are persisted under this first lock,
+                // before any provider read (M33B1-CDX-58, -CDX-65).
+                Classified k = judge(f);
+                if (k.kind() == Kind.BOTH_LOST) return new Opening(List.of(), false, null, PERMANENT, History.BOTH_LOST);
+                if (k.kind() == Kind.LOST_MARK) lostMark(f, tipAtDetection, k.why());
+                recorded = retainedInclusionMap(load());
             }
-            wanted.removeAll(now.keySet());
+            Set<String> wanted = new LinkedHashSet<>();
+            for (var r : recorded.entrySet()) if (!r.getValue().equals(readFor.get(r.getKey()))) wanted.add(r.getKey());
             if (wanted.isEmpty()) {
-                Opening o = open0(tipAtDetection, now, now.keySet());
+                Opening o = open0(tipAtDetection, now, recorded);
                 if (o != null) return o;
                 continue;
+            }
+            for (String h : wanted) readFor.put(h, recorded.get(h));
+            try {
+                tipAtDetection = Math.max(tipAtDetection, tip.slot());
+            } catch (InterruptedException e) {
+                throw e;
+            } catch (Exception unread) {
+                throw new StoreFailed("the node could not be read for IntelliAda's journal (" + unread.getClass().getSimpleName() + "); start again");
             }
             for (String h : wanted) {
                 try {
@@ -231,20 +267,20 @@ public final class ChainJournal {
         throw new StoreFailed("IntelliAda's journal kept changing while the session opened; start again");
     }
 
-    private static Set<String> retainedInclusions(Files f) {
-        Set<String> out = new LinkedHashSet<>();
+    private static Map<String, JournalStore.Inclusion> retainedInclusionMap(Files f) {
+        Map<String, JournalStore.Inclusion> out = new LinkedHashMap<>();
         for (var j : f.journals().values()) {
-            if (j.ok()) for (Entry e : j.value().entries()) if (e.inclusion() != null) out.add(e.txHash());
+            if (j.ok()) for (Entry e : j.value().entries()) if (e.inclusion() != null) out.put(e.txHash(), e.inclusion());
         }
         return out;
     }
 
-    /** The open under the lock; null when inclusions were recorded that {@code checked} does not cover (read them first). */
+    /** The open under the lock; null when the retained inclusions changed since {@code checked} was read (read them first). */
     private @Nullable Opening open0(long tipAtDetection, @Nullable Map<String, JournalStore.Inclusion> inclusions,
-                                    @Nullable Set<String> checked) throws StoreFailed, InterruptedException {
+                                    @Nullable Map<String, JournalStore.Inclusion> checked) throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
-            if (checked != null && !checked.containsAll(retainedInclusions(f))) return null;
+            if (checked != null && !checked.equals(retainedInclusionMap(f))) return null;
             Classified k = judge(f);   // both lost: persisted, so a restored backup cannot lift it (ADR5-SEC-19, ADR5-CDX-3)
             ChainRecord c = f.record();
             Loaded<ModuleJournal> mine = f.journals().getOrDefault(module, Loaded.missing());
@@ -273,20 +309,22 @@ public final class ChainJournal {
                     // (M33B1-CDX-37): any module's retained entry the tip (or the chain's present inclusions) reopens makes
                     // every module with entries reconcile again, under a new rewind id.
                     String touched = reopened(f, tipAtDetection, inclusions);
-                    // A rewind still being reconciled is renewed only on new evidence (M33B1-CDX-50): a lower point than it
-                    // records, or a module that already reconciled touched again.
-                    // A changed inclusion (fork evidence) always renews it, so no restore observed before the fork can
-                    // acknowledge it (M33B1-CDX-56); the same tip-based evidence seen again keeps its id.
-                    boolean renew = touched != null && (c.rewind() == null || tipAtDetection < c.rewind().tip()
-                            || touched.startsWith(FORK) || touchedOutside(f, tipAtDetection, inclusions, c.rewind().pending()));
+                    // Every piece of evidence the chain point gives, not only the first (M33B1-CDX-56). A rewind still being
+                    // reconciled is renewed only on evidence it has not recorded, or a lower point (M33B1-CDX-50): a restore
+                    // observed before a fork cannot acknowledge it, and the same evidence seen again keeps the id.
+                    Set<String> evidence = evidence(f, tipAtDetection, inclusions);
+                    boolean renew = !evidence.isEmpty() && (c.rewind() == null || tipAtDetection < c.rewind().tip()
+                            || !c.rewind().evidence().containsAll(evidence));
                     if (renew) {
                         Set<String> pending = pendingModules(f);
+                        Set<String> known = new LinkedHashSet<>(evidence);
                         long at = tipAtDetection;
                         if (c.rewind() != null) {
                             pending.addAll(c.rewind().pending());
+                            known.addAll(c.rewind().evidence());
                             at = Math.min(at, c.rewind().tip());
                         }
-                        c = c.withNewRewind(new Rewind(at, touched, pending, Rewind.newId()));
+                        c = c.withNewRewind(new Rewind(at, touched, pending, Rewind.newId(), known));
                         persist(f, c);
                     }
                     // Back at or below a recovered bound (M33B1-CDX-43): a lost journal's bodies may land again.
@@ -328,6 +366,22 @@ public final class ChainJournal {
     }
 
     static final String FORK = "the chain no longer shows a recorded inclusion";
+
+    /** Each entry's reopening evidence at {@code tip}, as {@code kind:txHash}. */
+    private Set<String> evidence(Files f, long tip, @Nullable Map<String, JournalStore.Inclusion> inclusions) {
+        Set<String> out = new java.util.TreeSet<>();
+        for (var j : f.journals().values()) {
+            if (!j.ok()) continue;
+            for (Entry e : j.value().entries()) {
+                if (e.inclusion() != null && inclusions != null && inclusions.containsKey(e.txHash())
+                        && !e.inclusion().equals(inclusions.get(e.txHash()))) out.add("fork:" + e.txHash() + ":" + e.inclusion().block());
+                if (e.inclusion() != null && e.inclusion().slot() > tip) out.add("below:" + e.txHash());
+                if (e.state() == JournalStore.State.confirmed && e.slot() != null && tip - e.slot() <= settlementSlots) out.add("margin:" + e.txHash());
+                if (e.state() == JournalStore.State.expired && e.validTo() > tip) out.add("valid:" + e.txHash());
+            }
+        }
+        return out;
+    }
 
     /** Whether a module outside {@code pending} holds an entry {@code tip} reopens. */
     private boolean touchedOutside(Files f, long tip, @Nullable Map<String, JournalStore.Inclusion> inclusions, Set<String> pending) {
@@ -479,7 +533,10 @@ public final class ChainJournal {
             long gen = Math.max(c == null ? 0 : c.generation(), reg == null ? 0 : reg.generation()) + 1;
             long mark = Math.max(c == null || c.mark() == null ? 0 : c.mark(), Math.addExact(e.validTo(), settlementSlots));
             Loaded<ModuleJournal> current = f.journals().getOrDefault(module, Loaded.missing());
-            long revision = Math.max(c == null ? 0 : c.modules().getOrDefault(module, 0L), current.ok() ? current.value().generation() : 0) + 1;
+            // Above the chain generation, so a module removed and admitted again never reuses a revision an old copy of
+            // its journal could match (M33B1-CDX-63).
+            long revision = Math.max(Math.max(c == null ? 0 : c.modules().getOrDefault(module, 0L), current.ok() ? current.value().generation() : 0),
+                    c == null ? 0 : c.generation()) + 1;
             Map<String, Long> modules = new LinkedHashMap<>(c == null ? Map.of() : c.modules());
             modules.put(module, revision);
             // The remembered recovery bound and the rewind count are kept (M33B1-CDX-43).
@@ -524,7 +581,7 @@ public final class ChainJournal {
         Kind kind = judge(f).kind();
         if (kind == Kind.LOST_MARK || kind == Kind.BOTH_LOST) throw new Fenced("the chain's history is incomplete; start the session again to recover");
         if (!store.fits(new ModuleJournal(chain, module, Math.max(held, have) + 1, entries))) throw new Fenced("this module's journal on the chain is full");
-        long revision = Math.max(c.modules().getOrDefault(module, 0L), j.ok() ? j.value().generation() : 0) + 1;
+        long revision = Math.max(Math.max(c.modules().getOrDefault(module, 0L), j.ok() ? j.value().generation() : 0), c.generation()) + 1;
         Map<String, Long> modules = new LinkedHashMap<>(c.modules());
         modules.put(module, revision);
         // The chain's generation rises with every write, in the record and then the registry entry, as at admission
@@ -560,11 +617,11 @@ public final class ChainJournal {
         for (var j : all.values()) {
             if (!j.ok()) continue;
             for (Entry x : j.value().entries()) {
-                // A final entry whose body the admission's chain point makes valid again (expired, validTo above the tip)
-                // or puts back above (an inclusion above the tip) still holds its inputs (M33B1-CDX-46).
-                boolean reopenedHere = (x.state() == JournalStore.State.expired && x.validTo() > tip)
-                        || (x.inclusion() != null && x.inclusion().slot() > tip);
-                if (!x.live() && !reopenedHere) continue;
+                // Every journaled body holds its inputs until it leaves the journal, final and expired ones included
+                // (M33B1-CDX-46, -61, -64): any of them a rewind could reopen, at whatever tip the admission saw. Only a
+                // discarded body (never handed out) releases them. The cost: an expired body's inputs wait out its
+                // retention before another body may spend them.
+                if (x.state() == JournalStore.State.discarded) continue;
                 TxCbor.Body b;
                 try {
                     b = x.body();
@@ -845,9 +902,18 @@ public final class ChainJournal {
      * forward under a fresh generation (M33B1-CDX-59).
      */
     private void persist(Files f, ChainRecord c) throws StoreFailed {
+        // A record the registry proves stale is never advanced past it (M33B1-CDX-62): the session must recover first.
+        Kind kind = classify(f).kind();
+        if (kind == Kind.LOST_MARK || kind == Kind.BOTH_LOST) {
+            throw new StoreFailed("the chain's history is incomplete; start the session again to recover");
+        }
         RegistryEntry reg = f.reg().value();
-        if (reg == null) {   // only on a path that classifies the registry as lost (lost-mark recovery rewrites both)
-            store.writeRecord(c);
+        if (reg == null) {
+            // A new chain's first record change (a rewind before any admission) gets its registry entry too, so a restored
+            // older record is behind it (M33B1-CDX-67).
+            long gen = c.generation() + 1;
+            store.writeRecord(c.with(c.mark(), c.modules(), gen, c.fence(), c.rewind(), c.registrations()));
+            store.writeRegistry(new RegistryEntry(chain, 0, 0, gen));
             return;
         }
         long gen = Math.max(c.generation(), reg.generation()) + 1;

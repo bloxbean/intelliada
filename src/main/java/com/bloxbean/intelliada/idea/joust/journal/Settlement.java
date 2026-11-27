@@ -407,6 +407,19 @@ public final class Settlement {
             }
         }
         landed.sort(Comparator.comparingLong(e -> e.inclusion().slot()));
+        // A body the host already holds expired that the chain shows included within its margin (M33B1-CDX-64): this
+        // host's table diverged; it is stopped, and the journal keeps the chain's evidence (shallow, inputs reserved).
+        for (Entry e : entries) {
+            HostTable.Res r = table.lower(e.reservation());
+            Inclusion in = o.inclusions.get(e.txHash());
+            if (r != null && r.st() == HostTable.St.expired && in != null && in.slot() >= r.from() && in.slot() < r.to()
+                    && in.slot() <= t && t - in.slot() <= margin) {
+                fence("it holds " + e.label() + " expired, which the chain shows included; start it again to restore it from IntelliAda's journal");
+                journal.update(e.reservation(), x -> x.withState(State.shallow, in.slot()).withInclusion(in)
+                        .withEvent("the host holds it expired; the chain shows it at " + in.slot()));
+                return false;
+            }
+        }
         for (Entry e : landed) {
             journal.update(e.reservation(), x -> x.withInclusion(e.inclusion()).withEvent("included@" + e.inclusion().slot()));
             recorded.put(e.reservation(), e.inclusion());
@@ -929,6 +942,7 @@ public final class Settlement {
     /** Writes the table's changed states to the journal (M33B1-CDX-9): accepted read tips advance reservations too. */
     public synchronized void sync() throws Exception {
         if (closed) return;   // a closed session writes nothing after its module lock is released (M33B1-SEC-8)
+        if (fenced != null) return;   // nor does a fenced host: its model is no longer trusted (M33B1-CDX-48)
         for (Entry j : journal.entries()) {
             HostTable.Res r = table.lower(j.reservation());
             if (r == null) continue;

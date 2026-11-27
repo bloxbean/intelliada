@@ -158,9 +158,14 @@ public final class JournalStore {
     }
 
     /** A rewind's outstanding reconciliation, persisted before any host is restarted (D17 "Rewind"). */
-    public record Rewind(long tip, String reason, Set<String> pending, String id) {
+    public record Rewind(long tip, String reason, Set<String> pending, String id, Set<String> evidence) {
         public Rewind {
             pending = Set.copyOf(pending);
+            evidence = Set.copyOf(evidence);
+        }
+
+        public Rewind(long tip, String reason, Set<String> pending, String id) {
+            this(tip, reason, pending, id, Set.of());
         }
 
         /** A new rewind's unique id (M33B1-CDX-5): a host acknowledges only the rewind it was restored after. */
@@ -477,7 +482,7 @@ public final class JournalStore {
             JsonNode r = n.get("rewind");
             if (r == null) throw new Bad();
             if (!r.isNull()) {
-                fields(r, "tip", "reason", "pending", "id");
+                fieldsOptional(r, Set.of("evidence"), "tip", "reason", "pending", "id", "evidence");
                 Set<String> pending = new LinkedHashSet<>();
                 JsonNode ps = r.get("pending");
                 if (!ps.isArray()) throw new Bad();
@@ -486,7 +491,16 @@ public final class JournalStore {
                 }
                 String id = text(r, "id");
                 if (!id.matches("[0-9a-f]{16}")) throw new Bad();
-                rewind = new Rewind(slot(r, "tip"), boundedText(r, "reason"), pending, id);
+                Set<String> evidence = new LinkedHashSet<>();
+                JsonNode ev = r.get("evidence");
+                if (ev != null) {
+                    if (!ev.isArray() || ev.size() > 4096) throw new Bad();
+                    for (JsonNode x : ev) {
+                        if (!x.isTextual() || x.textValue().length() > 200) throw new Bad();
+                        evidence.add(x.textValue());
+                    }
+                }
+                rewind = new Rewind(slot(r, "tip"), boundedText(r, "reason"), pending, id, evidence);
             }
             List<Registration> regs = new ArrayList<>();
             JsonNode rs = n.get("registrations");
@@ -583,6 +597,8 @@ public final class JournalStore {
             ObjectNode r = n.putObject("rewind").put("tip", c.rewind().tip()).put("reason", c.rewind().reason()).put("id", c.rewind().id());
             ArrayNode ps = r.putArray("pending");
             c.rewind().pending().stream().sorted().forEach(ps::add);
+            ArrayNode es = r.putArray("evidence");
+            c.rewind().evidence().stream().sorted().forEach(es::add);
         }
         if (c.recovered() == null) n.putNull("recovered");
         else n.put("recovered", c.recovered());

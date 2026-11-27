@@ -1055,4 +1055,20 @@ public class SettlementTest {
         s.beforeCall();
         assertEquals(State.expired, journal.entries().get(0).state());
     }
+
+    /** CDX-64: a body the host holds expired that the chain shows included within its margin stops the host. */
+    @Test
+    public void anExpiredBodyTheChainShowsIncludedStopsTheHost() throws Exception {
+        String a = tx(List.of(ref(1)), 500);
+        chain.at(400);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        read(s, "utxos", "value", 600, false);
+        s.complete("view", HostJson.object(), null);   // the host expires it
+        chain.include(hash(a), 490);   // a replacement branch shows it included
+        chain.at(510);
+        s.poll();
+        assertNotNull(fence.get());
+        assertEquals(State.shallow, journal.entries().get(0).state());
+    }
 }

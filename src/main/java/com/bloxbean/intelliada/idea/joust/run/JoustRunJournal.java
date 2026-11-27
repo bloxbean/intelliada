@@ -83,7 +83,7 @@ public final class JoustRunJournal implements AutoCloseable {
         try {
             ChainJournal j = new ChainJournal(s, chain, module, settlement);
             ProviderChain provider = new ProviderChain(b.api().copy(), Duration.ofSeconds(10));
-            ChainJournal.Opening o = j.open(provider.tip().slot(), provider::inclusion);
+            ChainJournal.Opening o = j.open(() -> provider.tip().slot(), provider::inclusion);
             return new JoustRunJournal(j, o, lock, b, settlement);
         } catch (Exception | Error e) {
             lock.close();
