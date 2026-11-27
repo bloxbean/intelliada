@@ -454,9 +454,16 @@ public final class JournalStore {
         }
     }
 
+    /** A rewind's evidence items the reader accepts: three per journaled entry, far above what any file limit lets in. */
+    static final int MAX_EVIDENCE = 1_000_000;
+
     public Loaded<ChainRecord> record(String chainKey) throws StoreFailed {
         JsonNode n = read(recordFile(chainKey));
         if (n == null) return Loaded.missing();
+        return parseRecord(n, chainKey);
+    }
+
+    private Loaded<ChainRecord> parseRecord(JsonNode n, String chainKey) {
         try {
             // Two fields are optional (a record written before them reads with their defaults; M33B1-CDX-52).
             fieldsOptional(n, Set.of("recovered", "rewinds"), "version", "chain", "mark", "modules", "generation", "fence", "rewind",
@@ -494,7 +501,7 @@ public final class JournalStore {
                 Set<String> evidence = new LinkedHashSet<>();
                 JsonNode ev = r.get("evidence");
                 if (ev != null) {
-                    if (!ev.isArray() || ev.size() > 4096) throw new Bad();
+                    if (!ev.isArray() || ev.size() > MAX_EVIDENCE) throw new Bad();
                     for (JsonNode x : ev) {
                         if (!x.isTextual() || x.textValue().length() > 200) throw new Bad();
                         evidence.add(x.textValue());
@@ -608,6 +615,13 @@ public final class JournalStore {
             ObjectNode o = rs.addObject().put("credential", g.credential()).put("txHash", g.txHash());
             if (g.slot() != null) o.put("slot", g.slot());
             else o.put("message", g.message());
+        }
+        // The record its reader would load, or nothing replaces the readable one (M33B1-CDX-70).
+        try {
+            JsonNode back = HostJson.MAPPER.readTree(HostJson.MAPPER.writeValueAsBytes(n));
+            if (!parseRecord(back, key(c.chain())).ok()) throw new StoreFailed("the chain record would not read back; it was not written");
+        } catch (IOException e) {
+            throw new StoreFailed("the chain record could not be serialized", e);
         }
         write(recordFile(key(c.chain())), n);
     }

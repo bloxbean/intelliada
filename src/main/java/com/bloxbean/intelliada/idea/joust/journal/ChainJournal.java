@@ -212,6 +212,10 @@ public final class ChainJournal {
      * the inclusions were read is never taken for a rewind (M33B1-CDX-66).
      */
     public Opening open(Tip tip, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
+        // Irreversible loss needs only local evidence: persisted before the first provider request (M33B1-CDX-71).
+        try (var held = store.lock(chainKey)) {
+            if (judge(load()).kind() == Kind.BOTH_LOST) return new Opening(List.of(), false, null, PERMANENT, History.BOTH_LOST);
+        }
         long first;
         try {
             first = tip.slot();
@@ -220,7 +224,8 @@ public final class ChainJournal {
         } catch (Exception unread) {
             throw new StoreFailed("the node could not be read for IntelliAda's journal (" + unread.getClass().getSimpleName() + "); start again");
         }
-        long tipAtDetection = first;
+        long tipAtDetection = first;   // the highest tip read: a loss bound's base
+        long latest = first;          // the latest, coherent with the last reads: whether anything reopened (M33B1-CDX-66)
         // The retained inclusions are read before the chain lock is taken (M33B1-DES-14): the network never holds every
         // other module's admission and settlement. A failed read fails this open only; it is not evidence of a rewind.
         if (inclusions == null) return open0(tipAtDetection, null, null);
@@ -242,13 +247,15 @@ public final class ChainJournal {
             Set<String> wanted = new LinkedHashSet<>();
             for (var r : recorded.entrySet()) if (!r.getValue().equals(readFor.get(r.getKey()))) wanted.add(r.getKey());
             if (wanted.isEmpty()) {
-                Opening o = open0(tipAtDetection, now, recorded);
+                Opening o = open0(latest, now, recorded);
                 if (o != null) return o;
                 continue;
             }
             for (String h : wanted) readFor.put(h, recorded.get(h));
             try {
-                tipAtDetection = Math.max(tipAtDetection, tip.slot());
+                long t = tip.slot();
+                tipAtDetection = Math.max(tipAtDetection, t);
+                latest = t;
             } catch (InterruptedException e) {
                 throw e;
             } catch (Exception unread) {
@@ -374,7 +381,12 @@ public final class ChainJournal {
             if (!j.ok()) continue;
             for (Entry e : j.value().entries()) {
                 if (e.inclusion() != null && inclusions != null && inclusions.containsKey(e.txHash())
-                        && !e.inclusion().equals(inclusions.get(e.txHash()))) out.add("fork:" + e.txHash() + ":" + e.inclusion().block());
+                        && !e.inclusion().equals(inclusions.get(e.txHash()))) {
+                    // The recorded block and what the chain shows now (another block, or absent): two different forks
+                    // never share one key (M33B1-CDX-56).
+                    JournalStore.Inclusion seen = inclusions.get(e.txHash());
+                    out.add("fork:" + e.txHash() + ":" + e.inclusion().block() + ">" + (seen == null ? "absent" : seen.block()));
+                }
                 if (e.inclusion() != null && e.inclusion().slot() > tip) out.add("below:" + e.txHash());
                 if (e.state() == JournalStore.State.confirmed && e.slot() != null && tip - e.slot() <= settlementSlots) out.add("margin:" + e.txHash());
                 if (e.state() == JournalStore.State.expired && e.validTo() > tip) out.add("valid:" + e.txHash());
@@ -580,8 +592,9 @@ public final class ChainJournal {
         if (!recovery && held != have && !ours) throw new Fenced("this module's journal is not current with its record; start the session again to recover");
         Kind kind = judge(f).kind();
         if (kind == Kind.LOST_MARK || kind == Kind.BOTH_LOST) throw new Fenced("the chain's history is incomplete; start the session again to recover");
-        if (!store.fits(new ModuleJournal(chain, module, Math.max(held, have) + 1, entries))) throw new Fenced("this module's journal on the chain is full");
-        long revision = Math.max(Math.max(c.modules().getOrDefault(module, 0L), j.ok() ? j.value().generation() : 0), c.generation()) + 1;
+        long next = Math.max(Math.max(held, have), c.generation()) + 1;
+        if (!store.fits(new ModuleJournal(chain, module, next, entries))) throw new Fenced("this module's journal on the chain is full");   // M33B1-CDX-74
+        long revision = next;
         Map<String, Long> modules = new LinkedHashMap<>(c.modules());
         modules.put(module, revision);
         // The chain's generation rises with every write, in the record and then the registry entry, as at admission
@@ -686,15 +699,23 @@ public final class ChainJournal {
 
     /**
      * Moves a journaled body's handout forward under the chain lock, on intact history with no fence or rewind
-     * (M33B1-CDX-45): approval pending to submitted or exported.
+     * (M33B1-CDX-45): approval pending to submitted or exported. {@code tip} is a chain point read now: at or below a
+     * recovered bound, nothing is handed out (M33B1-CDX-46).
      */
     public void handout(String reservation, JournalStore.Handout h) throws StoreFailed, Fenced, InterruptedException {
+        handout(reservation, h, Long.MAX_VALUE);
+    }
+
+    public void handout(String reservation, JournalStore.Handout h, long tip) throws StoreFailed, Fenced, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
             Kind k = judge(f).kind();
             ChainRecord c = f.record();
             if (k != Kind.INTACT || c == null || c.fence() != null || c.rewind() != null) {
                 throw new Fenced("the chain's history is not complete now; nothing is handed out");
+            }
+            if (c.recovered() != null && tip <= c.recovered()) {
+                throw new Fenced("the chain is back below where IntelliAda recovered lost history (slot " + c.recovered() + ")");
             }
             ModuleJournal j = mine();
             List<Entry> next = new ArrayList<>(j.entries());
@@ -714,7 +735,27 @@ public final class ChainJournal {
 
     /** Removes entries (a body declined before handout, or a final entry past its retention). */
     public void remove(Set<String> reservations) throws StoreFailed, Fenced, InterruptedException {
+        remove(reservations, -1);
+    }
+
+    /**
+     * As {@link #remove(Set)}, only under the chain's rewind count {@code rewindsSeen} and with no rewind open
+     * (M33B1-CDX-68): a pass that observed the chain before a rewind never prunes a body that rewind must restore.
+     * Returns false (nothing removed) otherwise.
+     */
+    public boolean remove(Set<String> reservations, long rewindsSeen) throws StoreFailed, Fenced, InterruptedException {
         try (var held = store.lock(chainKey)) {
+            if (rewindsSeen >= 0) {
+                ChainRecord c = store.record(chainKey).value();
+                if (c == null || c.rewind() != null || c.rewinds() != rewindsSeen) return false;
+            }
+            removeLocked(reservations);
+            return true;
+        }
+    }
+
+    private void removeLocked(Set<String> reservations) throws StoreFailed, Fenced {
+        {
             ModuleJournal j = mine();
             List<Entry> next = j.entries().stream().filter(e -> !reservations.contains(e.reservation())).toList();
             if (next.size() != j.entries().size()) writeMine(next, false);
@@ -887,8 +928,8 @@ public final class ChainJournal {
             if (c.rewind() == null || !c.rewind().id().equals(id) || !c.rewind().pending().contains(module)) return;
             Set<String> pending = new LinkedHashSet<>(c.rewind().pending());
             pending.remove(module);
-            persist(f, c.withRewind(pending.isEmpty() ? null
-                    : new Rewind(c.rewind().tip(), c.rewind().reason(), pending, c.rewind().id())));
+            persist(f, c.withRewind(pending.isEmpty() ? null   // the evidence stays with the rewind (M33B1-CDX-72)
+                    : new Rewind(c.rewind().tip(), c.rewind().reason(), pending, c.rewind().id(), c.rewind().evidence())));
         }
     }
 

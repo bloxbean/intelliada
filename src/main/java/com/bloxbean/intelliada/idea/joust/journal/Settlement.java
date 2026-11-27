@@ -149,6 +149,19 @@ public final class Settlement {
         onFence.accept(why);
     }
 
+    /**
+     * Fences the model at once, writes {@code evidence} while this session still owns the module, then stops the host
+     * (M33B1-CDX-69): the stop releases the module lock, so no successor runs before the last write.
+     */
+    private void fenceAfter(String why, ChainCheck evidence) throws Exception {
+        if (fenced == null) fenced = why;
+        try {
+            evidence.run();
+        } finally {
+            onFence.accept(fenced);
+        }
+    }
+
     // ---- restore ------------------------------------------------------------------------------------------------------
 
     /**
@@ -362,8 +375,10 @@ public final class Settlement {
             // from the re-read chain when the user starts it again (M33B1-DES-4).
             // Fenced first, then persisted (M33B1-SEC-11): a refused write never leaves a host running after a rewind.
             rewind = trigger;
-            fence(trigger + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
-            journal.beginRewind(o.tip.slot(), trigger);
+            long at = o.tip.slot();
+            String why = trigger;
+            fenceAfter(why + "; the dev host was stopped: start it again to restore it from IntelliAda's journal",
+                    () -> journal.beginRewind(at, why));
             return false;
         }
         if (highest == null || o.tip.slot() >= highest.slot()) highest = o.tip;
@@ -413,11 +428,14 @@ public final class Settlement {
         for (Entry e : entries) {
             HostTable.Res r = table.lower(e.reservation());
             Inclusion in = o.inclusions.get(e.txHash());
-            if (r != null && r.st() == HostTable.St.expired && in != null && in.slot() >= r.from() && in.slot() < r.to()
-                    && in.slot() <= t && t - in.slot() <= margin) {
-                fence("it holds " + e.label() + " expired, which the chain shows included; start it again to restore it from IntelliAda's journal");
-                journal.update(e.reservation(), x -> x.withState(State.shallow, in.slot()).withInclusion(in)
-                        .withEvent("the host holds it expired; the chain shows it at " + in.slot()));
+            long from = e.validFrom() == null ? 0 : e.validFrom();
+            // Held expired by the host, or retained expired in the journal with no host row (a restore kept it final;
+            // M33B1-CDX-64): either way the chain shows it included within its margin.
+            boolean expiredHere = r != null ? r.st() == HostTable.St.expired : e.state() == State.expired;
+            if (expiredHere && in != null && in.slot() >= from && in.slot() < e.validTo() && in.slot() <= t && t - in.slot() <= margin) {
+                fenceAfter("it holds " + e.label() + " expired, which the chain shows included; start it again to restore it from IntelliAda's journal",
+                        () -> journal.update(e.reservation(), x -> x.withState(State.shallow, in.slot()).withInclusion(in)
+                                .withEvent("the chain shows it at " + in.slot() + " though it was expired")));
                 return false;
             }
         }
@@ -439,9 +457,9 @@ public final class Settlement {
                 long slot = e.inclusion().slot();
                 // The host is fenced first, then the journal written (M33B1-SEC-10): a failed write never leaves a host
                 // with a table known to diverge.
-                fence("it expired " + e.label() + ", which the chain shows included; start it again to restore it from IntelliAda's journal");
-                journal.update(e.reservation(), x -> x.withState(State.shallow, slot).withInclusion(e.inclusion())
-                        .withEvent("the host expired it; the chain shows it at " + slot));
+                fenceAfter("it expired " + e.label() + ", which the chain shows included; start it again to restore it from IntelliAda's journal",
+                        () -> journal.update(e.reservation(), x -> x.withState(State.shallow, slot).withInclusion(e.inclusion())
+                                .withEvent("the host expired it; the chain shows it at " + slot)));
                 return false;
             }
             publish(e.reservation(), "confirmed@" + e.inclusion().slot() + " tip " + e.inclusion().slot());
@@ -457,7 +475,7 @@ public final class Settlement {
         // 4. Final entries past their retention leave the journal.
         Set<String> drop = new HashSet<>();
         for (Entry e : journal.entries()) if (journal.retentionOver(e, t)) drop.add(e.reservation());
-        if (!drop.isEmpty()) journal.remove(drop);
+        if (!drop.isEmpty()) journal.remove(drop, rewindsSeen);   // never under a newer rewind (M33B1-CDX-68)
         // 5. Fences that this tip passes, and a restore held open by one.
         if (restoreOpen && (completeAbove == null || t > completeAbove)) {
             restoreBatch(List.of(), true);
@@ -595,8 +613,8 @@ public final class Settlement {
             // A final inclusion rolled back is a chain rewind, persisted before any releasing state is (M33B1-CDX-26), and
             // the host fenced before that write (M33B1-SEC-11).
             rewind = "a final inclusion was rolled back";
-            fence(rewind + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
-            journal.beginRewind(tip, "a final inclusion was rolled back");
+            fenceAfter(rewind + "; the dev host was stopped: start it again to restore it from IntelliAda's journal",
+                    () -> journal.beginRewind(tip, "a final inclusion was rolled back"));
         }
         if (deferJournal) syncPending = true;   // the model holds the states; the journal takes them at the next successful write
         return true;
@@ -662,7 +680,8 @@ public final class Settlement {
                 || up.st() != HostTable.St.prepared || !lo.txHash().equals(e.txHash())) {
             throw new ChainJournal.Fenced("only a body this dev host prepared in this session, and still holds prepared, is handed out");
         }
-        journal.admit(e, tip, now, rewindsSeen);
+        // The lower of the prepare's tip and one read now (M33B1-CDX-46): a rewind since the prepare is seen.
+        journal.admit(e, Math.min(tip, chain.tip().slot()), now, rewindsSeen);
         if (e.handout() != Handout.approvalPending) builtHere.remove(e.reservation());
     }
 
@@ -682,7 +701,7 @@ public final class Settlement {
         for (Entry x : journal.entries()) if (x.reservation().equals(reservation)) cur = x;
         if (cur == null || cur.state() != State.prepared) throw new ChainJournal.Fenced("the journaled body is not prepared");
         // Under the chain lock, on intact history with no fence or rewind (M33B1-CDX-45).
-        journal.handout(reservation, h);
+        journal.handout(reservation, h, chain.tip().slot());
         builtHere.remove(reservation);
     }
 

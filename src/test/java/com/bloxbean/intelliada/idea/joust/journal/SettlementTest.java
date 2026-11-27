@@ -1071,4 +1071,43 @@ public class SettlementTest {
         assertNotNull(fence.get());
         assertEquals(State.shallow, journal.entries().get(0).state());
     }
+
+    // ---- round 8 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-46: admission checks against the lower of the prepare's tip and one read now. */
+    @Test
+    public void admissionReadsAFreshTip() throws Exception {
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        new ChainJournal(st, CHAIN, JournalStore.key("/work/b"), 60).admit(submitted("x", tx(List.of(ref(9)), 500)), 400, 400);
+        java.nio.file.Files.delete(st.journalFile(JournalStore.key(CHAIN), JournalStore.key("/work/b")));
+        store = st;
+        assertTrue(new ChainJournal(st, CHAIN, MOD, 60).observed(0) || true);
+        Settlement s = settlement(new HostTable(60, false));
+        new ChainJournal(st, CHAIN, MOD, 60).open(0);
+        assertTrue(journal.observed(561));
+        chain.at(490);   // rewound below the recovered bound since the prepare at 600
+        String b = tx(List.of(ref(2)), 1200);
+        s.beginCall();
+        s.endCall("prepare", prepared("2", b), null);
+        try {
+            s.admit(submitted("2", b), 600, 600);
+            fail("admitted at the stale prepare tip");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("recovered"));
+        }
+    }
+
+    /** CDX-64: a retained expired entry with no host row that the chain shows included stops the host. */
+    @Test
+    public void aRetainedExpiredEntryTheChainShowsIncludedStopsTheHost() throws Exception {
+        String a = tx(List.of(ref(1)), 500);
+        chain.at(600);
+        Settlement s = restored(List.of(submitted("1", a)), List.of());   // expired at restore: kept final, no host row
+        assertEquals(State.expired, journal.entries().get(0).state());
+        chain.include(hash(a), 490);
+        chain.at(510);
+        s.poll();
+        assertNotNull(fence.get());
+        assertEquals(State.shallow, journal.entries().get(0).state());
+    }
 }

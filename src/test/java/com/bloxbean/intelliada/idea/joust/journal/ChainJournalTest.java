@@ -1115,4 +1115,89 @@ public class ChainJournalTest {
         j(s, MOD_A).beginRewind(100, "first");
         assertTrue(s.registry(k).ok());
     }
+
+    // ---- round 8 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-56: a fork into another block and one into absence are different evidence. */
+    @Test
+    public void twoForksAreDifferentEvidence() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        JournalStore.Inclusion x = new JournalStore.Inclusion(450, 450, "11".repeat(32)), y = new JournalStore.Inclusion(450, 450, "22".repeat(32));
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.confirmed, 450L).withInclusion(x));
+        j(s, MOD_B).open(() -> 600, h -> y);
+        String first = j(s, MOD_B).record().rewind().id();
+        j(s, MOD_B).open(() -> 600, h -> null);
+        assertFalse(first.equals(j(s, MOD_B).record().rewind().id()));
+    }
+
+    /** CDX-66: a lower tip read during the open's rounds decides reopening. */
+    @Test
+    public void aLowerTipReadDuringOpenDecides() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 0, 0);
+        JournalStore.Inclusion i = new JournalStore.Inclusion(300, 300, "11".repeat(32));
+        j(s, MOD_B).update("1", e -> e.withState(JournalStore.State.confirmed, 300L).withInclusion(i));
+        Files.delete(s.journalFile(k, MOD_A));
+        j(s, MOD_B).open(0);
+        assertTrue(j(s, MOD_B).observed(561));   // recovered at 560
+        java.util.Iterator<Long> tips = List.of(600L, 490L, 490L, 490L).iterator();
+        ChainJournal.Opening o = j(s, MOD_B).open(tips::next, h -> i);
+        assertEquals("490, read during the open, is below the recovered bound", ChainJournal.History.FENCED, o.history());
+    }
+
+    /** CDX-68: a pass never prunes under a newer rewind. */
+    @Test
+    public void pruningRefusesUnderANewerRewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        long seen = s.record(JournalStore.key(CHAIN)).value().rewinds();
+        j(s, MOD_B).beginRewind(100, "a rewind B found");
+        assertFalse(j(s, MOD_A).remove(Set.of("1"), seen));
+        assertEquals(1, j(s, MOD_A).entries().size());
+    }
+
+    /** CDX-70: a rewind with many evidence items is written and read back. */
+    @Test
+    public void manyEvidenceItemsReadBack() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 0, 0);
+        String k = JournalStore.key(CHAIN);
+        JournalStore.ChainRecord c = s.record(k).value();
+        Set<String> ev = new java.util.LinkedHashSet<>();
+        for (int n = 0; n < 5000; n++) ev.add("below:" + String.format("%064x", n));
+        s.writeRecord(c.withNewRewind(new JournalStore.Rewind(0, "many", Set.of(MOD_A), JournalStore.Rewind.newId(), ev)));
+        assertTrue(s.record(k).ok());
+        assertEquals(5000, s.record(k).value().rewind().evidence().size());
+    }
+
+    /** CDX-71: both lost is persisted before the first tip read, even when that read fails. */
+    @Test
+    public void bothLostIsPersistedBeforeTheTipRead() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 0, 0);
+        Files.delete(s.recordFile(k));
+        Files.delete(s.registryFile(k));
+        ChainJournal.Opening o = j(s, MOD_B).open(() -> {
+            throw new java.io.IOException("timeout");
+        }, h -> null);
+        assertEquals(ChainJournal.History.BOTH_LOST, o.history());
+        assertTrue(s.permanentlyFenced(k));
+    }
+
+    /** CDX-72: a module leaving a rewind keeps the rewind's evidence. */
+    @Test
+    public void leavingARewindKeepsItsEvidence() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        j(s, MOD_B).open(() -> 480, h -> null);
+        var r = j(s, MOD_B).record().rewind();
+        j(s, MOD_B).endRewind(r.id());
+        assertEquals(r.evidence(), j(s, MOD_B).record().rewind().evidence());
+    }
 }
