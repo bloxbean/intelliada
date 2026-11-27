@@ -990,6 +990,31 @@ invariant.
     - **Durability.**
       - Each ancestor directory's link is synced once per process, up to the IDE system directory.
       - A closing session finishes any pass in progress before it releases its module lock.
+  - **M3.3b1 round 5 (#34).**
+    - **Rewinds.**
+      - The chain record counts rewinds. A host admits only at the count it started or was restored at, so a host that
+        missed a rewind must restart.
+      - A rewind still being reconciled is renewed only on new evidence: a lower point, or a module that already
+        reconciled touched again.
+      - Admission records a rewind when its tip is more than a margin below recorded evidence. The margin allows for a
+        prepare's tip trailing another module's observation.
+    - **Recovery writes.**
+      - A restore's replacement needs the record revision and the fence its opening read.
+      - An ordinary write may go over a journal behind its record only after this instance's own known failed write.
+      - Admissions keep the remembered recovery bound.
+    - **`open`.** Retained inclusions are read outside the chain lock. A failed read fails that open only; it is never a
+      rewind (DES-14, SEC-9).
+    - **Settlement.**
+      - Accepted read tips raise the lower-tip baseline.
+      - A landed body the host expired is a reconciliation, with its evidence kept. Inclusion evidence is cleared only by
+        a reported rollback.
+      - A closed session commits nothing.
+      - Each thread accounts for the call it dispatched.
+      - Approvals are promoted only for prepared bodies.
+    - **Store.**
+      - Directory syncs are recorded only after they succeed.
+      - The record's later fields are optional when read.
+      - Prepared validity must be slot integers.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1176,3 +1201,4 @@ Security and design approved round 8.
 - **r28** (2026-11-27): §12 E10 — M3.3b1 round 2 (revisions per write, rewind ids, offline rewinds, discard limits).
 - **r29** (2026-11-27): §12 E10 — M3.3b1 round 3 (generation on every write; serialized handouts; `now()` re-read).
 - **r30** (2026-11-27): §12 E10 — M3.3b1 round 4.
+- **r31** (2026-11-27): §12 E10 — M3.3b1 round 5.
