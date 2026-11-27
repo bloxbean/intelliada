@@ -1534,4 +1534,18 @@ public class ChainJournalTest {
             assertTrue(expected.getMessage(), expected.getMessage().contains("link"));
         }
     }
+
+    /** CDX-106: a record rebuilt over a stale one takes a fresh rewind count. */
+    @Test
+    public void aRebuildOverAStaleRecordTakesAFreshCount() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        byte[] old = Files.readAllBytes(s.recordFile(k));
+        long seen = s.record(k).value().rewinds();
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 900)), 400, 400);
+        Files.write(s.recordFile(k), old);
+        assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_A).open(500).history());
+        assertNotEquals(seen, s.record(k).value().rewinds());
+    }
 }

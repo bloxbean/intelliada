@@ -872,7 +872,9 @@ public final class JournalStore {
      */
     private void realDirectories(Path dir) throws IOException {
         if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return;
-        Path realRoot = root.toRealPath();
+        guardParent(root.getParent());   // before the root's real path is derived through it (M33B1-CDX-107)
+        Path realRoot = root.getParent() == null ? root.toRealPath() : root.getParent().toRealPath().resolve(root.getFileName());
+        if (!root.toRealPath().equals(realRoot)) throw new IOException("the journal's root resolves elsewhere: " + root);
         for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) {
             if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) continue;
             var a = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
@@ -884,8 +886,9 @@ public final class JournalStore {
     private @Nullable JsonNode read(Path f) throws StoreFailed {
         byte[] b;
         try {
-            if (Files.isSymbolicLink(f)) throw new StoreFailed("a journal file is a symbolic link: " + f.getFileName());
-            if (!Files.exists(f, LinkOption.NOFOLLOW_LINKS)) return null;
+            // A throwing no-follow read (M33B1-CDX-108): missing and denied are told apart, never both "absent".
+            var fa = Files.readAttributes(f, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (fa.isSymbolicLink() || fa.isOther()) throw new StoreFailed("a journal file is a link: " + f.getFileName());
             readable(f);
             if (Files.size(f) > MAX_FILE) return HostJson.object().put("$tooLarge", true);
             b = Files.readAllBytes(f);
@@ -991,8 +994,10 @@ public final class JournalStore {
      */
     static void guardParent(@Nullable Path parent) throws IOException {
         if (parent == null) return;
-        if (Files.isSymbolicLink(parent)) throw new IOException("the journal's parent directory " + parent + " is a symbolic link");
-        if (!Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) throw new IOException("the journal's parent " + parent + " is not a directory");
+        // No-follow attributes: a junction reports a directory and "other" (M33B1-CDX-107).
+        var pa = Files.readAttributes(parent, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (pa.isSymbolicLink() || pa.isOther()) throw new IOException("the journal's parent directory " + parent + " is a symbolic link or junction");
+        if (!pa.isDirectory()) throw new IOException("the journal's parent " + parent + " is not a directory");
         if (!posix(parent)) {
             aclPrivate(parent);   // ACL-backed file systems (Windows; M33B1-CDX-85)
             return;
@@ -1112,6 +1117,7 @@ public final class JournalStore {
             if (posix(a) && !Files.getOwner(a.getParent(), LinkOption.NOFOLLOW_LINKS).equals(me())) break;
             durable(a);
         }
+        realDirectories(dir);   // the existing ones, before anything is created beneath them (M33B1-CDX-107)
         for (Path p : chain) {
             if (Files.isSymbolicLink(p)) throw new IOException("a journal directory is a symbolic link");
             if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {

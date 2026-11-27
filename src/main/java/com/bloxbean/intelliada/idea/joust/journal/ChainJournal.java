@@ -173,6 +173,18 @@ public final class ChainJournal {
     }
 
     /** The classification, with the irreversible both-lost marker persisted wherever it is found (M33B1-CDX-20). */
+    /**
+     * Why the chain's record cannot be trusted now (missing while a registry or journals prove history, or proven stale
+     * by the registry), or null; under the chain lock (M33B1-CDX-101, -106). A lost module journal is not this: its
+     * fence handles it.
+     */
+    public @Nullable String recordLost() throws StoreFailed, InterruptedException {
+        try (var held = store.lock(chainKey)) {
+            Classified k = judge(load());
+            return k.kind() == Kind.LOST_MARK || k.kind() == Kind.BOTH_LOST ? k.why() : null;
+        }
+    }
+
     private Classified judge(Files f) throws StoreFailed {
         Classified k = classify(f);
         if (k.kind() == Kind.BOTH_LOST && !f.permanent()) store.writePermanentFence(chain, PERMANENT);
@@ -498,7 +510,7 @@ public final class ChainJournal {
         // generation, above any count the lost record held (each count change was a record write), so every host
         // opened before the rebuild stops on the count check.
         store.writeRecord(new ChainRecord(chain, bound, modules, gen, new Fence(bound, why), rewind, regs,
-                c == null ? null : c.recovered(), c == null ? gen : c.rewinds()));
+                c == null ? null : c.recovered(), gen));   // also over a stale record (M33B1-CDX-106)
         store.writeRegistry(new RegistryEntry(chain, base, base, gen));
         return bound;
     }
@@ -985,6 +997,20 @@ public final class ChainJournal {
         return next;
     }
 
+    /**
+     * Under the lock: when the record already holds the unsaved rewind {@code u}, the write that failed was the
+     * registry's (M33B1-CDX-100, -109). On a new chain there is no registry yet: it is written at the record's
+     * generation, as the failed write would have; otherwise both are written again. Returns whether it applied.
+     */
+    private boolean completeRecorded(Files f, Unsaved u) throws StoreFailed {
+        ChainRecord c = f.rec().ok() ? f.rec().value() : null;
+        if (c == null || c.rewind() == null || !c.rewind().id().equals(u.rewind().id())) return false;
+        if (f.reg().value() == null && !f.reg().lost()) store.writeRegistry(new RegistryEntry(chain, 0, 0, c.generation()));
+        else persist(f, c);
+        UNSAVED.remove(unsavedKey(), u);
+        return true;
+    }
+
     /** Persists this process's unsaved rewind of the chain, if any; StoreFailed when it still cannot be written. */
     private void persistUnsaved() throws StoreFailed, InterruptedException {
         if (UNSAVED.get(unsavedKey()) == null) return;
@@ -994,15 +1020,7 @@ public final class ChainJournal {
             if (u == null) return;
             Files f = load();
             ChainRecord c = existing(f);
-            if (c.rewind() != null && c.rewind().id().equals(u.rewind().id())) {
-                // The record holds it; the write that failed was the registry's (M33B1-CDX-100). On a new chain there is
-                // no registry yet: it is written at the record's generation, as the failed write would have; otherwise
-                // both are written again.
-                if (f.reg().value() == null && !f.reg().lost()) store.writeRegistry(new RegistryEntry(chain, 0, 0, c.generation()));
-                else persist(f, c);
-                UNSAVED.remove(unsavedKey(), u);
-                return;
-            }
+            if (completeRecorded(f, u)) return;
             // The modules it already named and those with journaled bodies; never the caller for asking (M33B1-CDX-94).
             Set<String> pending = new LinkedHashSet<>(u.rewind().pending());
             pending.addAll(pendingModules(f, false));
@@ -1045,7 +1063,10 @@ public final class ChainJournal {
             // Persisted meanwhile by a retry, which carried this registration (M33B1-CDX-104): recorded once.
             Unsaved cur = UNSAVED.get(unsavedKey());
             if (cur == null || !cur.tokens().contains(token)) return;
-            Files f = load();
+            Files f0 = load();
+            // Its record written by a helper whose registry write failed (M33B1-CDX-109): completed, never renamed.
+            if (completeRecorded(f0, cur)) return;
+            Files f = f0;
             ChainRecord c = existing(f);
             // A new id each time (M33B1-CDX-5): a restore observed before this rewind cannot acknowledge it.
             persistRewind(f, c, union(new Rewind(tip, reason, pendingModules(f, true), Rewind.newId(), Set.of()), c.rewind()));

@@ -349,6 +349,11 @@ public final class Settlement {
                 : rec.rewind() != null && !same(rec.rewind(), reconciling) ? "a rewind on this chain is being reconciled (" + rec.rewind().reason() + ")"
                 : rewindsSeen >= 0 && rec.rewinds() != rewindsSeen ? "a rewind on this chain was reconciled while this host ran"
                 : null;
+        // A record missing or proven stale while history exists (M33B1-CDX-101, -106): the count it shows proves nothing.
+        if (why == null && (rec == null || rewindsSeen >= 0)) {
+            String lost = journal.recordLost();
+            if (lost != null) why = "the chain's record cannot be trusted (" + lost + ")";
+        }
         if (why == null) return false;
         if (rewind == null) rewind = why;
         fence(why + "; start the dev host again");

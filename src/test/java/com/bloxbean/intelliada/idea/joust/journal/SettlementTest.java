@@ -1310,4 +1310,34 @@ public class SettlementTest {
         assertTrue(s.rewindMissed());
         assertTrue(fence.get(), fence.get().contains("record is missing"));
     }
+
+    // ---- round 15 (M33B1-CDX-101, -106) -------------------------------------------------------------------------------
+
+    /** CDX-101: a host that never saw the record stops when it is lost while the registry proves history. */
+    @Test
+    public void aHostThatNeverSawTheRecordStopsOnItsLoss() throws Exception {
+        chain.at(600);
+        Settlement s = restored(List.of(), List.of());   // a new chain: no record yet
+        assertFalse(s.rewindMissed());
+        ChainJournal other = new ChainJournal(store, CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
+        java.nio.file.Files.delete(store.recordFile(JournalStore.key(CHAIN)));
+        assertTrue(s.rewindMissed());
+        assertTrue(fence.get(), fence.get().contains("cannot be trusted"));
+    }
+
+    /** CDX-106: a record restored to an older version, proven stale by the registry, stops the host. */
+    @Test
+    public void aStaleRecordStopsTheHost() throws Exception {
+        chain.at(600);
+        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
+        Settlement s = restored(List.of(), List.of());
+        java.nio.file.Path rec = store.recordFile(JournalStore.key(CHAIN));
+        byte[] old = java.nio.file.Files.readAllBytes(rec);
+        other.admit(submitted("y", tx(List.of(ref(8)), 900)), 600, 600);   // the record moves on
+        java.nio.file.Files.write(rec, old);                              // and is restored to the older one
+        assertTrue(s.rewindMissed());
+        assertTrue(fence.get(), fence.get().contains("cannot be trusted"));
+    }
 }
