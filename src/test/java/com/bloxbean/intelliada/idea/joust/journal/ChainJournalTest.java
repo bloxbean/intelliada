@@ -1200,4 +1200,12 @@ public class ChainJournalTest {
         j(s, MOD_B).endRewind(r.id());
         assertEquals(r.evidence(), j(s, MOD_B).record().rewind().evidence());
     }
+
+    /** DES-20: the store is this user's, independent of the IDE product and version, so an upgrade keeps it. */
+    @Test
+    public void theStoreIsPerUserNotPerIde() {
+        Path root = JournalStore.forUser().root();
+        assertEquals(Path.of(System.getProperty("user.home"), ".intelliada", "joust-journal").toAbsolutePath().normalize(), root);
+        assertFalse(root.startsWith(Path.of(com.intellij.openapi.application.PathManager.getSystemPath()).toAbsolutePath().normalize()));
+    }
 }

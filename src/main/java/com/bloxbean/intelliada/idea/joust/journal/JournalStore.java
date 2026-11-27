@@ -35,7 +35,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 /**
- * ADR-005 D17's files (M3.3b1), under one root in the IDE system directory, never in a project:
+ * ADR-005 D17's files (M3.3b1), under one root per user ({@link #forUser}), never in a project or an IDE's own directories:
  * <pre>
  *   registry/&lt;chain&gt;.json                 the chain's registry entry: highest tip and now, the admission generation
  *   chains/&lt;chain&gt;/record.json             the chain record: mark, module list, fences, reconciliation, registrations
@@ -249,9 +249,14 @@ public final class JournalStore {
         this.root = root.toAbsolutePath().normalize();
     }
 
-    /** The store under the IDE system directory. */
-    public static JournalStore inSystemDirectory() {
-        return new JournalStore(Path.of(com.intellij.openapi.application.PathManager.getSystemPath(), "intelliada", "joust-journal"));
+    /**
+     * The store for this user, independent of the IDE product and version (M33B1-DES-20): {@code ~/.intelliada/joust-journal},
+     * beside the legacy account cache. An IDE's system directory belongs to one product and version and is not migrated on
+     * upgrade, so a store there would lose every handed-out body's record on an ordinary update, and two IDE versions
+     * side by side would not see each other's locks.
+     */
+    public static JournalStore forUser() {
+        return new JournalStore(Path.of(System.getProperty("user.home"), ".intelliada", "joust-journal"));
     }
 
     public Path root() {
@@ -408,13 +413,9 @@ public final class JournalStore {
         }
     }
 
-    /** The IDE system directory (the store's ancestors are synced up to it); outside an IDE, none. */
-    private static @Nullable Path systemDir() {
-        try {
-            return Path.of(com.intellij.openapi.application.PathManager.getSystemPath()).toAbsolutePath().normalize();
-        } catch (RuntimeException | LinkageError e) {
-            return null;
-        }
+    /** The user's home (the store's ancestors are synced up to it). */
+    private static Path homeDir() {
+        return Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
     }
 
     private static @Nullable FileLock tryFileLock(FileChannel ch) throws IOException {
@@ -939,7 +940,7 @@ public final class JournalStore {
         if (rel.startsWith("..")) throw new IOException("outside the journal's root");
         List<Path> chain = new ArrayList<>();
         for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) chain.add(0, p);
-        // Every ancestor this store creates, up to the first that exists (the IDE system directory), is made durable in its
+        // Every ancestor this store creates, up to the first that exists (the user's home), is made durable in its
         // parent before anything is written beneath it (M33B1-CDX-15).
         List<Path> missing = new ArrayList<>();
         for (Path a = root.getParent(); a != null && !Files.isDirectory(a); a = a.getParent()) missing.add(0, a);
@@ -950,9 +951,9 @@ public final class JournalStore {
                 // made meanwhile
             }
         }
-        // Up to the IDE system directory, and never into directories that are not this user's (above its home).
-        Path system = systemDir();
-        for (Path a = root.getParent(); a != null && a.getParent() != null && !a.equals(system); a = a.getParent()) {
+        // Up to the user's home, and never into directories that are not this user's.
+        Path home = homeDir();
+        for (Path a = root.getParent(); a != null && a.getParent() != null && !a.equals(home); a = a.getParent()) {
             if (posix(a) && !Files.getOwner(a.getParent(), LinkOption.NOFOLLOW_LINKS).equals(me())) break;
             durable(a);
         }

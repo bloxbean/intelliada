@@ -72,10 +72,10 @@ public final class JoustRunJournal implements AutoCloseable {
     /**
      * Before the host starts: takes the module's host lock on the chain and classifies the chain's history at a tip read
      * now (D17; one read: the classification needs only a base, and a later tip only raises it; M33B1-DES-1). The store
-     * is the IDE system directory's unless {@code store} is given (tests).
+     * is this user's ({@link JournalStore#forUser}) unless {@code store} is given (tests).
      */
     public static JoustRunJournal open(JoustRunSession.Binding b, Path moduleDir, @Nullable JournalStore store) throws Exception {
-        JournalStore s = store != null ? store : JournalStore.inSystemDirectory();
+        JournalStore s = store != null ? store : JournalStore.forUser();
         String chain = b.identity().chainKey();
         String module = JournalStore.key(moduleDir.toRealPath().toString());
         long settlement = TimePolicy.settlementSlots(b.identity().networkClass());

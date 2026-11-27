@@ -95,7 +95,7 @@ public final class JoustRunSession {
      * Starts (or reuses) the module's host for a binding (D11, D17): a new host's chain history is classified first, so
      * {@code initialize} carries {@code restoring}, its reverse reads go through the settlement guard, and once its
      * catalog is verified it is restored from the journal. A reused host keeps the journal it was started with.
-     * {@code store} overrides the IDE system directory's journal (tests).
+     * {@code store} overrides this user's journal (tests).
      */
     public static JoustRunSession start(JoustHostService service, java.nio.file.Path moduleDir, Binding b,
                                         @Nullable com.bloxbean.intelliada.idea.joust.journal.JournalStore store, Launcher launcher,
