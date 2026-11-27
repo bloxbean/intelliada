@@ -875,6 +875,34 @@ invariant.
     of the M3.3b row on DevKit and Yano; I10's canary, I15 on the new surfaces, I21.
   - **Until M3.3b3, no production action, service or tool-window path reaches admission or the signer;** a test checks
     it. Yano's part of the exit waits for bloxbean/yano#269 (E2, L36).
+  - **M3.3b1 as built.**
+    - **Files.** The store lives under the IDE system directory (`intelliada/joust-journal/`): `registry/<chain>.json` sits
+      apart from `chains/<chain>/` (the record, one journal per module, the lock), so either can be lost alone. Writes are
+      atomic and durable; directories are private and this user's; loads are strict (another version, an unknown field,
+      a body whose hash or validity differs from the entry's: unreadable, never empty).
+    - **Staleness.** The record and the registry entry carry an admission generation, raised together. A record behind
+      its registry entry, or one that does not list a journal present on disk, is treated as a lost mark (a restored
+      backup is caught when the registry is current). The both-lost case is persisted as its own marker file, so a
+      restored stale backup cannot lift it.
+    - **Lost-journal fences.** When one lifts, the lost modules leave the record. An unreadable journal is renamed aside,
+      never deleted, so the module can journal again.
+    - **Final entries** (confirmed or expired) stay journaled for `2 × settlementSlots + maxNowAheadSlots` slots past
+      their threshold. A rewind back into their margin restores them `shallow` (I31). A deeper rewind is caught by the
+      "more than `maxNowAheadSlots` below the last `now`" trigger, but a final entry past its retention can no longer be
+      restored. This residual is accepted: the ledger still refuses a double spend.
+    - **Settlement.** It follows JOUST's `Reservations` and `Reads` at `01bad1f7`:
+      - each event's tip also advances every other reservation, and the journal takes those states;
+      - no threshold event is sent while restore is open (the host applies none and refuses `expired`);
+      - an inclusion that moved block, or a final inclusion that vanished, is a rewind at once;
+      - a vanished `shallow` inclusion is `rolledBack`;
+      - a lower tip is transient until it persists (three readings over at least 10 s).
+    - **Session.** A new host's history is classified before launch, so `initialize` carries `restoring`. The module's
+      host lock (I33 across IDE processes) is held for the session. The host is restored after its catalog check, and
+      building is blocked while any fence, open restore or deep rollback stands.
+    - **Registration evidence** (D15) is stored with the record. It is sent to hosts in M3.3b2, with its `txHash`
+      re-read (ADR5-CDX-26).
+    - **Bodies are read by `TxCbor`**, IntelliAda's own structural reader. It agrees with the host's hash, validity,
+      inputs, collateral, reference inputs, signers and publications on every kit vector without a violation (62).
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1056,3 +1084,4 @@ Security and design approved round 8.
 - **r23** (2026-11-26): §12 E9 from M3.3a round 8 (copied names verified; literal class suffix; package-info).
 - **r24** (2026-11-26): §12 E9 — M3.3a approved by all three reviewers at `30cc72b`; M33A-CDX-70/71 deferred to the start of M3.3b.
 - **r25** (2026-11-27): §12 E10 and L40 (delegated): M3.3b in three parts.
+- **r26** (2026-11-27): §12 E10 — M3.3b1 as built (store layout, staleness generation, retention, settlement details).
