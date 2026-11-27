@@ -1736,4 +1736,68 @@ public class ChainJournalTest {
             s.failSyncsForTests = false;
         }
     }
+
+    // ---- round 20 (M33B1-CDX-132, -133, -135, -136) --------------------------------------------------------------------
+
+    /** CDX-132: a pass that observes the chain back at or below the recovered bound fences it again. */
+    @Test
+    public void anObservationBelowTheRecoveredBoundFencesAgain() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(k, MOD_A));
+        j(s, MOD_B).open(0);
+        assertTrue(j(s, MOD_B).observed(561));
+        long recovered = s.record(k).value().recovered();
+        assertNull(s.record(k).value().fence());
+        assertFalse(j(s, MOD_B).observed(recovered - 1));
+        assertNotNull("fenced again", s.record(k).value().fence());
+    }
+
+    /** CDX-133: a record counting more rewinds than its generation is not trusted, at any generation. */
+    @Test
+    public void aRewindCountAboveTheGenerationIsLostHistory() throws Exception {
+        JournalStore s = store();
+        s.writeRecord(new JournalStore.ChainRecord(CHAIN, null, java.util.Map.of(), 1, null, null, List.of(), null, 3));
+        s.writeRegistry(new JournalStore.RegistryEntry(CHAIN, 0, 0, 1));
+        assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_A).open(500).history());
+    }
+
+    /** CDX-135: a first admission's failed registry write is repaired with the maxima it meant. */
+    @Test
+    public void aRepairedFirstRegistryKeepsItsMaxima() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        Path reg = s.registryFile(k).getFileName();
+        s.failWritesForTests = p -> p.getFileName().equals(reg);
+        try {
+            j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 410);
+            fail("the registry write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failWritesForTests = p -> false;
+        j(s, MOD_B).snapshot();
+        JournalStore.RegistryEntry e = s.registry(k).value();
+        assertNotNull(e);
+        assertTrue("tip kept: " + e, e.highestTip() >= 400);
+        assertTrue("now kept: " + e, e.highestNow() >= 410);
+    }
+
+    /** CDX-136: an update whose record sync failed after its rename can be retried by the same owner. */
+    @Test
+    public void anUpdateAfterAFailedRecordSyncCanBeRetried() throws Exception {
+        JournalStore s = store();
+        ChainJournal a = j(s, MOD_A);
+        a.admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        s.failSyncsForTests = true;
+        try {
+            a.update("1", e -> e.withEvent("first try"));
+            fail("the sync was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failSyncsForTests = false;
+        a.update("1", e -> e.withEvent("second try"));
+        assertTrue(a.entries().get(0).events().contains("second try"));
+    }
 }

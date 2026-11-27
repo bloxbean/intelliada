@@ -428,6 +428,7 @@ public final class Settlement {
      */
     public synchronized boolean poll() throws Exception {
         if (fenced != null || rewind != null) return false;
+        if (permanentAtStart) return true;   // read-only on a permanently fenced chain: views only, nothing settled (M33B1-CDX-125)
         // A rewind this process detected but could not persist stops every host of the chain here (M33B1-CDX-84).
         String unsaved = journal.unsavedRewind();
         if (unsaved != null) {

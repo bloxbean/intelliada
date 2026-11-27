@@ -302,7 +302,7 @@ public final class JournalStore {
      * Directories whose entry changed (a rename) but whose sync failed (M33B1-CDX-122): every lock taken afterwards
      * syncs them first, and fails while one cannot be, so no operation reports success over a change that is not durable.
      */
-    private static final java.util.concurrent.ConcurrentHashMap<Path, String> UNSYNCED = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<Path, Set<String>> UNSYNCED = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Records {@code dir} as owed a sync for the chain the written file belongs to (M33B1-CDX-128, -130). */
     private void unsynced(Path dir, Path file) {
@@ -315,7 +315,8 @@ public final class JournalStore {
         } catch (IOException e) {
             real = Path.of(identity()).resolve(root.relativize(dir.toAbsolutePath().normalize()));
         }
-        UNSYNCED.put(real, chain == null ? "" : chain);
+        // Every chain whose rename it holds, until one successful sync covers them all (M33B1-CDX-134).
+        UNSYNCED.computeIfAbsent(real, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(chain == null ? "" : chain);
     }
 
     /** The chain a store directory belongs to ({@code chains/<key>/...}), or null for a shared one. */
@@ -329,7 +330,7 @@ public final class JournalStore {
         for (var en : List.copyOf(UNSYNCED.entrySet())) {
             Path d = en.getKey();
             // This store's, and this chain's or shared (M33B1-CDX-128, -130).
-            if (!d.startsWith(me) || !(en.getValue().isEmpty() || en.getValue().equals(chainKey))) continue;
+            if (!d.startsWith(me) || !(en.getValue().contains("") || en.getValue().contains(chainKey))) continue;
             try {
                 if (failSyncsForTests) throw new IOException("a test's sync failure");
                 forceDir(d);
