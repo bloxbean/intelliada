@@ -1358,4 +1358,23 @@ public class SettlementTest {
         assertFalse(s.rewindMissed());
         assertNull(fence.get());
     }
+
+    // ---- round 17 (M33B1-CDX-116) -------------------------------------------------------------------------------------
+
+    /** CDX-116: a fence the rewind check's snapshot shows is what dispatch refuses a build on. */
+    @Test
+    public void theRewindCheckReportsTheChainsFence() throws Exception {
+        chain.at(600);
+        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
+        Settlement s = restored(List.of(), List.of());
+        assertFalse(s.rewindMissed());
+        assertNull(s.lastFence());
+        String k = JournalStore.key(CHAIN);
+        store.writeRecord(store.record(k).value().withFence(new JournalStore.Fence(9000, "a lost journal")));
+        // the registry follows the record's generation, as persist would write it
+        store.writeRegistry(new JournalStore.RegistryEntry(CHAIN, 600, 600, store.record(k).value().generation()));
+        assertFalse("a fence alone does not stop the host", s.rewindMissed());
+        assertEquals(9000, s.lastFence().until());
+    }
 }

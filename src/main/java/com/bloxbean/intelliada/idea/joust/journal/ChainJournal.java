@@ -194,17 +194,21 @@ public final class ChainJournal {
     public Snapshot snapshot() throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             if (store.permanentlyFenced(chainKey)) return new Snapshot(null, PERMANENT, true);
+            completePendingRegistry();   // this process's own failed registry write, finished first (M33B1-CDX-118)
             Loaded<RegistryEntry> reg = store.registry(chainKey);
             Loaded<ChainRecord> rec = store.record(chainKey);
             if (rec.lost()) return new Snapshot(null, "the chain record is unreadable", false);
             ChainRecord c = rec.value();
             if (c == null) {
-                boolean history = reg.value() != null || reg.lost() || !store.journalModules(chainKey).isEmpty();
-                return new Snapshot(null, history ? "the chain record is missing" : null, false);
+                // The rare missing-record path uses opening's own evidence rule, journals parsed (M33B1-CDX-119).
+                if (reg.value() == null && !reg.lost() && store.journalModules(chainKey).isEmpty()) return new Snapshot(null, null, false);
+                Classified k = judge(load());
+                boolean lost = k.kind() == Kind.LOST_MARK || k.kind() == Kind.BOTH_LOST;
+                return new Snapshot(null, lost ? k.why() : null, k.kind() == Kind.BOTH_LOST);
             }
-            if (reg.value() != null && reg.value().generation() > c.generation()) {
-                return new Snapshot(c, "the chain record is older than the registry", false);
-            }
+            // As classify judges a record (M33B1-CDX-115): its registry entry missing, unreadable, or newer.
+            if (reg.lost() || reg.value() == null) return new Snapshot(c, "the chain's registry entry is missing", false);
+            if (reg.value().generation() > c.generation()) return new Snapshot(c, "the chain record is older than the registry", false);
             return new Snapshot(c, null, false);
         }
     }
@@ -1118,7 +1122,10 @@ public final class ChainJournal {
         try (var held = store.lock(chainKey)) {
             Files f = load();
             ChainRecord c = existing(f);
-            if (c.registrations().stream().anyMatch(x -> x.credential().equals(r.credential()))) return;
+            if (c.registrations().stream().anyMatch(x -> x.credential().equals(r.credential()))) {
+                completePendingRegistry();   // a retry after a failed registry write finishes it (M33B1-CDX-118)
+                return;
+            }
             List<Registration> next = new ArrayList<>(c.registrations());
             next.add(r);
             persist(f, c.withRegistrations(next));
@@ -1144,23 +1151,39 @@ public final class ChainJournal {
     /** Registry writes this process began after their record's write, per store and chain: the generation (M33B1-CDX-112). */
     private static final java.util.concurrent.ConcurrentHashMap<String, Long> PENDING_REGISTRY = new java.util.concurrent.ConcurrentHashMap<>();
 
-    private void writeRegistry(RegistryEntry r) throws StoreFailed {
-        PENDING_REGISTRY.put(unsavedKey(), r.generation());
+    /** Writes a record and then its registry entry, the pair tracked from before the record's write (M33B1-CDX-117). */
+    private void writePair(ChainRecord c, RegistryEntry r) throws StoreFailed {
+        PENDING_REGISTRY.put(unsavedKey(), c.generation());
+        store.writeRecord(c);
         store.writeRegistry(r);
-        PENDING_REGISTRY.remove(unsavedKey(), r.generation());
+        PENDING_REGISTRY.remove(unsavedKey(), c.generation());
+    }
+
+    /**
+     * Under the lock: a record/registry pair this process began whose record is visible at the tracked generation is
+     * finished (M33B1-CDX-112, -117, -118): the record is written again (its durability step may be what failed), then
+     * the registry entry. One failed write never becomes lost history. Returns whether it applied.
+     */
+    private boolean completePendingRegistry() throws StoreFailed {
+        Long pend = PENDING_REGISTRY.get(unsavedKey());
+        if (pend == null) return false;
+        Loaded<ChainRecord> rec = store.record(chainKey);
+        Loaded<RegistryEntry> reg = store.registry(chainKey);
+        if (!rec.ok() || rec.value().generation() != pend || (reg.value() != null && reg.value().generation() >= pend)) {
+            if (reg.value() != null && reg.value().generation() >= pend) PENDING_REGISTRY.remove(unsavedKey(), pend);
+            return false;
+        }
+        if (reg.lost()) return false;
+        store.writeRecord(rec.value());
+        store.writeRegistry(reg.value() == null ? new RegistryEntry(chain, 0, 0, pend) : repaired(reg.value(), rec.value(), pend));
+        PENDING_REGISTRY.remove(unsavedKey(), pend);
+        return true;
     }
 
     private void persist(Files f, ChainRecord c) throws StoreFailed {
-        // A registry write this process began after its record's and that failed is completed first (M33B1-CDX-112): a
-        // later rewind never turns that one failed write into lost history.
-        Long pend = PENDING_REGISTRY.get(unsavedKey());
-        if (pend != null && f.rec().ok() && f.rec().value().generation() == pend) {
-            RegistryEntry r = f.reg().value();
-            if (r == null && !f.reg().lost()) store.writeRegistry(new RegistryEntry(chain, 0, 0, pend));
-            else if (r != null && r.generation() < pend) store.writeRegistry(repaired(r, f.rec().value(), pend));
-            PENDING_REGISTRY.remove(unsavedKey(), pend);
-            f = load();
-        }
+        // A record/registry pair this process began and that failed part-way is finished first (M33B1-CDX-112, -117):
+        // a later rewind never turns that one failed write into lost history.
+        if (completePendingRegistry()) f = load();
         // A record the registry proves stale is never advanced past it (M33B1-CDX-62): the session must recover first.
         Kind kind = classify(f).kind();
         if (kind == Kind.LOST_MARK || kind == Kind.BOTH_LOST) {
@@ -1171,13 +1194,11 @@ public final class ChainJournal {
             // A new chain's first record change (a rewind before any admission) gets its registry entry too, so a restored
             // older record is behind it (M33B1-CDX-67).
             long gen = c.generation() + 1;
-            store.writeRecord(c.with(c.mark(), c.modules(), gen, c.fence(), c.rewind(), c.registrations()));
-            writeRegistry(new RegistryEntry(chain, 0, 0, gen));
+            writePair(c.with(c.mark(), c.modules(), gen, c.fence(), c.rewind(), c.registrations()), new RegistryEntry(chain, 0, 0, gen));
             return;
         }
         long gen = Math.max(c.generation(), reg.generation()) + 1;
-        store.writeRecord(c.with(c.mark(), c.modules(), gen, c.fence(), c.rewind(), c.registrations()));
-        writeRegistry(repaired(reg, c, gen));
+        writePair(c.with(c.mark(), c.modules(), gen, c.fence(), c.rewind(), c.registrations()), repaired(reg, c, gen));
     }
 
     /** {@code reg} at generation {@code gen}; when it was behind {@code c}, its maxima raised to {@code c}'s mark. */

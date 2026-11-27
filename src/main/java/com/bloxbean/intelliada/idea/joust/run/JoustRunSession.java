@@ -336,7 +336,7 @@ public final class JoustRunSession {
             }
             if (journal == null) return running.session().call(method, params, CALL_TIMEOUT, () -> false);
             // D17: settlement before the call when anything is live; the call's read tips go to the host-table model.
-            journal.beforeCall(params.path("now").asLong(0));
+            journal.beforeCall(method, params.path("now").asLong(0));
             // The host call alone in the try; the journal step once, with the outcome (M33B1-DES-11).
             JsonNode r = null;
             String error = null;

@@ -1581,4 +1581,45 @@ public class ChainJournalTest {
         assertNotNull(snap.record());
         assertNull(snap.lost());
     }
+
+    // ---- round 17 (M33B1-CDX-115, -118, -119) --------------------------------------------------------------------------
+
+    /** CDX-115: a readable record whose registry entry is lost is not trusted, as classify judges it. */
+    @Test
+    public void aRecordWithoutItsRegistryIsNotTrusted() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        Files.delete(s.registryFile(k));
+        assertNotNull(j(s, MOD_B).snapshot().lost());
+    }
+
+    /** CDX-118: retrying the same registration after a failed registry write finishes that write. */
+    @Test
+    public void aRetriedRegistrationFinishesItsRegistryWrite() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        JournalStore.Registration r = new JournalStore.Registration("cd".repeat(28), "ab".repeat(32), 10L, null);
+        Path reg = s.registryFile(k).getFileName();
+        s.failWritesForTests = p -> p.getFileName().equals(reg);
+        try {
+            j(s, MOD_A).learn(r);
+            fail("the registry write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failWritesForTests = p -> false;
+        j(s, MOD_A).learn(r);
+        assertTrue(Files.exists(s.registryFile(k)));
+        assertFalse(j(s, MOD_A).open(500).history() == ChainJournal.History.LOST_MARK);
+    }
+
+    /** CDX-119: an empty generation-zero journal with no record is a new chain to the snapshot too. */
+    @Test
+    public void anEmptyJournalAloneIsANewChain() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        s.writeJournal(new JournalStore.ModuleJournal(CHAIN, MOD_A, 0, List.of()));
+        assertEquals(ChainJournal.History.NEW_CHAIN, j(s, MOD_B).open(500).history());
+        assertNull(j(s, MOD_B).snapshot().lost());
+    }
 }

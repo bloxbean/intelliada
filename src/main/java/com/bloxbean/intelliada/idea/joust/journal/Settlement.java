@@ -247,6 +247,14 @@ public final class Settlement {
     /** Whether this host has read the chain's record (a new chain has none until its first write; M33B1-CDX-101). */
     private boolean recordSeen;
 
+    /** The fence the last {@link #rewindMissed} snapshot showed, or null (M33B1-CDX-116). */
+    private volatile JournalStore.@Nullable Fence lastFence;
+
+    /** The chain's fence as of the last rewind check, the same locked read (M33B1-CDX-116). */
+    public JournalStore.@Nullable Fence lastFence() {
+        return lastFence;
+    }
+
     /** Whether this host was opened read-only on a permanently fenced chain (M33B1-CDX-114). */
     private boolean permanentAtStart;
 
@@ -348,9 +356,12 @@ public final class Settlement {
         // The record, its count and its trust from one locked read (M33B1-CDX-110), without parsing journals (-113).
         ChainJournal.Snapshot snap = journal.snapshot();
         JournalStore.ChainRecord rec = snap.record();
+        lastFence = rec == null || rec.fence() == null ? null : rec.fence();
+        // A session opened read-only on a permanently fenced chain keeps its views (M33B1-CDX-114), whatever files
+        // reappear beside the marker.
+        if (snap.permanent() && permanentAtStart && unsaved == null && fenced == null) return false;
         if (rec != null) recordSeen = true;
-        // A session opened read-only on a permanently fenced chain keeps its views (M33B1-CDX-114).
-        String lost = snap.permanent() && permanentAtStart ? null : snap.lost();
+        String lost = snap.lost();
         String why = unsaved != null ? "a rewind on this chain is being recorded (" + unsaved + ")"
                 : lost != null ? "the chain's record cannot be trusted (" + lost + ")"
                 // Gone after this host saw it (M33B1-CDX-101); a new chain has none until its first write.

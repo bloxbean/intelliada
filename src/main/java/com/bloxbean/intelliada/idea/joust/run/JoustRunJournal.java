@@ -181,9 +181,19 @@ public final class JoustRunJournal implements AutoCloseable {
      * inconclusive pass withholds the call while anything is live (M33B1-CDX-16).
      */
     void beforeCall(long now) throws Exception {
+        beforeCall("view", now);
+    }
+
+    /** As {@link #beforeCall(long)}; a build ({@code prepare}, {@code publish}) also refuses under a chain fence. */
+    void beforeCall(String method, long now) throws Exception {
         lastNow.accumulateAndGet(now, Math::max);
         // Every forward call, idle or not (M33B1-CDX-95): a rewind since this host started stops it first.
         if (settlement.rewindMissed()) throw new ChainJournal.Fenced("the dev host was stopped: " + settlement.fenced());
+        // A fence that same locked read shows refuses a build at dispatch; views and listings go on (M33B1-CDX-116).
+        JournalStore.Fence fence = settlement.lastFence();
+        if (fence != null && (method.equals("prepare") || method.equals("publish"))) {
+            throw new ChainJournal.Fenced("building waits until the chain passes slot " + fence.until() + waitFor(fence.until()));
+        }
         if (mustSettleFirst(journal.entries(), settlement.pollNeeded())) {
             if (!settlement.poll()) {
                 String why = settlement.fenced() != null ? "the dev host was stopped: " + settlement.fenced()
