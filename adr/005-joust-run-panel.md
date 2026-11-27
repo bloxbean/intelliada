@@ -880,7 +880,9 @@ invariant.
       apart from `chains/<chain>/` (the record, one journal per module, the lock), so either can be lost alone. Writes are
       atomic and durable; directories are private and this user's; loads are strict (another version, an unknown field,
       a body whose hash or validity differs from the entry's: unreadable, never empty).
-    - **Staleness.** The record and the registry entry carry an admission generation, raised together. A record behind
+    - **Staleness.** The record and the registry entry carry a generation, raised together (since round 3 on every
+      module-journal write, not only at admission: SEC-7). Each settlement event therefore costs a record write and a
+      registry write before the journal write. A record behind
       its registry entry, or one that does not list a journal present on disk, is treated as a lost mark (a restored
       backup is caught when the registry is current). The both-lost case is persisted as its own marker file, so a
       restored stale backup cannot lift it.
@@ -956,6 +958,13 @@ invariant.
       - The file size is checked before writing.
       - Every ancestor directory the store creates is synced.
       - The reader validates simple values and UTF-8 text while skipping.
+  - **M3.3b1 round 3 (#34).**
+    - **Generation on every write.** Every journal write raises the chain generation in the record and then the registry
+      entry, so a chain directory restored from before a handout is a lost mark (SEC-7). D17's registry maxima are still
+      raised only by admission.
+    - **Serialization.** Admission and handout changes run on the settlement monitor that discard runs under.
+    - **The clock check.** `now()` re-reads a tip far below the session's `now` under D14's rule (three readings over at
+      least 10 s) before it stops the host (DES-12).
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1140,3 +1149,4 @@ Security and design approved round 8.
 - **r26** (2026-11-27): §12 E10 — M3.3b1 as built (store layout, staleness generation, retention, settlement details).
 - **r27** (2026-11-27): §12 E10 — M3.3b1 round 1 (one classification, per-module generations and rewinds, settlement refinements).
 - **r28** (2026-11-27): §12 E10 — M3.3b1 round 2 (revisions per write, rewind ids, offline rewinds, discard limits).
+- **r29** (2026-11-27): §12 E10 — M3.3b1 round 3 (generation on every write; serialized handouts; `now()` re-read).
