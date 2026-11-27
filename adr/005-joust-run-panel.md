@@ -1000,8 +1000,11 @@ invariant.
         system with ACLs instead of POSIX modes, every directory of the store and its parent must belong to this process's
         user, and no principal but that user and the OS-resolved identities of the local system, the built-in
         administrators, the creator-owner placeholder and the installer service may change their entries. Principals
-        are compared by identity, never by name. A directory the store creates gets an ACL for this user alone. With
-        neither POSIX nor ACL attributes, the store refuses (M33B1-CDX-85, -91, -92, -SEC-14).
+        are compared by identity, never by name. A directory the store creates gets an ACL for this user alone. An
+        empty access list, which the JDK also reports for a null DACL, is refused. Before a file's bytes are trusted,
+        every directory from the root to it and the file itself are checked: Windows does not govern access by path, so
+        a private root does not make what is under it private. With neither POSIX nor ACL attributes, the store refuses
+        (M33B1-CDX-85, -91, -92, -96..98, -SEC-14).
       - A rewind the process detected, by any path (a clock rewind, a settlement pass or an open), is held in memory
         for the chain before its write, whole: its tip, reason, pending modules and evidence. It is cleared once
         persisted. Admission, handout and pruning check it under the chain lock, and every host of the chain in the
@@ -1010,6 +1013,9 @@ invariant.
         (M33B1-CDX-84, -87..90, -94, -DES-24).
       - A module with nothing journaled still observes the chain while a fence on it waits for a later tip
         (M33B1-CDX-93).
+      - Every forward call, and every idle timer pass, checks the chain's rewind count against the one this host
+        started or was restored at. A rewind another module began, even one already reconciled and cleared, stops the
+        host (M33B1-CDX-95).
       - A closing session finishes any pass in progress before it releases its module lock.
   - **M3.3b1 round 5 (#34).**
     - **Rewinds.**
@@ -1293,3 +1299,4 @@ Security and design approved round 8.
 - **r37** (2026-11-27): D15 persistence and §5 Data per user (M33B1-DES-21); E10 Files: the store's parent directory is checked (M33B1-CDX-80, -SEC-13).
 - **r38** (2026-11-27): E10 Files: a loose parent of the user's is tightened; ACL file systems; an unsaved rewind is held in memory (M33B1-DES-22, -CDX-84, -CDX-85).
 - **r39** (2026-11-27): E10 Files: ACL identities; the unsaved rewind as a whole record checked under the lock; empty modules observe fences (M33B1-CDX-87..94, -DES-24, -SEC-14).
+- **r40** (2026-11-27): E10 Files: reads checked on ACL file systems; null DACLs; the rewind count read on every forward call (M33B1-CDX-95..100).
