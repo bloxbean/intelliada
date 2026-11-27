@@ -1110,4 +1110,58 @@ public class SettlementTest {
         assertNotNull(fence.get());
         assertEquals(State.shallow, journal.entries().get(0).state());
     }
+
+    // ---- round 9 (M33B1-CDX-75, -76) ----------------------------------------------------------------------------------
+
+    /** CDX-75: a deep-rollback reply publishes nothing after its host is stopped. */
+    @Test
+    public void aDeepRollbackPublishesNothingAfterTheStop() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        chain.include(hash(a), 2000);
+        chain.at(2001);
+        host.answer("shallow");
+        s.poll();
+        s.beginCall();
+        read(s, "utxos", "value", 2100, true);
+        s.endCall("view", null, "bad/readLimit");
+        chain.in.clear();
+        chain.at(2002);
+        host.answer(new HostError("refusal", "deepRollback", "scripted", List.of(), null));
+        s.poll();
+        assertNotNull(fence.get());
+        assertEquals("the journal keeps what it held before the stopped host's reply", State.shallow, journal.entries().get(0).state());
+    }
+
+    /** CDX-76: a restore acknowledges its rewind only while the chain still shows what it restored. */
+    @Test
+    public void aRestoreDoesNotAcknowledgeWhenTheChainChangedSince() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
+        seed.admit(submitted("1", a), 1990, 1990);
+        seed.beginRewind(1990, "a rewind");
+        store = st;
+        chain.at(2000);
+        chain.include(hash(a), 1995);
+        ChainJournal.Opening o = seed.open(2000);
+        Settlement s = new Settlement(new ChainJournal(st, CHAIN, MOD, 60), new HostTable(60, true), new Settlement.ChainView() {
+            @Override
+            public Tip tip() {
+                return chain.tip();
+            }
+
+            @Override
+            public Inclusion inclusion(String txHash) {
+                // gone again once the host was restored from it (another module saw it vanish)
+                return host.calls.stream().anyMatch(c -> c.startsWith("restore")) ? null : chain.inclusion(txHash);
+            }
+        }, host, lastNow::get, clock::get, ms -> { }, fence::set);
+        journal = new ChainJournal(st, CHAIN, MOD, 60);
+        host.answer(List.of("1"));
+        s.restore(o);
+        assertNotNull("the host is stopped", fence.get());
+        assertNotNull("the rewind stands", journal.record().rewind());
+    }
 }

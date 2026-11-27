@@ -271,9 +271,20 @@ public final class Settlement {
 
     private void completed(long t) throws Exception {
         restoreOpen = false;
-        // This host leaves only the rewind it was restored after (M33B1-SEC-6).
+        // This host leaves only the rewind it was restored after (M33B1-SEC-6), and only while the chain still shows what
+        // it restored (M33B1-CDX-76): a body another module saw vanish again since leaves the rewind standing.
         JournalStore.ChainRecord rec = journal.record();
-        if (rec != null && same(rec.rewind(), reconciling)) journal.endRewind(reconciling.id());
+        if (rec != null && same(rec.rewind(), reconciling)) {
+            for (Entry e : journal.entries()) {
+                if (e.inclusion() == null) continue;
+                Inclusion now = chain.inclusion(e.txHash());
+                if (!e.inclusion().equals(now)) {
+                    fenceAfter("the chain no longer shows " + e.label() + " where this host's restore found it; start it again", () -> { });
+                    return;
+                }
+            }
+            journal.endRewind(reconciling.id());
+        }
         journal.observed(t);
     }
 
@@ -564,12 +575,15 @@ public final class Settlement {
 
     private boolean settle(String reservation, String txHash, String status, @Nullable Long slot, long tip) throws Exception {
         if (!checkReply(reservation, txHash, status, slot, tip)) return false;
-        if (!deferJournal) publish(reservation, status + (slot == null ? "" : "@" + slot) + " tip " + tip);
+        // A model fenced by this reply (a deep rollback) publishes nothing: its host was stopped and the module may already
+        // belong to a successor (M33B1-CDX-75).
+        if (!deferJournal && fenced == null) publish(reservation, status + (slot == null ? "" : "@" + slot) + " tip " + tip);
         return true;
     }
 
     /** The journal takes the host's states after an event (its tip applied to every reservation). */
     private void publish(String reservation, String note) throws Exception {
+        if (closed) return;   // the session ended: nothing more is written (M33B1-CDX-75)
         for (Entry j : journal.entries()) {
             HostTable.Res r = table.lower(j.reservation());
             if (r == null) continue;
