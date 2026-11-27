@@ -320,8 +320,10 @@ public final class ChainJournal {
                     // reconciled is renewed only on evidence it has not recorded, or a lower point (M33B1-CDX-50): a restore
                     // observed before a fork cannot acknowledge it, and the same evidence seen again keeps the id.
                     Set<String> evidence = evidence(f, tipAtDetection, inclusions);
+                    // ... or evidence reaching a module that already left it (M33B1-CDX-78): it reconciled before this fork.
                     boolean renew = !evidence.isEmpty() && (c.rewind() == null || tipAtDetection < c.rewind().tip()
-                            || !c.rewind().evidence().containsAll(evidence));
+                            || !c.rewind().evidence().containsAll(evidence)
+                            || touchedOutside(f, tipAtDetection, inclusions, c.rewind().pending()));
                     if (renew) {
                         Set<String> pending = pendingModules(f);
                         Set<String> known = new LinkedHashSet<>(evidence);

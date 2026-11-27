@@ -201,6 +201,8 @@ public final class JoustRunJournal implements AutoCloseable {
 
     /** D14: a chain far below the session's now is a rewind of the chain, recorded for every module before the stop. */
     void clockRewound(long tip, String why) throws Exception {
+        fenced.compareAndSet(null, why);   // nothing more is built on this session, before the write (M33B1-CDX-79)
+        settlement.close(why);
         journal.beginRewind(tip, why);
     }
 

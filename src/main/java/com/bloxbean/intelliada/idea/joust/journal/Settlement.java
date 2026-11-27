@@ -275,10 +275,14 @@ public final class Settlement {
         // it restored (M33B1-CDX-76): a body another module saw vanish again since leaves the rewind standing.
         JournalStore.ChainRecord rec = journal.record();
         if (rec != null && same(rec.rewind(), reconciling)) {
+            // A tip read now (M33B1-CDX-77): a body the restore kept final, back within the margin at the same block,
+            // is one the host would have to hold shallow.
+            long at = chain.tip().slot();
             for (Entry e : journal.entries()) {
                 if (e.inclusion() == null) continue;
                 Inclusion now = chain.inclusion(e.txHash());
-                if (!e.inclusion().equals(now)) {
+                boolean finalNow = e.state() != State.confirmed || at - e.inclusion().slot() > margin;
+                if (!e.inclusion().equals(now) || at < e.inclusion().slot() || !finalNow) {
                     fenceAfter("the chain no longer shows " + e.label() + " where this host's restore found it; start it again", () -> { });
                     return;
                 }

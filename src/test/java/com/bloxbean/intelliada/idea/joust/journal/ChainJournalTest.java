@@ -1208,4 +1208,63 @@ public class ChainJournalTest {
         assertEquals(Path.of(System.getProperty("user.home"), ".intelliada", "joust-journal").toAbsolutePath().normalize(), root);
         assertFalse(root.startsWith(Path.of(com.intellij.openapi.application.PathManager.getSystemPath()).toAbsolutePath().normalize()));
     }
+
+    // ---- round 10 (M33B1-CDX-78, -80, -81) ------------------------------------------------------------------------------
+
+    /** CDX-78: the same fork seen again after a module acknowledged the rewind renews it for that module. */
+    @Test
+    public void theSameForkAfterAnAcknowledgementRenewsTheRewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        JournalStore.Inclusion x = new JournalStore.Inclusion(450, 450, "11".repeat(32));
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.confirmed, 450L).withInclusion(x));
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 900)), 400, 400);
+        j(s, MOD_B).open(() -> 600, h -> null);   // A's inclusion absent: rewind R, A and B pending
+        var r = j(s, MOD_B).record().rewind();
+        assertTrue(r.pending().contains(MOD_A));
+        j(s, MOD_A).endRewind(r.id());            // A restored against the block, which had come back
+        j(s, MOD_B).open(() -> 600, h -> null);   // gone again: the same evidence R holds
+        var again = j(s, MOD_B).record().rewind();
+        assertFalse("a new rewind", r.id().equals(again.id()));
+        assertTrue("A reconciles again", again.pending().contains(MOD_A));
+    }
+
+    /** CDX-80: a root whose parent other users can write, or that is a symbolic link, is refused. */
+    @Test
+    public void aLooseOrLinkedParentIsRefused() throws Exception {
+        Path parent = tmp.newFolder("loose").toPath();
+        if (!Files.getFileStore(parent).supportsFileAttributeView("posix")) return;
+        Files.setPosixFilePermissions(parent, java.nio.file.attribute.PosixFilePermissions.fromString("rwxrwxr-x"));
+        try {
+            new JournalStore(parent.resolve("journal")).admitStoreCheckForTests();
+            fail("a group-writable parent");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("other users can write"));
+        }
+        Path real = tmp.newFolder("real").toPath();
+        Path link = Files.createSymbolicLink(tmp.getRoot().toPath().resolve("link"), real);
+        try {
+            new JournalStore(link.resolve("journal")).admitStoreCheckForTests();
+            fail("a linked parent");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("symbolic link"));
+        }
+        Path fresh = tmp.getRoot().toPath().resolve("fresh");
+        new JournalStore(fresh.resolve("journal")).admitStoreCheckForTests();
+        assertEquals("a parent it creates is private", "rwx------",
+                java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(fresh)));
+    }
+
+    /** CDX-81: a version that narrows to 1 is not version 1. */
+    @Test
+    public void aVersionThatNarrowsToOneIsRefused() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 0, 0);
+        Path rec = s.recordFile(JournalStore.key(CHAIN));
+        String json = Files.readString(rec);
+        String changed = json.replaceFirst("\"version\"\\s*:\\s*1\\b", "\"version\":4294967297");
+        assertFalse("the version was replaced", changed.equals(json));
+        Files.writeString(rec, changed);
+        assertFalse(s.record(JournalStore.key(CHAIN)).ok());
+    }
 }

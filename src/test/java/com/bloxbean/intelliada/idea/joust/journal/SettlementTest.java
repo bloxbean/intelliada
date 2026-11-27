@@ -1164,4 +1164,38 @@ public class SettlementTest {
         assertNotNull("the host is stopped", fence.get());
         assertNotNull("the rewind stands", journal.record().rewind());
     }
+
+    // ---- round 10 (M33B1-CDX-77) --------------------------------------------------------------------------------------
+
+    /** CDX-77: a restore kept a body final; the chain went back within its margin at the same block before the ack. */
+    @Test
+    public void aRestoreDoesNotAcknowledgeWhenAFinalBodyIsShallowAgain() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
+        seed.admit(submitted("1", a), 1990, 1990);
+        seed.beginRewind(1990, "a rewind");
+        store = st;
+        chain.at(2100);
+        chain.include(hash(a), 2000);
+        ChainJournal.Opening o = seed.open(2100);
+        Settlement s = new Settlement(new ChainJournal(st, CHAIN, MOD, 60), new HostTable(60, true), new Settlement.ChainView() {
+            @Override
+            public Tip tip() {
+                // back to 2010 once the host was restored: the same block, now within the margin
+                if (host.calls.stream().anyMatch(c -> c.startsWith("restore"))) chain.at(2010);
+                return chain.tip();
+            }
+
+            @Override
+            public Inclusion inclusion(String txHash) {
+                return chain.inclusion(txHash);
+            }
+        }, host, lastNow::get, clock::get, ms -> { }, fence::set);
+        journal = new ChainJournal(st, CHAIN, MOD, 60);
+        host.answer(List.of());
+        s.restore(o);
+        assertNotNull("the host is stopped", fence.get());
+        assertNotNull("the rewind stands", journal.record().rewind());
+    }
 }

@@ -476,7 +476,7 @@ public final class JournalStore {
             for (var it = ms.fields(); it.hasNext(); ) {
                 var m = it.next();
                 if (!KEY.matcher(m.getKey()).matches() || !m.getValue().isIntegralNumber() || !m.getValue().canConvertToLong()
-                        || m.getValue().longValue() < 1) throw new Bad();
+                        || !m.getValue().canConvertToLong() || m.getValue().longValue() < 1) throw new Bad();
                 modules.put(m.getKey(), m.getValue().longValue());
             }
             Fence fence = null;
@@ -723,7 +723,8 @@ public final class JournalStore {
 
     private static void version(JsonNode n) throws Bad {
         JsonNode v = n.get("version");
-        if (v == null || !v.isIntegralNumber() || v.intValue() != VERSION) throw new Bad();
+        // Exactly this version: no narrowing of a larger integer onto it (M33B1-CDX-81).
+        if (v == null || !v.isIntegralNumber() || !v.canConvertToInt() || v.intValue() != VERSION) throw new Bad();
     }
 
     private static String text(JsonNode n, String f) throws Bad {
@@ -935,6 +936,29 @@ public final class JournalStore {
      * Creates {@code dir} (and its parents up to the root) private to this user; an existing one must be a real
      * directory owned by this user, and is made private.
      */
+    /**
+     * The root's parent decides the root's name (M33B1-CDX-80): it must be a real directory, owned by this user, that no
+     * other user can write. It is not changed (the legacy account cache shares {@code ~/.intelliada}); a loose one refuses.
+     */
+    static void guardParent(@Nullable Path parent) throws IOException {
+        if (parent == null) return;
+        if (Files.isSymbolicLink(parent)) throw new IOException("the journal's parent directory " + parent + " is a symbolic link");
+        if (!Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) throw new IOException("the journal's parent " + parent + " is not a directory");
+        if (!posix(parent)) return;
+        PosixFileAttributeView v = Files.getFileAttributeView(parent, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        var a = v.readAttributes();
+        if (!a.owner().equals(me())) throw new IOException("the journal's parent directory " + parent + " belongs to another user");
+        if (a.permissions().contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
+                || a.permissions().contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE)) {
+            throw new IOException("other users can write " + parent + "; run chmod go-w on it to use IntelliAda's journal");
+        }
+    }
+
+    /** Tests: creates the root's private directory chain as a first write would. */
+    void admitStoreCheckForTests() throws IOException {
+        privateDir(root);
+    }
+
     private void privateDir(Path dir) throws IOException {
         Path rel = root.relativize(dir.toAbsolutePath().normalize());
         if (rel.startsWith("..")) throw new IOException("outside the journal's root");
@@ -946,11 +970,17 @@ public final class JournalStore {
         for (Path a = root.getParent(); a != null && !Files.isDirectory(a); a = a.getParent()) missing.add(0, a);
         for (Path a : missing) {
             try {
-                Files.createDirectory(a);
+                // The root's own parent is created private: whoever can write it can rename the root away (M33B1-CDX-80).
+                if (a.equals(root.getParent()) && a.getParent() != null && posix(a.getParent())) {
+                    Files.createDirectory(a, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+                } else {
+                    Files.createDirectory(a);
+                }
             } catch (FileAlreadyExistsException raced) {
                 // made meanwhile
             }
         }
+        guardParent(root.getParent());
         // Up to the user's home, and never into directories that are not this user's.
         Path home = homeDir();
         for (Path a = root.getParent(); a != null && a.getParent() != null && !a.equals(home); a = a.getParent()) {
