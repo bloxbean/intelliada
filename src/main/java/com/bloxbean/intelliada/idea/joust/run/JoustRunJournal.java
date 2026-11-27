@@ -144,6 +144,13 @@ public final class JoustRunJournal implements AutoCloseable {
                     + opening.completeAbove() + waitFor(opening.completeAbove());
         }
         if (table.deepRollback()) return "a final transaction was rolled back; stop the dev host and start it again";
+        try {
+            String unsaved = journal.unsavedRewind();   // M33B1-CDX-84
+            if (unsaved != null) return "a rewind on this chain is being recorded (" + unsaved + "); start the dev host again";
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "interrupted";
+        }
         // The chain's record: a fence or a rewind another host of this chain found (M33B1-DES-3).
         try {
             JournalStore.ChainRecord c = journal.record();

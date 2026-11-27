@@ -102,7 +102,17 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
             assertTrue(s1.running().process().waitFor(20, TimeUnit.SECONDS));
 
             // A fresh host: restoring, restored from the journal at the chain as it is now.
-            JoustRunSession s2 = off(() -> JoustRunSession.start(service, module, JoustRunSession.bind(node), journalStore, launcher, r -> { }));
+            // The service clears the stopped host's slot after the process exits (M33B1-DES-23): retried briefly.
+            JoustRunSession s2 = off(() -> {
+                for (int tries = 0; ; tries++) {
+                    try {
+                        return JoustRunSession.start(service, module, JoustRunSession.bind(node), journalStore, launcher, r -> { });
+                    } catch (Exception e) {
+                        if (tries >= 50 || e.getMessage() == null || !e.getMessage().contains("starting or stopping")) throw e;
+                        Thread.sleep(200);
+                    }
+                }
+            });
             assertTrue("initialized restoring", s2.running().requested().path("restoring").booleanValue());
             List<JournalStore.Entry> restored = off(() -> s2.journalForTests().journal().entries());
             assertEquals(1, restored.size());

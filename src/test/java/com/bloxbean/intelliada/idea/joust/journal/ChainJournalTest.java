@@ -1068,7 +1068,11 @@ public class ChainJournalTest {
         } catch (JournalStore.StoreFailed expected) {
             // refused: recover first
         }
-        assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_A).open(0).history());
+        // The open recovers the lost mark, then records the refused rewind (M33B1-CDX-84), which this opening reconciles.
+        ChainJournal.Opening o = j(s, MOD_A).open(0);
+        assertTrue(o.restoring());
+        assertEquals("test", j(s, MOD_A).record().rewind().reason());
+        assertNull(j(s, MOD_A).unsavedRewind());
     }
 
     /** CDX-63: a module admitted again after removal never reuses a revision. */
@@ -1229,18 +1233,15 @@ public class ChainJournalTest {
         assertTrue("A reconciles again", again.pending().contains(MOD_A));
     }
 
-    /** CDX-80: a root whose parent other users can write, or that is a symbolic link, is refused. */
+    /** CDX-80, DES-22: a linked parent is refused; a loose one of this user's is tightened. */
     @Test
     public void aLooseOrLinkedParentIsRefused() throws Exception {
         Path parent = tmp.newFolder("loose").toPath();
         if (!Files.getFileStore(parent).supportsFileAttributeView("posix")) return;
-        Files.setPosixFilePermissions(parent, java.nio.file.attribute.PosixFilePermissions.fromString("rwxrwxr-x"));
-        try {
-            new JournalStore(parent.resolve("journal")).admitStoreCheckForTests();
-            fail("a group-writable parent");
-        } catch (java.io.IOException expected) {
-            assertTrue(expected.getMessage(), expected.getMessage().contains("other users can write"));
-        }
+        Files.setPosixFilePermissions(parent, java.nio.file.attribute.PosixFilePermissions.fromString("rwxrwxrwx"));
+        new JournalStore(parent.resolve("journal")).admitStoreCheckForTests();
+        assertEquals("a loose parent of this user's is tightened (DES-22)", "rwxr-xr-x",
+                java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(parent)));
         Path real = tmp.newFolder("real").toPath();
         Path link = Files.createSymbolicLink(tmp.getRoot().toPath().resolve("link"), real);
         try {
@@ -1266,5 +1267,54 @@ public class ChainJournalTest {
         assertFalse("the version was replaced", changed.equals(json));
         Files.writeString(rec, changed);
         assertFalse(s.record(JournalStore.key(CHAIN)).ok());
+    }
+
+    // ---- round 11 (M33B1-CDX-84, -86) ----------------------------------------------------------------------------------
+
+    /** CDX-84: a rewind whose write failed still refuses another module's admission, and is persisted by a retry. */
+    @Test
+    public void anUnsavedRewindStopsOtherModulesUntilPersisted() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        s.failWritesForTests = p -> p.getFileName().toString().startsWith("record");
+        try {
+            j(s, MOD_A).beginRewind(100, "the clock went back");
+            fail("the write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        try {
+            j(s, MOD_B).admit(submitted("2", tx(List.of(ref(2, 0)), 900)), 400, 400);
+            fail("admitted while a rewind was unsaved");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("rewind"));
+        }
+        assertNotNull(j(s, MOD_B).unsavedRewind());
+        s.failWritesForTests = p -> false;
+        assertNotNull("the retry reports it", j(s, MOD_B).unsavedRewind());
+        assertNotNull("and persisted it", j(s, MOD_B).record().rewind());
+        assertNull(j(s, MOD_B).unsavedRewind());
+    }
+
+    /** CDX-86: a refused parent's reason reaches the module lock's refusal. */
+    @Test
+    public void aLooseParentsReasonReachesTheLockRefusal() throws Exception {
+        Path real = tmp.newFolder("real2").toPath();
+        Path link = Files.createSymbolicLink(tmp.getRoot().toPath().resolve("link2"), real);
+        try {
+            new JournalStore(link.resolve("journal")).ownModule(JournalStore.key(CHAIN), MOD_A);
+            fail("a linked parent");
+        } catch (JournalStore.StoreFailed expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("is a symbolic link"));
+        }
+    }
+
+    /** CDX-85: the well-known principals an ACL parent may grant writes to. */
+    @Test
+    public void onlyWellKnownPrincipalsMayWriteAnAclParent() {
+        assertTrue(JournalStore.trustedPrincipal("NT AUTHORITY\\SYSTEM"));
+        assertTrue(JournalStore.trustedPrincipal("BUILTIN\\Administrators"));
+        assertFalse(JournalStore.trustedPrincipal("BUILTIN\\Users"));
+        assertFalse(JournalStore.trustedPrincipal("Everyone"));
+        assertFalse(JournalStore.trustedPrincipal("HOST\\someone"));
     }
 }

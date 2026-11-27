@@ -1198,4 +1198,65 @@ public class SettlementTest {
         assertNotNull("the host is stopped", fence.get());
         assertNotNull("the rewind stands", journal.record().rewind());
     }
+
+    // ---- round 11 (M33B1-CDX-82, -83) ----------------------------------------------------------------------------------
+
+    private Settlement restoredUnder(String cbor, long admitAt, long openAt, Settlement.ChainView view, List<String> ids) throws Exception {
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
+        seed.admit(submitted("1", cbor), admitAt, admitAt);
+        seed.beginRewind(admitAt, "a rewind");
+        store = st;
+        ChainJournal.Opening o = seed.open(openAt);
+        Settlement s = new Settlement(new ChainJournal(st, CHAIN, MOD, 60), new HostTable(60, true), view, host, lastNow::get, clock::get, ms -> { }, fence::set);
+        journal = new ChainJournal(st, CHAIN, MOD, 60);
+        host.answer(ids);
+        s.restore(o);
+        return s;
+    }
+
+    /** CDX-82: a body kept expired that is valid again at the acknowledgement's chain point stops the host. */
+    @Test
+    public void aRestoreDoesNotAcknowledgeWhenAnExpiredBodyIsValidAgain() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(2100);
+        restoredUnder(a, 1990, 2100, new Settlement.ChainView() {
+            @Override
+            public Tip tip() {
+                if (host.calls.stream().anyMatch(c -> c.startsWith("restore"))) chain.at(2010);
+                return chain.tip();
+            }
+
+            @Override
+            public Inclusion inclusion(String txHash) {
+                return chain.inclusion(txHash);
+            }
+        }, List.of());
+        assertNotNull("the host is stopped", fence.get());
+        assertNotNull("the rewind stands", journal.record().rewind());
+    }
+
+    /** CDX-83: the chain goes back between the acknowledgement's tip read and its inclusion read. */
+    @Test
+    public void aRollbackBetweenTheTipAndTheInclusionReadIsSeen() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(2100);
+        chain.include(hash(a), 2000);
+        java.util.concurrent.atomic.AtomicInteger tipsAfterRestore = new java.util.concurrent.atomic.AtomicInteger();
+        restoredUnder(a, 1990, 2100, new Settlement.ChainView() {
+            @Override
+            public Tip tip() {
+                return chain.tip();
+            }
+
+            @Override
+            public Inclusion inclusion(String txHash) {
+                // the first inclusion read after the restore: the chain is back at 2010 by the next tip read
+                if (host.calls.stream().anyMatch(c -> c.startsWith("restore")) && tipsAfterRestore.getAndIncrement() == 0) chain.at(2010);
+                return chain.inclusion(txHash);
+            }
+        }, List.of());
+        assertNotNull("the host is stopped", fence.get());
+        assertNotNull("the rewind stands", journal.record().rewind());
+    }
 }

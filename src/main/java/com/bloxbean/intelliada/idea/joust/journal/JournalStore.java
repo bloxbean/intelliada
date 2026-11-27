@@ -361,7 +361,8 @@ public final class JournalStore {
             privateDir(chainDir(chainKey));
             real = chainDir(chainKey).toRealPath().resolve(moduleKey + ".host").toString();
         } catch (IOException e) {
-            throw new StoreFailed("the module's host lock cannot be taken (" + e.getClass().getSimpleName() + ")", e);
+            // The reason kept (M33B1-CDX-86): a loose parent's chmod hint reaches the panel.
+            throw new StoreFailed("the module's host lock cannot be taken: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()), e);
         }
         // Reserved in this JVM before any descriptor is opened: a refused second owner never opens (and so never closes)
         // a descriptor of the live owner's lock file, which would release its OS lock (M33B1-CDX-4).
@@ -938,25 +939,69 @@ public final class JournalStore {
      */
     /**
      * The root's parent decides the root's name (M33B1-CDX-80): it must be a real directory, owned by this user, that no
-     * other user can write. It is not changed (the legacy account cache shares {@code ~/.intelliada}); a loose one refuses.
+     * other user can write. One of this user's that others can write (a umask of 002 on Linux; M33B1-DES-22) loses its
+     * group and other write bits: the legacy account cache sharing {@code ~/.intelliada} needs only the owner's.
      */
     static void guardParent(@Nullable Path parent) throws IOException {
         if (parent == null) return;
         if (Files.isSymbolicLink(parent)) throw new IOException("the journal's parent directory " + parent + " is a symbolic link");
         if (!Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) throw new IOException("the journal's parent " + parent + " is not a directory");
-        if (!posix(parent)) return;
+        if (!posix(parent)) {
+            aclPrivate(parent);   // ACL-backed file systems (Windows; M33B1-CDX-85)
+            return;
+        }
         PosixFileAttributeView v = Files.getFileAttributeView(parent, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
         var a = v.readAttributes();
         if (!a.owner().equals(me())) throw new IOException("the journal's parent directory " + parent + " belongs to another user");
         if (a.permissions().contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
                 || a.permissions().contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE)) {
-            throw new IOException("other users can write " + parent + "; run chmod go-w on it to use IntelliAda's journal");
+            Set<java.nio.file.attribute.PosixFilePermission> tight = java.util.EnumSet.copyOf(a.permissions());
+            tight.remove(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE);
+            tight.remove(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE);
+            try {
+                v.setPermissions(tight);
+            } catch (IOException e) {
+                throw new IOException("other users can write " + parent + "; run chmod go-w on it to use IntelliAda's journal", e);
+            }
+            var again = v.readAttributes().permissions();
+            if (again.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE) || again.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE)) {
+                throw new IOException("other users can write " + parent + "; run chmod go-w on it to use IntelliAda's journal");
+            }
         }
     }
 
     /** Tests: creates the root's private directory chain as a first write would. */
     void admitStoreCheckForTests() throws IOException {
         privateDir(root);
+    }
+
+    /**
+     * On an ACL file system: the parent belongs to this user and grants no other principal the right to change its
+     * entries, apart from the system and administrators (who can anyway). Where neither POSIX nor ACL attributes exist,
+     * the privacy cannot be established and the store refuses (M33B1-CDX-85).
+     */
+    static void aclPrivate(Path dir) throws IOException {
+        java.nio.file.attribute.AclFileAttributeView v = Files.getFileAttributeView(dir, java.nio.file.attribute.AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (v == null) throw new IOException("the privacy of " + dir + " cannot be verified on this file system");
+        var owner = v.getOwner();
+        var me = dir.getFileSystem().getUserPrincipalLookupService().lookupPrincipalByName(System.getProperty("user.name"));
+        if (!owner.equals(me)) throw new IOException("the journal's parent directory " + dir + " belongs to another user");
+        Set<java.nio.file.attribute.AclEntryPermission> writes = java.util.EnumSet.of(
+                java.nio.file.attribute.AclEntryPermission.ADD_FILE, java.nio.file.attribute.AclEntryPermission.ADD_SUBDIRECTORY,
+                java.nio.file.attribute.AclEntryPermission.DELETE_CHILD, java.nio.file.attribute.AclEntryPermission.DELETE,
+                java.nio.file.attribute.AclEntryPermission.WRITE_ACL, java.nio.file.attribute.AclEntryPermission.WRITE_OWNER);
+        for (var e : v.getAcl()) {
+            if (e.type() != java.nio.file.attribute.AclEntryType.ALLOW || java.util.Collections.disjoint(e.permissions(), writes)) continue;
+            if (e.principal().equals(me) || trustedPrincipal(e.principal().getName())) continue;
+            throw new IOException(e.principal().getName() + " can change " + dir + "; remove its write access to use IntelliAda's journal");
+        }
+    }
+
+    /** The system, administrators and the creator-owner placeholder (well-known names, any domain prefix). */
+    static boolean trustedPrincipal(String name) {
+        String n = name.contains("\\") ? name.substring(name.lastIndexOf('\\') + 1) : name;
+        return n.equalsIgnoreCase("SYSTEM") || n.equalsIgnoreCase("Administrators") || n.equalsIgnoreCase("CREATOR OWNER")
+                || n.equalsIgnoreCase("TrustedInstaller");
     }
 
     private void privateDir(Path dir) throws IOException {

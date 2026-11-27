@@ -190,16 +190,12 @@ public final class Settlement {
             if (e.handout() == Handout.none || e.handout() == Handout.approvalPending) continue;   // invalidated, never restored
             if (!hashes.add(e.txHash())) continue;
             Inclusion in = o.inclusions.get(e.txHash());
-            boolean within = in != null && in.slot() >= (e.validFrom() == null ? 0 : e.validFrom()) && in.slot() < e.validTo() && in.slot() <= t;
-            if (within && t - in.slot() <= margin) {
-                send.add(e.withState(State.shallow, in.slot()).withInclusion(in).withEvent("restored shallow@" + in.slot()));
-            } else if (within) {
+            switch (restoreClass(e, in, t)) {
+                case shallow -> send.add(e.withState(State.shallow, in.slot()).withInclusion(in).withEvent("restored shallow@" + in.slot()));
                 // Kept for its retention under an id no host issues, so a new host's ids never collide with it.
-                kept.add(e.withReservation(FINAL + e.txHash()).withState(State.confirmed, in.slot()).withInclusion(in).withEvent("final@" + in.slot()));
-            } else if (e.validTo() > t) {
-                send.add(e.withState(State.prepared, null).withInclusion(null).withEvent("restored prepared"));
-            } else {
-                kept.add(e.withReservation(FINAL + e.txHash()).withState(State.expired, null).withInclusion(null).withEvent("expired@" + t));
+                case confirmed -> kept.add(e.withReservation(FINAL + e.txHash()).withState(State.confirmed, in.slot()).withInclusion(in).withEvent("final@" + in.slot()));
+                case prepared -> send.add(e.withState(State.prepared, null).withInclusion(null).withEvent("restored prepared"));
+                default -> kept.add(e.withReservation(FINAL + e.txHash()).withState(State.expired, null).withInclusion(null).withEvent("expired@" + t));
             }
         }
         List<List<Entry>> batches = batches(send);
@@ -269,25 +265,48 @@ public final class Settlement {
         this.chainCheck = c;
     }
 
+    /** How a restore classifies a journaled body at chain point {@code t} with inclusion {@code in} (D17 "Restart"). */
+    private State restoreClass(Entry e, @Nullable Inclusion in, long t) {
+        boolean within = in != null && in.slot() >= (e.validFrom() == null ? 0 : e.validFrom()) && in.slot() < e.validTo() && in.slot() <= t;
+        if (within && t - in.slot() <= margin) return State.shallow;
+        if (within) return State.confirmed;
+        return e.validTo() > t ? State.prepared : State.expired;
+    }
+
     private void completed(long t) throws Exception {
         restoreOpen = false;
         // This host leaves only the rewind it was restored after (M33B1-SEC-6), and only while the chain still shows what
-        // it restored (M33B1-CDX-76): a body another module saw vanish again since leaves the rewind standing.
+        // it restored, at one coherent chain point read now (M33B1-CDX-76, -77, -82, -83): a body kept final (no host
+        // row) must still classify as it was kept, and a body restored shallow must still show the same inclusion.
+        // Anything else leaves the rewind standing and stops the host.
         JournalStore.ChainRecord rec = journal.record();
         if (rec != null && same(rec.rewind(), reconciling)) {
-            // A tip read now (M33B1-CDX-77): a body the restore kept final, back within the margin at the same block,
-            // is one the host would have to hold shallow.
-            long at = chain.tip().slot();
-            for (Entry e : journal.entries()) {
-                if (e.inclusion() == null) continue;
-                Inclusion now = chain.inclusion(e.txHash());
-                boolean finalNow = e.state() != State.confirmed || at - e.inclusion().slot() > margin;
-                if (!e.inclusion().equals(now) || at < e.inclusion().slot() || !finalNow) {
-                    fenceAfter("the chain no longer shows " + e.label() + " where this host's restore found it; start it again", () -> { });
+            List<Entry> es = journal.entries();
+            Observation o = observe(es);
+            if (o == null) {
+                fenceAfter("the chain kept moving while this host's restore was checked; start it again", () -> { });
+                return;
+            }
+            chainCheck.run();
+            long at = o.tip.slot();
+            for (Entry e : es) {
+                Inclusion now = o.inclusions.get(e.txHash());
+                boolean holds;
+                if (e.reservation().startsWith(FINAL)) {
+                    holds = restoreClass(e, now, at) == e.state() && java.util.Objects.equals(e.inclusion(), now);
+                } else if (e.inclusion() != null) {
+                    holds = e.inclusion().equals(now) && now.slot() <= at;
+                } else {
+                    holds = true;   // restored prepared: the host holds it, and settlement reports its landing or expiry
+                }
+                if (!holds) {
+                    fenceAfter("the chain changed for " + e.label() + " while this host's restore finished; start it again", () -> { });
                     return;
                 }
             }
             journal.endRewind(reconciling.id());
+            journal.observed(at);
+            return;
         }
         journal.observed(t);
     }
@@ -354,6 +373,13 @@ public final class Settlement {
      */
     public synchronized boolean poll() throws Exception {
         if (fenced != null || rewind != null) return false;
+        // A rewind this process detected but could not persist stops every host of the chain here (M33B1-CDX-84).
+        String unsaved = journal.unsavedRewind();
+        if (unsaved != null) {
+            rewind = unsaved;
+            fence("a rewind on this chain is being recorded (" + unsaved + ")");
+            return false;
+        }
         // A rewind another host of this chain found stops this one too, unless this host was restored after it (D14:
         // every live host on the chain; M33B1-DES-3, -CDX-5).
         JournalStore.ChainRecord rec = journal.record();

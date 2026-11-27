@@ -212,6 +212,22 @@ public final class ChainJournal {
      * the inclusions were read is never taken for a rewind (M33B1-CDX-66).
      */
     public Opening open(Tip tip, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
+        // A rewind this process could not persist is persisted before anything opens on the chain (M33B1-CDX-84). When
+        // the record refuses it (history to recover first), the open recovers, then the rewind is persisted and the chain
+        // opened again, so this opening reconciles it.
+        Unsaved u = UNSAVED.get(unsavedKey());
+        if (u != null) {
+            try {
+                beginRewind(u.tip(), u.reason());
+            } catch (StoreFailed refused) {
+                open1(tip, inclusions);
+                beginRewind(u.tip(), u.reason());
+            }
+        }
+        return open1(tip, inclusions);
+    }
+
+    private Opening open1(Tip tip, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
         // Irreversible loss needs only local evidence: persisted before the first provider request (M33B1-CDX-71).
         try (var held = store.lock(chainKey)) {
             if (judge(load()).kind() == Kind.BOTH_LOST) return new Opening(List.of(), false, null, PERMANENT, History.BOTH_LOST);
@@ -521,6 +537,7 @@ public final class ChainJournal {
         if (e.validTo() > Math.max(tip, now) + TimePolicy.LARGEST_TTL) {
             throw new Fenced("the prepared transaction is valid beyond what IntelliAda's journal can recover");
         }
+        if (unsavedRewind() != null) throw new Fenced("a rewind of this chain is being recorded; start the dev host again");   // M33B1-CDX-84
         try (var held = store.lock(chainKey)) {
             Files f = load();
             Classified k = judge(f);
@@ -907,7 +924,37 @@ public final class ChainJournal {
      * journaled body on the chain must reconcile on a fresh host before the rewind clears, and admission stays closed
      * meanwhile. Other hosts of the chain see it in the record and stop.
      */
+    /** A rewind detected in this process whose persistence failed, per chain key (M33B1-CDX-84). */
+    private record Unsaved(long tip, String reason) {
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, Unsaved> UNSAVED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Per store and chain: one process can hold several stores (tests). */
+    private String unsavedKey() {
+        return store.root() + "|" + chainKey;
+    }
+
+    /**
+     * A rewind of this chain that this process detected and has not yet persisted, retried now (M33B1-CDX-84): its
+     * reason while one was pending (persisted by this retry or not), or null. Every host of the chain stops on it, and
+     * admission refuses until it is persisted.
+     */
+    public @Nullable String unsavedRewind() throws InterruptedException {
+        Unsaved u = UNSAVED.get(unsavedKey());
+        if (u == null) return null;
+        try {
+            beginRewind(u.tip(), u.reason());
+        } catch (StoreFailed e) {
+            // still unsaved; refused meanwhile
+        }
+        return u.reason();
+    }
+
     public void beginRewind(long tip, String reason) throws StoreFailed, InterruptedException {
+        // Held in this process first: a failed write still stops every module of the chain here (M33B1-CDX-84).
+        Unsaved mine = UNSAVED.merge(unsavedKey(), new Unsaved(tip, reason), (a, b) -> a.tip() <= b.tip() ? a : b);
+        tip = Math.min(tip, mine.tip());
         try (var held = store.lock(chainKey)) {
             Files f = load();
             ChainRecord c = existing(f);
@@ -916,6 +963,8 @@ public final class ChainJournal {
             long at = c.rewind() == null ? tip : Math.min(tip, c.rewind().tip());
             // A new id each time (M33B1-CDX-5): a restore observed before this rewind cannot acknowledge it.
             persist(f, c.withNewRewind(new Rewind(at, reason, pending, Rewind.newId())));
+            long saved = at;
+            UNSAVED.computeIfPresent(unsavedKey(), (k, u) -> u.tip() >= saved ? null : u);
         }
     }
 
