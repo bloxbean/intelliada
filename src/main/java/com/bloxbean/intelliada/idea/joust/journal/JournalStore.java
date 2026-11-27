@@ -842,7 +842,13 @@ public final class JournalStore {
      */
     private void readable(Path f) throws IOException, StoreFailed {
         Path dir = f.getParent();
-        if (dir == null || posix(dir)) return;
+        if (dir == null) return;
+        try {
+            realDirectories(dir);
+        } catch (IOException e) {
+            throw new StoreFailed(e.getMessage(), e);
+        }
+        if (posix(dir)) return;
         guardParent(root.getParent());
         for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) {
             try {
@@ -853,8 +859,25 @@ public final class JournalStore {
         }
         try {
             aclPrivate(f);
+        } catch (java.nio.file.AccessDeniedException denied) {
+            throw denied;   // an unreadable leaf in verified directories is lost history (M33B1-CDX-105)
         } catch (IOException e) {
             throw new StoreFailed("the journal is not private: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Each directory from the root down to {@code dir} is a real directory (M33B1-CDX-103): no symbolic link, junction
+     * or other reparse point, and it resolves to itself under the root's real path.
+     */
+    private void realDirectories(Path dir) throws IOException {
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return;
+        Path realRoot = root.toRealPath();
+        for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) {
+            if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) continue;
+            var a = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (a.isSymbolicLink() || a.isOther() || !a.isDirectory()) throw new IOException("a journal directory is a link or junction: " + p);
+            if (!p.toRealPath().equals(realRoot.resolve(root.relativize(p)))) throw new IOException("a journal directory resolves elsewhere: " + p);
         }
     }
 
@@ -1117,5 +1140,6 @@ public final class JournalStore {
                 aclPrivate(p);   // every directory of the store, existing ones included (M33B1-CDX-92)
             }
         }
+        realDirectories(dir);   // once they all exist (M33B1-CDX-103)
     }
 }

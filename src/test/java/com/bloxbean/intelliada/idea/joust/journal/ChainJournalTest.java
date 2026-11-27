@@ -1482,4 +1482,56 @@ public class ChainJournalTest {
         assertNull(j(s, MOD_B).unsavedReason());
         assertFalse("no loss of the mark", j(s, MOD_B).open(500).history() == ChainJournal.History.LOST_MARK);
     }
+
+    // ---- round 14 (M33B1-CDX-100, -101, -103) --------------------------------------------------------------------------
+
+    /** CDX-100: on a new chain, a first rewind whose registry write failed is completed without a lost mark. */
+    @Test
+    public void aFirstRewindsRegistryWriteIsCompletedOnANewChain() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        Path reg = s.registryFile(k).getFileName();
+        s.failWritesForTests = p -> p.getFileName().equals(reg);
+        try {
+            j(s, MOD_A).beginRewind(100, "the clock went back");
+            fail("the registry write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        assertTrue("the record was written", Files.exists(s.recordFile(k)));
+        s.failWritesForTests = p -> false;
+        j(s, MOD_A).unsavedRewind();
+        assertNull(j(s, MOD_A).unsavedReason());
+        assertTrue(Files.exists(s.registryFile(k)));
+        assertFalse("no loss of the mark", j(s, MOD_A).open(500).history() == ChainJournal.History.LOST_MARK);
+    }
+
+    /** CDX-101: a record rebuilt after its loss carries a rewind count no host saw. */
+    @Test
+    public void aRebuiltRecordCountsAsARewind() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        long seen = s.record(k).value().rewinds();
+        Files.delete(s.recordFile(k));
+        assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_B).open(500).history());
+        assertNotEquals(seen, s.record(k).value().rewinds());
+    }
+
+    /** CDX-103: a directory of the store that is a link is refused, on reads too. */
+    @Test
+    public void aLinkedStoreDirectoryIsRefused() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        Path regDir = s.registryFile(k).getParent();
+        Path moved = tmp.getRoot().toPath().resolve("elsewhere");
+        Files.move(regDir, moved);
+        Files.createSymbolicLink(regDir, moved);
+        try {
+            j(s, MOD_A).open(500);
+            fail("read through a link");
+        } catch (JournalStore.StoreFailed expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("link"));
+        }
+    }
 }

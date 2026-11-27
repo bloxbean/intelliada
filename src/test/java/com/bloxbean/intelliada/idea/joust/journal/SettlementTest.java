@@ -1296,4 +1296,18 @@ public class SettlementTest {
         assertNotNull(fence.get());
         assertFalse(s.poll());
     }
+
+    // ---- round 14 (M33B1-CDX-101) -------------------------------------------------------------------------------------
+
+    /** CDX-101: a host stops when the chain record it started with is gone. */
+    @Test
+    public void aHostStopsWhenTheChainRecordIsLost() throws Exception {
+        chain.at(600);
+        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
+        Settlement s = restored(List.of(), List.of());
+        java.nio.file.Files.delete(store.recordFile(JournalStore.key(CHAIN)));
+        assertTrue(s.rewindMissed());
+        assertTrue(fence.get(), fence.get().contains("record is missing"));
+    }
 }

@@ -175,6 +175,7 @@ public final class Settlement {
         JournalStore.ChainRecord atStart = journal.record();
         reconciling = atStart == null ? null : atStart.rewind();
         rewindsSeen = opening.rewinds();
+        recordSeen = journal.record() != null;
         if (!opening.restoring()) return;
         completeAbove = opening.completeAbove();
         restoreOpen = true;
@@ -241,6 +242,9 @@ public final class Settlement {
         }
         return out;
     }
+
+    /** Whether this host has read the chain's record (a new chain has none until its first write; M33B1-CDX-101). */
+    private boolean recordSeen;
 
     /** The chain's rewind count this host started (or was restored) at; −1 unchecked (M33B1-CDX-34). */
     private long rewindsSeen = -1;
@@ -338,8 +342,10 @@ public final class Settlement {
         if (fenced != null) return true;
         String unsaved = journal.unsavedReason();
         JournalStore.ChainRecord rec = journal.record();
+        if (rec != null) recordSeen = true;
         String why = unsaved != null ? "a rewind on this chain is being recorded (" + unsaved + ")"
-                : rec == null ? null
+                // Gone after this host saw it (M33B1-CDX-101); a new chain has none until its first write.
+                : rec == null ? (recordSeen ? "the chain's record is missing" : null)
                 : rec.rewind() != null && !same(rec.rewind(), reconciling) ? "a rewind on this chain is being reconciled (" + rec.rewind().reason() + ")"
                 : rewindsSeen >= 0 && rec.rewinds() != rewindsSeen ? "a rewind on this chain was reconciled while this host ran"
                 : null;

@@ -494,8 +494,11 @@ public final class ChainJournal {
         gen = gen + 1;
         List<Registration> regs = c == null ? List.of() : c.registrations();
         Rewind rewind = c == null ? null : c.rewind();
+        // A record rebuilt without the old one counts as a rewind no host saw (M33B1-CDX-101): its count is the new
+        // generation, above any count the lost record held (each count change was a record write), so every host
+        // opened before the rebuild stops on the count check.
         store.writeRecord(new ChainRecord(chain, bound, modules, gen, new Fence(bound, why), rewind, regs,
-                c == null ? null : c.recovered(), c == null ? 0 : c.rewinds()));
+                c == null ? null : c.recovered(), c == null ? gen : c.rewinds()));
         store.writeRegistry(new RegistryEntry(chain, base, base, gen));
         return bound;
     }
@@ -935,7 +938,7 @@ public final class ChainJournal {
      * cleared once persisted. Admission, handout and pruning check it under the chain lock (M33B1-CDX-88..90); every
      * host of the chain stops on it; the next open persists it.
      */
-    private record Unsaved(Rewind rewind) {
+    private record Unsaved(Rewind rewind, Set<String> tokens) {
     }
 
     private static final java.util.concurrent.ConcurrentHashMap<String, Unsaved> UNSAVED = new java.util.concurrent.ConcurrentHashMap<>();
@@ -958,9 +961,16 @@ public final class ChainJournal {
         return new Rewind(Math.min(a.tip(), b.tip()), a.reason(), pending, Rewind.newId(), evidence);
     }
 
-    /** Registers {@code r} (merged with any unsaved rewind) in this process before anything is written. */
-    private Unsaved register(Rewind r) {
-        return UNSAVED.compute(unsavedKey(), (k, u) -> new Unsaved(u == null ? r : union(r, u.rewind())));
+    /**
+     * Registers {@code r} (merged with any unsaved rewind) in this process before anything is written, under
+     * {@code token}: whoever persists the merged rewind consumes every token in it (M33B1-CDX-104).
+     */
+    private Unsaved register(Rewind r, String token) {
+        return UNSAVED.compute(unsavedKey(), (k, u) -> {
+            Set<String> tokens = new LinkedHashSet<>(u == null ? Set.of() : u.tokens());
+            tokens.add(token);
+            return new Unsaved(u == null ? r : union(r, u.rewind()), tokens);
+        });
     }
 
     /**
@@ -968,7 +978,7 @@ public final class ChainJournal {
      * write keeps it in memory (M33B1-CDX-87). Returns the record written.
      */
     private ChainRecord persistRewind(Files f, ChainRecord c, Rewind r) throws StoreFailed {
-        Unsaved u = register(r);
+        Unsaved u = register(r, Rewind.newId());
         ChainRecord next = c.withNewRewind(u.rewind());
         persist(f, next);
         UNSAVED.remove(unsavedKey(), u);
@@ -985,8 +995,11 @@ public final class ChainJournal {
             Files f = load();
             ChainRecord c = existing(f);
             if (c.rewind() != null && c.rewind().id().equals(u.rewind().id())) {
-                // The record holds it; the write that failed may have been the registry's (M33B1-CDX-100): written again.
-                persist(f, c);
+                // The record holds it; the write that failed was the registry's (M33B1-CDX-100). On a new chain there is
+                // no registry yet: it is written at the record's generation, as the failed write would have; otherwise
+                // both are written again.
+                if (f.reg().value() == null && !f.reg().lost()) store.writeRegistry(new RegistryEntry(chain, 0, 0, c.generation()));
+                else persist(f, c);
                 UNSAVED.remove(unsavedKey(), u);
                 return;
             }
@@ -1026,8 +1039,12 @@ public final class ChainJournal {
      * (M33B1-CDX-84, -88).
      */
     public void beginRewind(long tip, String reason) throws StoreFailed, InterruptedException {
-        register(new Rewind(tip, reason, new LinkedHashSet<>(Set.of(module)), Rewind.newId(), Set.of()));
+        String token = Rewind.newId();
+        register(new Rewind(tip, reason, new LinkedHashSet<>(Set.of(module)), Rewind.newId(), Set.of()), token);
         try (var held = store.lock(chainKey)) {
+            // Persisted meanwhile by a retry, which carried this registration (M33B1-CDX-104): recorded once.
+            Unsaved cur = UNSAVED.get(unsavedKey());
+            if (cur == null || !cur.tokens().contains(token)) return;
             Files f = load();
             ChainRecord c = existing(f);
             // A new id each time (M33B1-CDX-5): a restore observed before this rewind cannot acknowledge it.
