@@ -868,9 +868,9 @@ public class ChainJournalTest {
         assertEquals(ChainJournal.History.FENCED, j(s, MOD_B).open(100).history());
     }
 
-    /** CDX-46: an admission at a chain point far below recorded evidence records a rewind and is refused. */
+    /** CDX-46, DES-16: an admission far below recorded evidence is refused; it records no rewind (one unconfirmed tip). */
     @Test
-    public void anAdmissionFarBelowRecordedEvidenceIsARewind() throws Exception {
+    public void anAdmissionFarBelowRecordedEvidenceIsRefused() throws Exception {
         JournalStore s = store();
         j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
         j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
@@ -880,7 +880,7 @@ public class ChainJournalTest {
         } catch (ChainJournal.Fenced expected) {
             // refused
         }
-        assertNotNull(j(s, MOD_A).record().rewind());
+        assertNull("no chain rewind from one admission's tip", j(s, MOD_A).record().rewind());
     }
 
     /** CDX-50: opening at the same chain point does not renew a rewind still being reconciled. */

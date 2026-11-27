@@ -980,9 +980,11 @@ public class SettlementTest {
         chain.at(495);
         host.answer(new HostError("bad", "conflict", "scripted", List.of(), null));
         s.poll();
-        assertNotNull(fence.get());
-        assertNotNull(journal.record().rewind());
-        assertNotNull("the inclusion evidence is kept", journal.entries().get(0).inclusion());
+        assertNotNull("this host is stopped", fence.get());
+        assertNull("no chain rewind: the chain did not move (DES-16)", journal.record().rewind());
+        Entry e = journal.entries().get(0);
+        assertEquals("the chain's evidence: still reserved", State.shallow, e.state());
+        assertNotNull(e.inclusion());
     }
 
     /** CDX-49: an approval is never promoted for a body that is no longer prepared. */

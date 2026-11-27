@@ -444,13 +444,11 @@ public final class ChainJournal {
             if (rewindsSeen >= 0 && (c == null ? 0 : c.rewinds()) != rewindsSeen) {
                 throw new Fenced("the chain was rewound since this dev host started; start it again");
             }
-            // A reservation of any module, offline ones included, that the admission's chain point reopens is a rewind
-            // (M33B1-CDX-46): recorded, and the admission refused.
+            // An admission whose chain point is far below any module's recorded evidence (offline ones included) is
+            // refused (M33B1-CDX-46). It records no rewind: its tip is one unconfirmed value, and chain rewinds come only
+            // from chain evidence under D14's rule, at the next settlement pass (M33B1-DES-16).
             String touched = c == null ? null : reopenedFar(f, tip);
-            if (touched != null) {
-                store.writeRecord(c.withNewRewind(new Rewind(tip, touched, pendingModules(f), Rewind.newId())));
-                throw new Fenced(touched + "; every module on this chain must restart to reconcile");
-            }
+            if (touched != null) throw new Fenced(touched + "; wait for the next settlement pass and try again");
             String overlap = overlap(body, f.journals());
             if (overlap != null) throw new Fenced(overlap);
             RegistryEntry reg = f.reg().value();

@@ -414,14 +414,16 @@ public final class Settlement {
             settle(e, "confirmed", e.inclusion().slot(), e.inclusion().slot());
             unreported.remove(e.reservation());
             if (fenced != null) return false;
-            // The host expired a body the chain shows included (it accepted a tip that was uncertain here): a chain
-            // reconciliation, persisted with the evidence kept, before anything is released (M33B1-CDX-48).
+            // The host expired a body the chain shows included (it accepted a tip that was uncertain here; M33B1-CDX-48).
+            // That is this host's table diverging, not the chain moving (M33B1-DES-16): the journal keeps the chain's
+            // evidence (shallow at its slot, inputs still reserved), and only this host is stopped; its successor
+            // restores the entry shallow.
             HostTable.Res after = table.lower(e.reservation());
             if (after != null && after.st() != HostTable.St.shallow && after.st() != HostTable.St.confirmed) {
-                String why = "the dev host expired " + e.label() + ", which the chain shows included";
-                journal.beginRewind(t, why);
-                rewind = why;
-                fence(why + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
+                long slot = e.inclusion().slot();
+                journal.update(e.reservation(), x -> x.withState(State.shallow, slot).withInclusion(e.inclusion())
+                        .withEvent("the host expired it; the chain shows it at " + slot));
+                fence("it expired " + e.label() + ", which the chain shows included; start it again to restore it from IntelliAda's journal");
                 return false;
             }
         }
