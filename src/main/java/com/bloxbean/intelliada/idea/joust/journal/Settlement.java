@@ -91,7 +91,10 @@ public final class Settlement {
     private boolean restoreOpen;
 
     /** One answered read of the call in flight: its kind, outcome, chain point, and whether a continuation followed. */
-    record ReadTip(String kind, String outcome, long tip, boolean more) {
+    record ReadTip(String kind, String outcome, long tip, boolean more, long call) {
+        ReadTip(String kind, String outcome, long tip, boolean more) {
+            this(kind, outcome, tip, more, -1);
+        }
     }
 
     private final List<ReadTip> callTips = new ArrayList<>();
@@ -195,7 +198,8 @@ public final class Settlement {
         if (batches.isEmpty() && mayComplete) restoreBatch(List.of(), true);
         List<Entry> all = new ArrayList<>(restored);
         all.addAll(kept);
-        journal.replace(all);
+        if (fenced != null) throw new ChainJournal.Fenced("the session ended during its restore");
+        journal.replace(all, opening.revision());   // only over the journal this opening read (M33B1-CDX-44)
         if (mayComplete) completed(t);
     }
 
@@ -220,7 +224,11 @@ public final class Settlement {
             throw new ChainJournal.Fenced("the dev host's restore was not consistent; the journal is kept");
         }
         List<Entry> out = new ArrayList<>();
-        for (int i = 0; i < batch.size(); i++) out.add(batch.get(i).withReservation(ids.get(i)));
+        for (int i = 0; i < batch.size(); i++) {
+            Entry e = batch.get(i).withReservation(ids.get(i));
+            if (e.inclusion() != null) recorded.put(e.reservation(), e.inclusion());
+            out.add(e);
+        }
         return out;
     }
 
@@ -366,12 +374,14 @@ public final class Settlement {
             if (r != null && r.st() == HostTable.St.shallow && o.inclusions.containsKey(e.txHash()) && o.inclusions.get(e.txHash()) == null) vanished.add(e);
         }
         vanished.sort(Comparator.comparingLong(e -> table.lower(e.reservation()).slot()));
-        long lowest = vanished.isEmpty() ? 0 : table.lower(vanished.get(0).reservation()).slot();
+        // A tip safe for every reservation (M33B1-CDX-38): at most the lowest vanished slot, and at most where any other
+        // reservation would cross a threshold (a prepared body's validTo + margin, a shallow one's slot + margin).
+        long safe = vanished.isEmpty() ? 0 : safeRollbackTip(table.lowerAll(), table.lower(vanished.get(0).reservation()).slot(), margin);
         for (Entry e : vanished) {
-            settle(e, "rolledBack", null, lowest);
+            settle(e, "rolledBack", null, safe);
             if (table.deepRollback()) {
+                // The chain rewind was persisted by settle before any state was published (M33B1-CDX-26).
                 String why = "a final inclusion (" + e.label() + ") was rolled back";
-                journal.beginRewind(t, why);
                 rewind = why;
                 fence(why + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
                 return false;
@@ -380,6 +390,7 @@ public final class Settlement {
             HostTable.Res after = table.lower(e.reservation());
             if (after != null && after.st() == HostTable.St.prepared) {
                 journal.update(e.reservation(), x -> x.withInclusion(null).withEvent("rolledBack@" + t));
+                recorded.remove(e.reservation());
             }
         }
         // 2. Newly seen inclusions, in slot order, each with its own slot as tip (ADR5-CDX-25).
@@ -394,6 +405,7 @@ public final class Settlement {
         landed.sort(Comparator.comparingLong(e -> e.inclusion().slot()));
         for (Entry e : landed) {
             journal.update(e.reservation(), x -> x.withInclusion(e.inclusion()).withEvent("included@" + e.inclusion().slot()));
+            recorded.put(e.reservation(), e.inclusion());
             unreported.add(e.reservation());
             settle(e, "confirmed", e.inclusion().slot(), e.inclusion().slot());
             unreported.remove(e.reservation());
@@ -468,6 +480,19 @@ public final class Settlement {
         return null;
     }
 
+    /**
+     * A rollback tip that crosses no reservation's threshold (M33B1-CDX-38): at most the lowest vanished slot, a prepared
+     * body's {@code validTo + margin}, and a shallow body's {@code slot + margin}.
+     */
+    static long safeRollbackTip(List<HostTable.Res> all, long lowestVanished, long margin) {
+        long safe = lowestVanished;
+        for (HostTable.Res r : all) {
+            if (r.st() == HostTable.St.prepared) safe = Math.min(safe, r.to() + margin);
+            else if (r.st() == HostTable.St.shallow) safe = Math.min(safe, r.slot() + margin);
+        }
+        return Math.max(0, safe);
+    }
+
     private boolean rebased;
 
     private boolean lower(ChainView.Tip t) {
@@ -506,6 +531,10 @@ public final class Settlement {
             fence("it answered " + got + " to " + status + " of " + txHash.substring(0, 16) + "…, where the chain shows "
                     + describe(x.lower()) + (x.certain() ? "" : " or " + describe(x.upper())));
             return false;
+        }
+        if (status.equals("rolledBack") && table.deepRollback()) {
+            // A final inclusion rolled back is a chain rewind, persisted before any releasing state is (M33B1-CDX-26).
+            journal.beginRewind(tip, "a final inclusion was rolled back");
         }
         if (deferJournal) {
             syncPending = true;   // the model holds the states; the journal takes them at the next successful write
@@ -557,8 +586,16 @@ public final class Settlement {
         if (e != null && e.handout() != Handout.none && e.handout() != Handout.approvalPending) {
             throw new ChainJournal.Fenced("a body that was handed out is released only by chain evidence or expiry (I30)");
         }
+        // The pass may have moved it (landed: shallow); only a body still prepared in both copies is discarded
+        // (M33B1-CDX-39).
+        lo = table.lower(reservation);
+        up = table.upper(reservation);
+        if (lo == null || up == null || lo.st() != HostTable.St.prepared || up.st() != HostTable.St.prepared) {
+            throw new ChainJournal.Fenced("the body is no longer only prepared (it may have landed); it was not discarded");
+        }
         long tip = highest != null ? highest.slot() : chain.tip().slot();
-        if (!settle(reservation, lo.txHash(), "discarded", null, tip)) {
+        if (!settle(reservation, lo.txHash(), "discarded", null, tip) || table.lower(reservation).st() != HostTable.St.discarded) {
+            fence("it did not discard the body as expected");
             throw new ChainJournal.Fenced("the dev host did not discard the body as expected; it was stopped");
         }
         builtHere.remove(reservation);
@@ -571,6 +608,12 @@ public final class Settlement {
      */
     public synchronized void admit(Entry e, long tip, long now) throws Exception {
         if (fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);
+        // Only a body this host prepared in this session and still holds prepared, with the same bytes (M33B1-CDX-40).
+        HostTable.Res lo = table.lower(e.reservation()), up = table.upper(e.reservation());
+        if (!builtHere.contains(e.reservation()) || lo == null || up == null || lo.st() != HostTable.St.prepared
+                || up.st() != HostTable.St.prepared || !lo.txHash().equals(e.txHash())) {
+            throw new ChainJournal.Fenced("only a body this dev host prepared in this session, and still holds prepared, is handed out");
+        }
         journal.admit(e, tip, now);
         if (e.handout() != Handout.approvalPending) builtHere.remove(e.reservation());
     }
@@ -581,12 +624,16 @@ public final class Settlement {
      */
     public synchronized void handedOut(String reservation, Handout h) throws Exception {
         if (h == Handout.none || h == Handout.approvalPending) throw new IllegalArgumentException("a handout only moves to submitted or exported");
-        Entry cur = null;
-        for (Entry x : journal.entries()) if (x.reservation().equals(reservation)) cur = x;
-        if (cur == null) throw new ChainJournal.Fenced("the body is not journaled");
-        if (cur.handout() != Handout.approvalPending && cur.handout() != h) throw new ChainJournal.Fenced("a " + cur.handout() + " body cannot become " + h);
-        journal.update(reservation, x -> x.withHandout(h));
+        if (fenced != null || rewind != null) throw new ChainJournal.Fenced("the dev host was stopped");
+        if (!builtHere.contains(reservation)) throw new ChainJournal.Fenced("only a body this dev host prepared in this session is handed out");
+        // Under the chain lock, on intact history with no fence or rewind (M33B1-CDX-45).
+        journal.handout(reservation, h);
         builtHere.remove(reservation);
+    }
+
+    /** The session ended: nothing more is committed by this settlement (M33B1-CDX-44). Waits for a pass in progress. */
+    public synchronized void close(String why) {
+        if (fenced == null) fenced = why;
     }
 
     /** Reservations this host prepared in this session (never restored): the only ones discard may release. */
@@ -599,6 +646,8 @@ public final class Settlement {
     // ---- inside a call ------------------------------------------------------------------------------------------------
 
     private final java.util.concurrent.atomic.AtomicLong callEpoch = new java.util.concurrent.atomic.AtomicLong();
+    /** The inclusion IntelliAda recorded for each reservation the host holds shallow. */
+    private final Map<String, Inclusion> recorded = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Starts a forward call's bookkeeping. */
     public synchronized void beginCall() {
@@ -612,8 +661,25 @@ public final class Settlement {
      * reported yet) (ADR5-CDX-25, the playground's read handler).
      */
     public HostSession.Reads guard(HostSession.Reads delegate) {
-        return (id, params) -> {
-            // The call this read belongs to (M33B1-CDX-24): an answer that returns after its call ended is charged to none.
+        return new HostSession.Reads() {
+            @Override
+            public ObjectNode read(String id, JsonNode params) throws Exception {
+                return read(id, params, -1);
+            }
+
+            @Override
+            public ObjectNode read(String id, JsonNode params, long call) throws Exception {
+                return guarded(delegate, id, params, call);
+            }
+        };
+    }
+
+    /**
+     * One guarded read. {@code call} is the forward call that owned it at dispatch (M33B1-CDX-24); its tip is charged to
+     * that call only, and an answer that returns after its call ended (another epoch) to none.
+     */
+    private ObjectNode guarded(HostSession.Reads delegate, String id, JsonNode params, long call) throws Exception {
+        {
             long epoch = callEpoch.get();
             ObjectNode a = delegate.read(id, params);
             if (callEpoch.get() != epoch) return a;
@@ -631,16 +697,16 @@ public final class Settlement {
                     f.putObject("failed").put("message", "a transaction landed and its settlement is not reported yet (" + landed
                             + "); try again in a moment");
                     synchronized (this) {
-                        if (callEpoch.get() == epoch) callTips.add(new ReadTip(kind, "failed", t, false));
+                        if (callEpoch.get() == epoch) callTips.add(new ReadTip(kind, "failed", t, false, call));
                     }
                     return f;
                 }
             }
             synchronized (this) {
-                if (callEpoch.get() == epoch) callTips.add(new ReadTip(kind, outcome, t, a.has("more")));
+                if (callEpoch.get() == epoch) callTips.add(new ReadTip(kind, outcome, t, a.has("more"), call));
             }
             return a;
-        };
+        }
     }
 
     /** Whether the host applies this answer's tip to its table once its kind's checks pass (JOUST {@code Reads}). */
@@ -657,7 +723,10 @@ public final class Settlement {
             // is reported first.
             if (r.st() == HostTable.St.shallow && t - r.slot() > margin) {
                 Inclusion in = chain.inclusion(r.txHash());
-                if (in == null || in.slot() != r.slot()) return r.txHash().substring(0, 16) + "… (rolled back)";
+                Inclusion was = recorded.get(r.id());
+                // The whole recorded inclusion (block and height too; M33B1-CDX-25), or its slot when none was recorded.
+                boolean same = in != null && (was != null ? in.equals(was) : in.slot() == r.slot());
+                if (!same) return r.txHash().substring(0, 16) + "… (rolled back)";
                 continue;
             }
             if (r.st() != HostTable.St.prepared || t - r.to() <= margin) continue;
@@ -675,6 +744,12 @@ public final class Settlement {
      * @param error the host's {@code kind/code}, or {@code "transport"} for a session that ended or a call abandoned
      */
     public synchronized void endCall(String method, @Nullable JsonNode result, @Nullable String error) {
+        endCall(method, result, error, -1);
+    }
+
+    /** {@code call}: the forward call's JSON-RPC id; only reads it owned count (−1: every read recorded since beginCall). */
+    public synchronized void endCall(String method, @Nullable JsonNode result, @Nullable String error, long call) {
+        if (call >= 0) callTips.removeIf(r -> r.call() != call);
         // Only a successful call's read tips are certain (M33B1-CDX-8): an error can come from a kind's own checks after its
         // answer (internal/evaluator for parameters without a Plutus V3 cost model), before the host accepts the tip.
         boolean clean = error == null;
@@ -698,6 +773,8 @@ public final class Settlement {
         callEpoch.incrementAndGet();   // late answers of this call are charged to no other
         if (error == null && result != null && (method.equals("prepare") || method.equals("publish"))) {
             JsonNode p = result.path("prepared");
+            // The protocol's shapes (M33B1-CDX-42): prepare always holds a prepared object; publish one, or is null.
+            if (!p.isObject() && (method.equals("prepare") || !result.isNull())) fence("it answered " + method + " without a prepared body");
             if (p.isObject()) {
                 // The model's facts come from the body itself; the host's stated ones must agree (M33B1-SEC-4).
                 String why = null;
@@ -737,7 +814,23 @@ public final class Settlement {
      * and the write is retried before the next call ({@link #beforeCall}).
      */
     public synchronized void complete(String method, @Nullable JsonNode result, @Nullable String error) throws Exception {
-        endCall(method, result, error);
+        complete(method, result, error, -1);
+    }
+
+    public synchronized void complete(String method, @Nullable JsonNode result, @Nullable String error, long call) throws Exception {
+        // Advancing evidence is accepted only from the bound chain (M33B1-CDX-41).
+        boolean advancingTips = callTips.stream().anyMatch(r -> (call < 0 || r.call() == call) && advancing(r.kind(), r.outcome()));
+        if (advancingTips) {
+            try {
+                chainCheck.run();
+            } catch (Exception changed) {
+                callTips.clear();
+                fence("the bound chain changed (" + changed.getMessage() + ")");
+                endCall(method, null, "transport", call);
+                throw new ChainJournal.Fenced("the bound chain changed; the dev host was stopped");
+            }
+        }
+        endCall(method, result, error, call);
         boolean build = error == null && result != null && (method.equals("prepare") || method.equals("publish"));
         // A body the model refused (another hash, validity or a reused id) is never exposed (M33B1-CDX-33).
         if (build && fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);

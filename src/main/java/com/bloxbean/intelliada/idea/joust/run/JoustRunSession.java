@@ -287,6 +287,8 @@ public final class JoustRunSession {
             }
         }
         if (floor >= 0 && floor - tip > ahead) {
+            // A rewind of the chain: recorded for every module on it before this host stops (M33B1-CDX-34).
+            if (journal != null) journal.clockRewound(tip, "the chain went back to slot " + tip + ", far below a session's now");
             stopHost();
             throw new NetworkIdentity.Refused("the chain went back to slot " + tip + ", far below this session's now (" + floor
                     + "); the dev host was stopped. Start it again");

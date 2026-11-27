@@ -82,7 +82,8 @@ public final class JoustRunJournal implements AutoCloseable {
         JournalStore.Held lock = s.ownModule(JournalStore.key(chain), module);
         try {
             ChainJournal j = new ChainJournal(s, chain, module, settlement);
-            ChainJournal.Opening o = j.open(new ProviderChain(b.api().copy(), Duration.ofSeconds(10)).tip().slot());
+            ProviderChain provider = new ProviderChain(b.api().copy(), Duration.ofSeconds(10));
+            ChainJournal.Opening o = j.open(provider.tip().slot(), provider::inclusion);
             return new JoustRunJournal(j, o, lock, b, settlement);
         } catch (Exception | Error e) {
             lock.close();
@@ -194,7 +195,13 @@ public final class JoustRunJournal implements AutoCloseable {
 
     /** After a forward call (call lock held), once, with its outcome (M33B1-DES-11). */
     void afterCall(String method, @Nullable JsonNode result, @Nullable String error) throws Exception {
-        settlement.complete(method, result, error);
+        HostSession s = session.get();
+        settlement.complete(method, result, error, s == null ? -1 : s.lastCallId());
+    }
+
+    /** D14: a chain far below the session's now is a rewind of the chain, recorded for every module before the stop. */
+    void clockRewound(long tip, String why) throws Exception {
+        journal.beginRewind(tip, why);
     }
 
     /**
@@ -233,7 +240,12 @@ public final class JoustRunJournal implements AutoCloseable {
     @Override
     public void close() {
         timer.shutdownNow();
-        moduleLock.close();
+        // After any pass or restore in progress, and with nothing more committed, the module's lock is released
+        // (M33B1-CDX-44): a successor never races this session's last write.
+        settlement.close("the session ended");
+        synchronized (settlement) {
+            moduleLock.close();
+        }
     }
 
     /** {@code initialize}'s parameters with this session's {@code restoring}. */

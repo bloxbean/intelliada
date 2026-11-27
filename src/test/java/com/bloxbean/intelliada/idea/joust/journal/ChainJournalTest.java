@@ -690,4 +690,110 @@ public class ChainJournalTest {
             // fenced until the derived bound
         }
     }
+
+    // ---- round 4 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-21: an inclusion that moved while no host ran is found at any module's open, even at a higher tip. */
+    @Test
+    public void anOfflineForkAtAHigherTipIsFoundAtOpen() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 90, 90);
+        JournalStore.Inclusion was = new JournalStore.Inclusion(100, 100, "11".repeat(32));
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.confirmed, 100L).withInclusion(was));
+        ChainJournal.Opening o = j(s, MOD_B).open(181, h -> null);   // gone on the replacement branch
+        assertEquals(ChainJournal.History.FENCED, o.history());
+        assertTrue(j(s, MOD_B).record().rewind().pending().contains(MOD_A));
+    }
+
+    /** CDX-22: evidence of a lost mark is persisted before an older fence lifts. */
+    @Test
+    public void aLostMarkFoundWhenAFenceWouldLiftIsPersistedFirst() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 100, 100);
+        byte[] rec = Files.readAllBytes(s.recordFile(k)), reg = Files.readAllBytes(s.registryFile(k));
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 900)), 100, 100);
+        Files.write(s.recordFile(k), rec);
+        Files.write(s.registryFile(k), reg);
+        assertFalse(j(s, MOD_A).observed(562));
+        long bound = s.record(k).value().fence().until();
+        assertTrue("a bound over the body valid to 900: " + bound, bound > 960);
+    }
+
+    /** CDX-36: an ordinary update never certifies a journal restored from before an admission. */
+    @Test
+    public void anUpdateDoesNotCertifyAStaleJournal() throws Exception {
+        JournalStore s = store();
+        Path f = s.journalFile(JournalStore.key(CHAIN), MOD_A);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        byte[] old = Files.readAllBytes(f);
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+        Files.write(f, old);
+        try {
+            j(s, MOD_A).update("1", e -> e.withEvent("x"));
+            fail("updated");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+        assertFalse(j(s, MOD_A).intact());
+    }
+
+    /** CDX-37: a second offline rewind renews the pending set under a new id. */
+    @Test
+    public void aSecondOfflineRewindRenewsThePendingSet() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        j(s, MOD_B).beginRewind(450, "first");
+        String first = j(s, MOD_B).record().rewind().id();
+        j(s, MOD_A).endRewind(first);
+        j(s, MOD_B).endRewind(first);
+        j(s, MOD_B).beginRewind(600, "again");   // A reconciled at 600 meanwhile (still pending under a new id)
+        j(s, MOD_B).open(100);   // and the chain went back to 100 while no host ran
+        assertTrue(j(s, MOD_B).record().rewind().pending().contains(MOD_A));
+        assertFalse("a fresh id", first.equals(j(s, MOD_B).record().rewind().id()));
+    }
+
+    /** CDX-43: a chain back below a lifted lost-history fence is fenced again. */
+    @Test
+    public void aChainBackBelowARecoveredBoundIsFencedAgain() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(JournalStore.key(CHAIN), MOD_A));
+        assertEquals(560L, (long) j(s, MOD_B).open(0).completeAbove());
+        assertTrue(j(s, MOD_B).observed(561));
+        ChainJournal.Opening o = j(s, MOD_B).open(100);
+        assertEquals(ChainJournal.History.FENCED, o.history());
+        assertEquals(560L, (long) o.completeAbove());
+    }
+
+    /** CDX-44: a restore's replacement goes only over the journal revision its opening read. */
+    @Test
+    public void aReplacementOverAChangedJournalIsRefused() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        ChainJournal.Opening o = j(s, MOD_A).open(0);
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 1000)), 0, 0);   // a successor's admission meanwhile
+        try {
+            j(s, MOD_A).replace(o.survivors(), o.revision());
+            fail("overwrote the successor's admission");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+        assertEquals(2, j(s, MOD_A).entries().size());
+    }
+
+    /** CDX-45: a handout moves forward only on intact history with no rewind. */
+    @Test
+    public void aHandoutDuringAReconciliationIsRefused() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(entry("1", tx(List.of(ref(1, 0)), 1000), JournalStore.Handout.approvalPending), 0, 0);
+        j(s, MOD_A).beginRewind(0, "test");
+        try {
+            j(s, MOD_A).handout("1", JournalStore.Handout.exported);
+            fail("handed out");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+    }
 }

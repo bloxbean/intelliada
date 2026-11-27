@@ -41,6 +41,14 @@ public final class HostSession implements AutoCloseable {
     @FunctionalInterface
     public interface Reads {
         ObjectNode read(String id, JsonNode params) throws Exception;
+
+        /**
+         * As {@link #read(String, JsonNode)}, with the JSON-RPC id of the forward call that owned the read when it arrived
+         * (captured at dispatch, before any worker runs; M33B1-CDX-24).
+         */
+        default ObjectNode read(String id, JsonNode params, long call) throws Exception {
+            return read(id, params);
+        }
     }
 
     /** The session ended because the peer broke the protocol (I22). */
@@ -74,6 +82,12 @@ public final class HostSession implements AutoCloseable {
     private final Object lock = new Object();
     private Call current;
     private long nextId = 1;
+    private volatile long lastCall;
+
+    /** The JSON-RPC id of the last forward call dispatched (calls are serial: the one that just returned). */
+    public long lastCallId() {
+        return lastCall;
+    }
     /** One forward call at a time, in arrival order (ADR-005 D11 serial calls); released when a call's terminal answer arrives. */
     private final java.util.concurrent.Semaphore turn = new java.util.concurrent.Semaphore(1, true);
     private volatile boolean initialized;
@@ -191,6 +205,7 @@ public final class HostSession implements AutoCloseable {
                 throw new Ended(why);
             }
             c = current = new Call(nextId++, method, System.nanoTime() + hardTimeout.toNanos());
+            lastCall = c.id;
         }
         // The turn and the in-flight slot are held until the host's terminal answer (or the session's end), even if this
         // thread stops waiting: an interrupted caller must not let another request onto the wire (M31A-CDX-6). The
@@ -474,7 +489,7 @@ public final class HostSession implements AutoCloseable {
           try {
             ObjectNode result;
             try {
-                result = reads.read(id, params);
+                result = reads.read(id, params, owner.id);
             } catch (Exception | LinkageError e) {
                 // Cancel only the call that asked, and only while it is still running (M31A-CDX-7).
                 boolean live;

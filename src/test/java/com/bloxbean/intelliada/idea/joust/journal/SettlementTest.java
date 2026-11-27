@@ -820,4 +820,120 @@ public class SettlementTest {
             assertNotNull(fence.get());
         }
     }
+
+    // ---- round 4 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-24: a read is charged to the call that owned it at dispatch, never to a later call. */
+    @Test
+    public void aReadIsChargedToTheCallThatOwnedIt() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        t.committed("1", "aa".repeat(32), 0L, 2025);
+        s.beginCall();
+        ObjectNode a = HostJson.object();
+        a.putObject("tip").put("slot", 2100).put("height", 2100).put("hash", String.format("%064x", 2100));
+        a.putArray("value");
+        s.guard((id, p) -> a).read("1.1", HostJson.object().put("kind", "utxos"), 7);   // owned by call 7
+        s.endCall("view", HostJson.object(), null, 8);                                  // call 8 ends
+        assertEquals(HostTable.St.prepared, t.lower("1").st());
+    }
+
+    /** CDX-25: a replacement block at the recorded slot is a rolled-back inclusion for the read guard. */
+    @Test
+    public void aReplacementBlockAtTheSameSlotFailsTheRead() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(90);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        chain.include(hash(a), 100);
+        chain.at(101);
+        host.answer("shallow");
+        s.poll();
+        chain.in.put(hash(a), new Inclusion(100, 100, "99".repeat(32)));   // another block at slot 100
+        s.beginCall();
+        ObjectNode r = HostJson.object();
+        r.putObject("tip").put("slot", 180).put("height", 180).put("hash", String.format("%064x", 180));
+        r.putArray("value");
+        assertTrue(s.guard((id, p) -> r).read("2.1", HostJson.object().put("kind", "utxos")).has("failed"));
+    }
+
+    /** CDX-38: a rollback's tip crosses no reservation's threshold: it expires no body that landed unreported. */
+    @Test
+    public void aRollbackTipCrossesNoThreshold() {
+        List<HostTable.Res> all = List.of(
+                new HostTable.Res("a", "aa".repeat(32), 0, 150, HostTable.St.prepared, null),
+                new HostTable.Res("b", "bb".repeat(32), 0, 1000, HostTable.St.shallow, 300L));
+        assertEquals("not above a's validTo + margin", 210, Settlement.safeRollbackTip(all, 300, 60));
+        assertEquals("the lowest vanished slot when lower", 120, Settlement.safeRollbackTip(all, 120, 60));
+    }
+
+    /** CDX-39: discard refuses a body its settlement pass found landed, and keeps it. */
+    @Test
+    public void aDiscardRefusesABodyItsPassFoundLanded() throws Exception {
+        chain.at(90);
+        Settlement s = settlement(new HostTable(60, false));
+        String b = tx(List.of(ref(2)), 900);
+        s.beginCall();
+        s.endCall("prepare", prepared("2", b), null);
+        s.admit(entry("2", b, JournalStore.Handout.approvalPending), 90, 90);   // awaiting approval: journaled
+        chain.include(hash(b), 100);
+        chain.at(101);
+        host.answer("shallow");
+        try {
+            s.discard("2");
+            fail("discarded a landed body");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("landed"));
+        }
+    }
+
+    /** CDX-40: a discarded body is never admitted. */
+    @Test
+    public void aDiscardedBodyIsNeverAdmitted() throws Exception {
+        chain.at(90);
+        Settlement s = settlement(new HostTable(60, false));
+        String b = tx(List.of(ref(2)), 1000);
+        s.beginCall();
+        s.endCall("prepare", prepared("2", b), null);
+        host.answer("discarded");
+        s.discard("2");
+        try {
+            s.admit(entry("2", b, JournalStore.Handout.exported), 90, 90);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+    }
+
+    /** CDX-41: read tips are accepted only after the bound chain checks out. */
+    @Test
+    public void readTipsFromAnotherChainAreRefused() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        t.committed("1", "aa".repeat(32), 0L, 2025);
+        s.chainCheck(() -> {
+            throw new IllegalStateException("block 1 differs");
+        });
+        s.beginCall();
+        read(s, "utxos", "value", 2100, false);
+        try {
+            s.complete("view", HostJson.object(), null);
+            fail("accepted");
+        } catch (ChainJournal.Fenced expected) {
+            assertNotNull(fence.get());
+        }
+        assertEquals(HostTable.St.prepared, t.lower("1").st());
+    }
+
+    /** CDX-42: a successful prepare without a prepared body fences the host. */
+    @Test
+    public void aPrepareWithoutABodyFences() throws Exception {
+        Settlement s = settlement(new HostTable(60, false));
+        s.beginCall();
+        try {
+            s.complete("prepare", HostJson.object(), null);
+            fail("returned");
+        } catch (ChainJournal.Fenced expected) {
+            assertNotNull(fence.get());
+        }
+    }
 }

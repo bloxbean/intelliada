@@ -181,15 +181,28 @@ public final class JournalStore {
      * lost history; M33B1-CDX-2, -DES-8), the admission generation, the recovery fence and the outstanding rewind.
      */
     public record ChainRecord(String chain, @Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence,
-                              @Nullable Rewind rewind, List<Registration> registrations) {
+                              @Nullable Rewind rewind, List<Registration> registrations, @Nullable Long recovered) {
         public ChainRecord {
             modules = Map.copyOf(modules);
             registrations = List.copyOf(registrations);
         }
 
+        public ChainRecord(String chain, @Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence,
+                           @Nullable Rewind rewind, List<Registration> registrations) {
+            this(chain, mark, modules, generation, fence, rewind, registrations, null);
+        }
+
         ChainRecord with(@Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence, @Nullable Rewind rewind,
                          List<Registration> registrations) {
-            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations);
+            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations, recovered);
+        }
+
+        /**
+         * The highest recovery fence ever lifted on this chain (M33B1-CDX-43): a chain back at or below it may hold bodies
+         * a lost journal held, so it is fenced again.
+         */
+        public ChainRecord withRecovered(@Nullable Long r) {
+            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations, r);
         }
 
         public ChainRecord withFence(@Nullable Fence f) {
@@ -365,6 +378,17 @@ public final class JournalStore {
     }
 
     private static final Map<String, Boolean> OWNED = new ConcurrentHashMap<>();
+    /** Directories whose entry in their parent this process has synced. */
+    private static final Set<String> DURABLE = ConcurrentHashMap.newKeySet();
+
+    /** The IDE system directory (the store's ancestors are synced up to it); outside an IDE, none. */
+    private static @Nullable Path systemDir() {
+        try {
+            return Path.of(com.intellij.openapi.application.PathManager.getSystemPath()).toAbsolutePath().normalize();
+        } catch (RuntimeException | LinkageError e) {
+            return null;
+        }
+    }
 
     private static @Nullable FileLock tryFileLock(FileChannel ch) throws IOException {
         try {
@@ -407,7 +431,7 @@ public final class JournalStore {
         JsonNode n = read(recordFile(chainKey));
         if (n == null) return Loaded.missing();
         try {
-            fields(n, "version", "chain", "mark", "modules", "generation", "fence", "rewind", "registrations");
+            fields(n, "version", "chain", "mark", "modules", "generation", "fence", "rewind", "registrations", "recovered");
             version(n);
             Map<String, Long> modules = new java.util.LinkedHashMap<>();
             JsonNode ms = n.get("modules");
@@ -455,7 +479,7 @@ public final class JournalStore {
             long generation = slot(n, "generation");
             // A record that lists handouts has a mark, and no module is ahead of the record (M33B1-CDX-18).
             if (!modules.isEmpty() && mark == null) throw new Bad();
-            return new Loaded<>(new ChainRecord(chain, mark, modules, generation, fence, rewind, regs), true);
+            return new Loaded<>(new ChainRecord(chain, mark, modules, generation, fence, rewind, regs, nullableSlot(n, "recovered")), true);
         } catch (Bad b) {
             return Loaded.unreadable();
         }
@@ -534,6 +558,8 @@ public final class JournalStore {
             ArrayNode ps = r.putArray("pending");
             c.rewind().pending().stream().sorted().forEach(ps::add);
         }
+        if (c.recovered() == null) n.putNull("recovered");
+        else n.put("recovered", c.recovered());
         ArrayNode rs = n.putArray("registrations");
         for (Registration g : c.registrations()) {
             ObjectNode o = rs.addObject().put("credential", g.credential()).put("txHash", g.txHash());
@@ -541,6 +567,18 @@ public final class JournalStore {
             else o.put("message", g.message());
         }
         write(recordFile(key(c.chain())), n);
+    }
+
+    /** Whether {@code j} fits the loader's file limit when written (checked before any write it depends on; M33B1-CDX-13). */
+    public boolean fits(ModuleJournal j) {
+        try {
+            ObjectNode n = HostJson.object().put("version", VERSION).put("chain", j.chain()).put("module", j.module()).put("generation", j.generation());
+            ArrayNode es = n.putArray("entries");
+            for (Entry e : j.entries()) es.add(json(e));
+            return HostJson.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(n).length + 1 <= MAX_FILE;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public void writeJournal(ModuleJournal j) throws StoreFailed {
@@ -847,7 +885,12 @@ public final class JournalStore {
             } catch (FileAlreadyExistsException raced) {
                 // made meanwhile
             }
-            if (a.getParent() != null) forceDir(a.getParent());
+        }
+        // Up to the IDE system directory, and never into directories that are not this user's (above its home).
+        Path system = systemDir();
+        for (Path a = root.getParent(); a != null && a.getParent() != null && !a.equals(system); a = a.getParent()) {
+            if (posix(a) && !Files.getOwner(a.getParent(), LinkOption.NOFOLLOW_LINKS).equals(me())) break;
+            if (DURABLE.add(a.toString())) forceDir(a.getParent());
         }
         for (Path p : chain) {
             if (Files.isSymbolicLink(p)) throw new IOException("a journal directory is a symbolic link");
@@ -864,6 +907,9 @@ public final class JournalStore {
                 }
             }
             if (!Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) throw new IOException("a journal path is not a directory");
+            // Its entry in its parent made durable once per process, whoever created it (a retry after a crash between
+            // creation and sync, or a concurrent first use; M33B1-CDX-15).
+            if (DURABLE.add(p.toString()) && p.getParent() != null) forceDir(p.getParent());
             if (posix(p)) {
                 PosixFileAttributeView v = Files.getFileAttributeView(p, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
                 var owner = v.getOwner();
