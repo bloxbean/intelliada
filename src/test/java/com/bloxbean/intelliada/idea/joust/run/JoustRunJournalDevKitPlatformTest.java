@@ -162,6 +162,44 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
         }
     }
 
+    /** M33B1-FAB-1: a journal store IntelliAda cannot use (here a linked parent) starts the host read-only, never refuses it. */
+    public void testAnUnusableStoreStartsTheHostReadOnly() throws Exception {
+        String fixture = JoustTestTools.env("JOUST_HOST_FIXTURE", "testAnUnusableStoreStartsTheHostReadOnly");
+        String store = JoustTestTools.env("JOUST_DEVKIT_STORE", "testAnUnusableStoreStartsTheHostReadOnly");
+        if (fixture == null || store == null) return;
+        TrustedProjects.setProjectTrusted(getProject(), true);
+        JoustHostService.confirmForTests = (project, dir, spec, version) -> true;
+        RemoteNode node = new RemoteNode();
+        node.setId("devkit-journal-unusable");
+        node.setName("DevKit");
+        node.setNodeType(NodeType.LocalYaciDevKit);
+        node.setApiEndpoint(store);
+        node.setProtocolMagic("42");
+        var nodes = com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance();
+        Path module = Path.of(fixture);
+        Path real = Files.createTempDirectory("joust-journal-real");
+        Path link = Files.createSymbolicLink(real.resolveSibling(real.getFileName() + "-link"), real);
+        JournalStore unusable = new JournalStore(link.resolve("joust-journal"));
+        JoustHostService service = JoustHostService.getInstance(getProject());
+        JoustRunGuard guard = JoustRunGuard.capture(getProject());
+        try {
+            nodes.addRemoteNode(node);
+            JoustRunSession.Launcher launcher = (init, key, reads) -> service.launch(guard, module, init, key, reads, e -> { });
+            JoustRunSession s = off(() -> JoustRunSession.start(service, module, JoustRunSession.bind(node), unusable, launcher, r -> { }));
+            assertNull("no journal", s.journalForTests());
+            assertTrue(s.running().process().isAlive());
+            String why = s.journalBlocks();
+            assertNotNull(why);
+            assertTrue(why, why.contains("cannot be used"));
+            String contract = s.running().initialize().path("contracts").get(0).path("name").textValue();
+            assertNotNull("views work without the journal", off(() -> s.prerequisites(contract)));
+        } finally {
+            nodes.removeRemoteNode(node);
+            service.stop(module);
+            Files.deleteIfExists(link);
+        }
+    }
+
     private static HostError cause(Throwable t) {
         for (Throwable c = t; c != null; c = c.getCause()) if (c instanceof HostError he) return he;
         return null;

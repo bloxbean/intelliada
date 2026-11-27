@@ -27,6 +27,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class JoustRunSession {
 
+    private static final com.intellij.openapi.diagnostic.Logger LOG = com.intellij.openapi.diagnostic.Logger.getInstance(JoustRunSession.class);
+
     static final Duration CALL_TIMEOUT = Duration.ofSeconds(90);
     static final long BYTES_PER_CALL = 32L * 1024 * 1024;
 
@@ -101,7 +103,19 @@ public final class JoustRunSession {
                                         @Nullable com.bloxbean.intelliada.idea.joust.journal.JournalStore store, Launcher launcher,
                                         java.util.function.Consumer<JoustHostService.Running> adopted) throws Exception {
         JoustHostService.Running seen = service.running(moduleDir);
-        JoustRunJournal fresh = seen == null ? JoustRunJournal.open(b, moduleDir, store) : null;
+        // The journal is optional while nothing is built (M33B1-FAB-1): a store IntelliAda cannot use (a linked or
+        // foreign ~/.intelliada, a file system without directory sync) starts the host read-only, without it, and says
+        // why when building is asked for. Views, listings and decoding work as before.
+        JoustRunJournal fresh = null;
+        String journalless = null;
+        if (seen == null) {
+            try {
+                fresh = JoustRunJournal.open(b, moduleDir, store);
+            } catch (com.bloxbean.intelliada.idea.joust.journal.JournalStore.StoreFailed unusable) {
+                journalless = unusable.getMessage();
+                LOG.warn("JOUST: starting the dev host without IntelliAda's journal: " + journalless);
+            }
+        }
         JoustHostService.Running r = null;
         boolean owned = false, done = false;
         try {
@@ -110,13 +124,13 @@ public final class JoustRunSession {
             r = launcher.launch(init, b.key(), reads);
             adopted.accept(r);
             // Reuse only of the host that was seen (M33B1-CDX-150): one launched meanwhile never opened its journal.
-            if (fresh == null && (seen == null || r.session() != seen.session())) {
+            if (journalless == null && fresh == null && (seen == null || r.session() != seen.session())) {
                 service.stop(moduleDir);
                 throw new NetworkIdentity.Refused("the dev host it was about to reuse stopped meanwhile; start it again");
             }
             // A host whose own start has not yet registered its journal is never adopted without it (M33B1-CDX-156).
             JoustRunJournal existing = JOURNALS.get(r.session());
-            if (fresh == null && (existing == null || !existing.ready())) {   // registered and started (M33B1-CDX-163)
+            if (journalless == null && fresh == null && (existing == null || !existing.ready())) {   // registered and started (M33B1-CDX-163)
                 throw new NetworkIdentity.Refused("the dev host is still starting; try again in a moment");
             }
             owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;
@@ -125,6 +139,7 @@ public final class JoustRunSession {
                 ended.onEnded(why -> JOURNALS.remove(ended));   // no entry outlives its session (M33B1-CDX-35)
             }
             JoustRunSession made = new JoustRunSession(b, r);
+            made.journalless = journalless;
             made.verifyCatalog();   // the host's catalog is the build's, or the host is stopped (M33A-CDX-2)
             if (owned) {
                 // The model's margin is the one the host was initialized with (M33B1-DES-7).
@@ -184,7 +199,11 @@ public final class JoustRunSession {
     }
 
     /** Why building is blocked by the journal (D17's fences, a fenced host, an open restore), or null. */
+    /** Why this host runs without the journal (the store could not be used; M33B1-FAB-1), or null. */
+    private volatile @Nullable String journalless;
+
     @Nullable String journalBlocks() {
+        if (journal == null && journalless != null) return "IntelliAda's journal cannot be used (" + journalless + "); building needs it";
         if (journal == null) return "this dev host was started without IntelliAda's journal; restart it from the run panel";
         return journal.buildingBlocked();
     }
