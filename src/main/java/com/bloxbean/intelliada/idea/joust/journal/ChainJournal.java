@@ -203,7 +203,7 @@ public final class ChainJournal {
             throw new Fenced("the prepared transaction is valid further ahead than a dev host builds");
         }
         try (var held = store.lock(chainKey)) {
-            String conflict = overlap(body, Math.max(tip, now));
+            String conflict = overlap(body, tip);   // the chain's tip only: never released early after a rollback
             if (conflict != null) throw new Fenced(conflict);
             List<Entry> next = new ArrayList<>(mine());
             if (next.stream().anyMatch(x -> x.reservation().equals(e.reservation()))) throw new Fenced("the host reused a reservation id");
