@@ -113,7 +113,11 @@ public class JoustArchitectureTest {
                 for (String m : invoked(Files.readAllBytes(c))) {
                     // ChainJournal.admit only through JoustRunJournal; that, its handout record and the build path from nowhere.
                     boolean admitOutsideTheSession = m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.admit")
+                            && !rel.equals("joust/journal/Settlement.class");
+                    boolean settlementAdmit = (m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.admit")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.handedOut"))
                             && !rel.equals("joust/run/JoustRunJournal.class");
+                    if (settlementAdmit) bad.add(rel + " calls " + m);
                     if (admitOutsideTheSession || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.admit")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.handedOut")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.build")) bad.add(rel + " calls " + m);

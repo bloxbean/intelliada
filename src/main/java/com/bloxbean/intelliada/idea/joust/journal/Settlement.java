@@ -550,12 +550,43 @@ public final class Settlement {
         // this session's and was never journaled, so the recovery discard goes ahead.)
         if (!deferJournal && !journal.intact()) throw new ChainJournal.Fenced("IntelliAda's journal for this chain is incomplete; nothing is discarded");
         if (!deferJournal && !poll()) throw new ChainJournal.Fenced("the chain kept moving; the body was not discarded. Try again");
+        // Admission and handouts take this monitor too, so nothing hands the body out meanwhile; the entry is read again
+        // after the pass all the same.
+        e = null;
+        for (Entry x : journal.entries()) if (x.reservation().equals(reservation)) e = x;
+        if (e != null && e.handout() != Handout.none && e.handout() != Handout.approvalPending) {
+            throw new ChainJournal.Fenced("a body that was handed out is released only by chain evidence or expiry (I30)");
+        }
         long tip = highest != null ? highest.slot() : chain.tip().slot();
         if (!settle(reservation, lo.txHash(), "discarded", null, tip)) {
             throw new ChainJournal.Fenced("the dev host did not discard the body as expected; it was stopped");
         }
         builtHere.remove(reservation);
         if (e != null && !deferJournal) journal.remove(Set.of(reservation));
+    }
+
+    /**
+     * Journals a body being handed out (I25), serialized with discard on this monitor (a body is never discarded while
+     * it is being handed out). A body admitted as submitted or exported is no longer discardable.
+     */
+    public synchronized void admit(Entry e, long tip, long now) throws Exception {
+        if (fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);
+        journal.admit(e, tip, now);
+        if (e.handout() != Handout.approvalPending) builtHere.remove(e.reservation());
+    }
+
+    /**
+     * Records how a journaled body was handed out, serialized with discard. Handouts only move forward: approval pending
+     * to submitted or exported (M33B1-CDX-27).
+     */
+    public synchronized void handedOut(String reservation, Handout h) throws Exception {
+        if (h == Handout.none || h == Handout.approvalPending) throw new IllegalArgumentException("a handout only moves to submitted or exported");
+        Entry cur = null;
+        for (Entry x : journal.entries()) if (x.reservation().equals(reservation)) cur = x;
+        if (cur == null) throw new ChainJournal.Fenced("the body is not journaled");
+        if (cur.handout() != Handout.approvalPending && cur.handout() != h) throw new ChainJournal.Fenced("a " + cur.handout() + " body cannot become " + h);
+        journal.update(reservation, x -> x.withHandout(h));
+        builtHere.remove(reservation);
     }
 
     /** Reservations this host prepared in this session (never restored): the only ones discard may release. */

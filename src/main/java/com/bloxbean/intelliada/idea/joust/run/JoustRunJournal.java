@@ -209,23 +209,12 @@ public final class JoustRunJournal implements AutoCloseable {
     void admit(JournalStore.Entry e, long tip, long now) throws Exception {
         String blocked = buildingBlocked();   // a fenced or blocked session admits nothing (M33B1-CDX-33)
         if (blocked != null) throw new ChainJournal.Fenced(blocked);
-        journal.admit(e, tip, now);
+        settlement.admit(e, tip, now);
     }
 
-    /**
-     * Records how a journaled body was handed out. Handouts only move forward (M33B1-CDX-27): approval pending to
-     * submitted or exported; a submitted or exported body never becomes discardable again.
-     */
+    /** Records how a journaled body was handed out (forward only; serialized with discard). */
     void handedOut(String reservation, JournalStore.Handout h) throws Exception {
-        if (h == JournalStore.Handout.none || h == JournalStore.Handout.approvalPending) {
-            throw new IllegalArgumentException("a handout only moves to submitted or exported");
-        }
-        JournalStore.Entry cur = journal.entries().stream().filter(x -> x.reservation().equals(reservation)).findFirst().orElse(null);
-        if (cur == null) throw new ChainJournal.Fenced("the body is not journaled");
-        if (cur.handout() != JournalStore.Handout.approvalPending && cur.handout() != h) {
-            throw new ChainJournal.Fenced("a " + cur.handout() + " body cannot become " + h);
-        }
-        journal.update(reservation, e -> e.withHandout(h));
+        settlement.handedOut(reservation, h);
     }
 
     /** D17: at least every {@code settlementSlots/2} slots while anything is live. */

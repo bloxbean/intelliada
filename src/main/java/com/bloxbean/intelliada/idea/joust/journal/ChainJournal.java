@@ -367,7 +367,14 @@ public final class ChainJournal {
         long revision = Math.max(c.modules().getOrDefault(module, 0L), j.ok() ? j.value().generation() : 0) + 1;
         Map<String, Long> modules = new LinkedHashMap<>(c.modules());
         modules.put(module, revision);
-        store.writeRecord(c.withModules(modules));
+        // The chain's generation rises with every write, in the record and then the registry entry, as at admission
+        // (M33B1-SEC-7): a record and journal restored together from before any write (an approval turned submitted)
+        // are then behind the registry entry, a lost mark.
+        RegistryEntry reg = f.reg().value();
+        if (reg == null) throw new Fenced("the chain's registry entry is missing or unreadable");
+        long gen = Math.max(c.generation(), reg.generation()) + 1;
+        store.writeRecord(c.with(c.mark(), modules, gen, c.fence(), c.rewind(), c.registrations()));
+        store.writeRegistry(new RegistryEntry(chain, reg.highestTip(), reg.highestNow(), gen));
         store.writeJournal(new ModuleJournal(chain, module, revision, entries));
     }
 

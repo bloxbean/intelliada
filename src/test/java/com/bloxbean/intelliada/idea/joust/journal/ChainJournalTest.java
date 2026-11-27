@@ -670,4 +670,24 @@ public class ChainJournalTest {
             Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
         }
     }
+
+    /** M33B1-SEC-7: a chain directory restored from before an approval became a submission is a lost mark. */
+    @Test
+    public void aChainDirectoryFromBeforeAHandoutIsALostMark() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(entry("r1", tx(List.of(ref(1, 0)), 1000), JournalStore.Handout.approvalPending), 100, 100);
+        Path dir = s.recordFile(k).getParent(), saved = tmp.newFolder().toPath();
+        backup(dir, saved);
+        j(s, MOD_A).update("r1", e -> e.withHandout(JournalStore.Handout.submitted));
+        backup(saved, dir);   // the registry entry stays current
+        ChainJournal.Opening o = j(s, MOD_A).open(100);
+        assertEquals(ChainJournal.History.LOST_MARK, o.history());
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 100, 100);
+            fail("the submitted body's input was released");
+        } catch (ChainJournal.Fenced expected) {
+            // fenced until the derived bound
+        }
+    }
 }
