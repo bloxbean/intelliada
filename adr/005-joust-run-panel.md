@@ -929,6 +929,33 @@ invariant.
     - **Bounds.** A journaled body is at most 64 KiB, four times Conway's maximum transaction size.
     - **Policy.** D14b's numbers live in one policy class, shared by `initialize` and the journal. A host initialized
       with another settlement margin is refused.
+  - **M3.3b1 round 2 (#34).**
+    - **Revisions.** Every module-journal write bumps the module's revision in the chain record first. A journal behind
+      its record is a lost journal; one ahead shows the record is stale, and is a lost mark. A crash between the two
+      writes therefore fences until the mark, which is accepted.
+    - **Rewinds.** Each rewind has an id. A host leaves only the rewind it was restored after, and a host whose restore
+      is held open is fenced by a later one.
+      - A rewind found while no host ran is detected at any module's open: a retained entry of any module that the tip
+        reopens.
+      - A rollback the host answers with `deepRollback` is a chain rewind.
+      - Vanished inclusions are rolled back in ascending slot order, all at the lowest vanished slot.
+      - A lower tip touches a final inclusion's margin, not a shallow one's.
+    - **Both lost** is persisted wherever it is found (open, admission, rewind, observation). A fresh record is made
+      only for a new chain.
+    - **Calls.** Read answers belong to the call they were asked in. A read that would finalize a shallow body that
+      vanished answers `failed`, so the rollback is reported first. Only live reservations make a call wait.
+      - The journal step after a call runs once, with its outcome. If its write fails after a build, the body is
+        discarded, or the host fenced. After any other call the result stands, and the write is retried before the next
+        call.
+      - A build the model refuses surfaces as an error.
+    - **Discard** releases only a body this host prepared in this session, after a settlement pass, on intact history.
+      Handouts only move forward.
+    - **Admission** refuses `validTo` beyond the largest TTL past the tip or `now` (the recovery bound's ceiling).
+    - **Store.**
+      - A permission-denied file is lost history.
+      - The file size is checked before writing.
+      - Every ancestor directory the store creates is synced.
+      - The reader validates simple values and UTF-8 text while skipping.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1112,3 +1139,4 @@ Security and design approved round 8.
 - **r25** (2026-11-27): §12 E10 and L40 (delegated): M3.3b in three parts.
 - **r26** (2026-11-27): §12 E10 — M3.3b1 as built (store layout, staleness generation, retention, settlement details).
 - **r27** (2026-11-27): §12 E10 — M3.3b1 round 1 (one classification, per-module generations and rewinds, settlement refinements).
+- **r28** (2026-11-27): §12 E10 — M3.3b1 round 2 (revisions per write, rewind ids, offline rewinds, discard limits).
