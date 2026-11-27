@@ -25,7 +25,7 @@ import static org.junit.Assert.*;
  */
 public class TxCborTest {
 
-    static List<JsonNode> vectors(String test) throws Exception {
+    public static List<JsonNode> vectors(String test) throws Exception {
         Path jar = null;
         for (String p : System.getProperty("joust.conformance.classpath", "").split(File.pathSeparator)) {
             if (p.endsWith("-conformance.jar")) jar = Path.of(p);
