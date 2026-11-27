@@ -634,7 +634,10 @@ public final class Settlement {
     /** The session ended: nothing more is committed by this settlement (M33B1-CDX-44). Waits for a pass in progress. */
     public synchronized void close(String why) {
         if (fenced == null) fenced = why;
+        closed = true;
     }
+
+    private volatile boolean closed;
 
     /** Reservations this host prepared in this session (never restored): the only ones discard may release. */
     private final Set<String> builtHere = new HashSet<>();
@@ -872,6 +875,7 @@ public final class Settlement {
 
     /** Writes the table's changed states to the journal (M33B1-CDX-9): accepted read tips advance reservations too. */
     public synchronized void sync() throws Exception {
+        if (closed) return;   // a closed session writes nothing after its module lock is released (M33B1-SEC-8)
         for (Entry j : journal.entries()) {
             HostTable.Res r = table.lower(j.reservation());
             if (r == null) continue;
