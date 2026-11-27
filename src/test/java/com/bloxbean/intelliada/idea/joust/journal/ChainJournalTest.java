@@ -1854,12 +1854,30 @@ public class ChainJournalTest {
         String k = JournalStore.key(CHAIN);
         j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
         j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 0, 0);
-        JournalStore.ChainRecord before = s.record(k).value();   // A reads the record, then the tip 561
+        ChainJournal.Before before = j(s, MOD_A).before();          // A reads the record, then the tip 561
         Files.delete(s.journalFile(k, MOD_B));
         j(s, JournalStore.key("/work/c")).open(0);                // C installs the loss fence meanwhile
         assertNotNull(s.record(k).value().fence());
         assertFalse(j(s, MOD_A).observed(561, before));
         assertNotNull("the fence stands", s.record(k).value().fence());
-        assertTrue("a fresh pass lifts it", j(s, MOD_A).observed(561, s.record(k).value()));
+        assertTrue("a fresh pass lifts it", j(s, MOD_A).observed(561, j(s, MOD_A).before()));
+    }
+
+    /** CDX-154: a journal lost after the pass's read, with no record write, is never lifted over by its older tip. */
+    @Test
+    public void aJournalLostAfterTheReadIsNotLiftedOver() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        String c3 = JournalStore.key("/work/c");
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 0, 0);
+        j(s, c3).admit(submitted("1", tx(List.of(ref(3, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(k, c3));
+        j(s, MOD_B).open(0);                                   // C's loss fenced at the mark
+        long until = s.record(k).value().fence().until();
+        ChainJournal.Before before = j(s, MOD_A).before();     // A reads, then its tip above the fence
+        Files.delete(s.journalFile(k, MOD_B));                // B's journal lost meanwhile, no record write
+        assertFalse(j(s, MOD_A).observed(until + 1, before));
+        assertNotNull("the fence stands", s.record(k).value().fence());
     }
 }

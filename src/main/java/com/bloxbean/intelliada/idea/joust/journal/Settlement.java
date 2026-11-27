@@ -172,6 +172,17 @@ public final class Settlement {
      * last batch completes restore unless {@code completeAbove} holds it open until a tip strictly passes it.
      */
     public synchronized void restore(ChainJournal.Opening opening) throws Exception {
+        var m = journal.monitor();
+        m.lockInterruptibly();   // no other module's open or pass interleaves with this restore (M33B1-CDX-155)
+        try {
+            restoreMonitored(opening);
+        } finally {
+            m.unlock();
+        }
+    }
+
+    private void restoreMonitored(ChainJournal.Opening opening) throws Exception {
+        ChainJournal.Before before0 = journal.before();
         JournalStore.ChainRecord atStart = journal.record();
         reconciling = atStart == null ? null : atStart.rewind();
         rewindsSeen = opening.rewinds();
@@ -205,7 +216,7 @@ public final class Settlement {
         }
         List<List<Entry>> batches = batches(send);
         boolean mayComplete = completeAbove == null || t > completeAbove;
-        JournalStore.ChainRecord beforeRead = atStart;
+        ChainJournal.Before beforeRead = before0;
         List<Entry> restored = new ArrayList<>();
         for (int i = 0; i < batches.size(); i++) {
             boolean last = i == batches.size() - 1;
@@ -321,7 +332,7 @@ public final class Settlement {
         return e.validTo() > t ? State.prepared : State.expired;
     }
 
-    private void completed(long t, JournalStore.@Nullable ChainRecord beforeRead) throws Exception {
+    private void completed(long t, ChainJournal.@Nullable Before beforeRead) throws Exception {
         restoreOpen = false;
         ackPending = true;   // cleared only once the acknowledgement finished (M33B1-CDX-151)
         // This host leaves only the rewind it was restored after (M33B1-SEC-6), and only while the chain still shows what
@@ -455,6 +466,21 @@ public final class Settlement {
      * resolved (the caller withholds the next forward call while anything is live; M33B1-CDX-16)
      */
     public synchronized boolean poll() throws Exception {
+        var m = journal.monitor();
+        m.lockInterruptibly();   // one read-then-decide sequence on the chain at a time in this IDE (M33B1-CDX-153)
+        try {
+            return pollMonitored();
+        } finally {
+            m.unlock();
+        }
+    }
+
+    /** Whether a terminal restore's acknowledgement is still owed (M33B1-CDX-157). */
+    public boolean ackPending() {
+        return ackPending;
+    }
+
+    private boolean pollMonitored() throws Exception {
         if (fenced != null || rewind != null) return false;
         if (permanentAtStart) return true;   // read-only on a permanently fenced chain: views only, nothing settled (M33B1-CDX-125)
         // A rewind this process detected but could not persist stops every host of the chain here (M33B1-CDX-84).
@@ -467,6 +493,7 @@ public final class Settlement {
         // A rewind another host of this chain found stops this one too, unless this host was restored after it (D14:
         // every live host on the chain; M33B1-DES-3, -CDX-5).
         if (rewindMissed()) return false;
+        ChainJournal.Before before = journal.before();   // before any provider read (M33B1-CDX-148, -154)
         JournalStore.ChainRecord rec = journal.record();
         // Checked while a restore is held open too (M33B1-SEC-6): a rewind persisted after this host's restore began was
         // never reconciled by it.
@@ -477,12 +504,15 @@ public final class Settlement {
         }
         List<Entry> entries = journal.entries();
         if (entries.isEmpty() && !restoreOpen) {
-            // Nothing journaled, but a fence a later tip lifts (a lost journal's bound): observed at a checked tip, so an
-            // empty recovering module is released without a restart (M33B1-CDX-93).
-            if (rec != null && rec.fence() != null) {
+            // Nothing journaled, but a fence a later tip lifts (a lost journal's bound), an acknowledgement still owed
+            // (M33B1-CDX-157), or this module's own journal missing though the record lists it (M33B1-CDX-158): observed
+            // at a checked tip, so an empty module is never left waiting for a restart.
+            boolean ownMissing = journal.ownJournalMissing();
+            if ((rec != null && rec.fence() != null) || ackPending || ownMissing) {
                 ChainView.Tip at = chain.tip();
                 chainCheck.run();
-                journal.observed(at.slot(), rec);
+                if (ackPending) completed(at.slot(), before);
+                else journal.observed(at.slot(), before);
             }
             needPoll = false;
             return true;
@@ -614,11 +644,11 @@ public final class Settlement {
         holdUnderFence(rec);   // M33B1-CDX-149
         if (restoreOpen && (completeAbove == null || t > completeAbove)) {
             restoreBatch(List.of(), true);
-            completed(t, rec);
+            completed(t, before);
         } else if (ackPending) {
-            completed(t, rec);   // the acknowledgement retried, never the terminal batch (M33B1-CDX-151)
+            completed(t, before);   // the acknowledgement retried, never the terminal batch (M33B1-CDX-151)
         } else {
-            journal.observed(t, rec);   // never lifts a fence installed after rec was read (M33B1-CDX-148)
+            journal.observed(t, before);   // never lifts over a fence or a loss after before was read (M33B1-CDX-148, -154)
         }
         needPoll = false;
         return true;

@@ -661,6 +661,25 @@ public final class JournalStore {
         return out;
     }
 
+    /**
+     * Each module journal file of the chain, by module key, with its size and modification time (M33B1-CDX-154): a cheap
+     * fingerprint, no journal parsed. A file lost or replaced since an earlier fingerprint changes it.
+     */
+    public Map<String, String> journalFingerprint(String chainKey) throws StoreFailed {
+        Map<String, String> out = new java.util.TreeMap<>();
+        for (String m : journalModules(chainKey)) {
+            try {
+                var a = Files.readAttributes(journalFile(chainKey, m), java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                out.put(m, a.size() + ":" + a.lastModifiedTime().toMillis() + ":" + a.fileKey());
+            } catch (NoSuchFileException gone) {
+                // listed, then gone: absent from the fingerprint
+            } catch (IOException e) {
+                out.put(m, "unreadable");
+            }
+        }
+        return out;
+    }
+
     /** Whether the chain carries the both-lost fence (ADR5-SEC-19): only a recreated devnet lifts it. */
     public boolean permanentlyFenced(String chainKey) throws StoreFailed {
         return read(fencedFile(chainKey)) != null || Files.exists(fencedFile(chainKey), LinkOption.NOFOLLOW_LINKS);

@@ -126,7 +126,8 @@ public final class JoustRunJournal implements AutoCloseable {
                     if (session.get() == null || session.get().ended() != null) return;
                     // Idle only with nothing journaled, no restore, and no fence on the chain that a later tip lifts
                     // (M33B1-CDX-93).
-                    if (!settlement.restoring() && journal.entries().isEmpty() && !fencedChain()) {
+                    if (!settlement.restoring() && journal.entries().isEmpty() && !fencedChain() && !settlement.ackPending()
+                            && !journal.ownJournalMissing()) {   // M33B1-CDX-157, -158
                         settlement.rewindMissed();   // an idle host still stops on a rewind (M33B1-CDX-95)
                         return;
                     }

@@ -123,9 +123,9 @@ public class JoustArchitectureTest {
                     boolean deferred = m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.discard")
                             || (m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.discard") && !rel.equals("joust/run/JoustRunSession.class"))
                             || (m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.discard")
-                                && !rel.equals("joust/run/JoustRunJournal.class") && !rel.startsWith("joust/journal/Settlement"))
+                                && !rel.equals("joust/run/JoustRunJournal.class") && !own(rel, "joust/journal/Settlement"))
                             || (m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.handout")
-                                && !rel.startsWith("joust/journal/Settlement") && !rel.startsWith("joust/journal/ChainJournal"));
+                                && !own(rel, "joust/journal/Settlement") && !own(rel, "joust/journal/ChainJournal"));
                     if (deferred) bad.add(rel + " calls " + m);
                     if (admitOutsideTheSession || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.admit")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.handedOut")
@@ -153,6 +153,19 @@ public class JoustArchitectureTest {
         String body = src.substring(page, src.indexOf("\n    }\n", page));
         assertTrue(body, body.contains("!method.equals(\"instances\") && !method.equals(\"objects\")"));
         assertTrue(body, body.indexOf("throw new IllegalArgumentException") < body.indexOf("return call("));
+    }
+
+    /** {@code rel} is the class {@code base} itself or one of its nested classes, never a similarly named one (M33B1-CDX-159). */
+    static boolean own(String rel, String base) {
+        return rel.equals(base + ".class") || rel.startsWith(base + "$");
+    }
+
+    @Test
+    public void aSimilarlyNamedClassIsNotExempt() {
+        assertTrue(own("joust/journal/Settlement.class", "joust/journal/Settlement"));
+        assertTrue(own("joust/journal/Settlement$Observation.class", "joust/journal/Settlement"));
+        assertFalse(own("joust/journal/SettlementWorker.class", "joust/journal/Settlement"));
+        assertFalse(own("joust/journal/ChainJournalHelper.class", "joust/journal/ChainJournal"));
     }
 
     @Test

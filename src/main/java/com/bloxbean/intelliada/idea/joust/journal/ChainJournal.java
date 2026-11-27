@@ -276,6 +276,16 @@ public final class ChainJournal {
      * the inclusions were read is never taken for a rewind (M33B1-CDX-66).
      */
     public Opening open(Tip tip, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
+        var m = monitor();
+        m.lockInterruptibly();   // M33B1-CDX-153, -155
+        try {
+            return openMonitored(tip, inclusions);
+        } finally {
+            m.unlock();
+        }
+    }
+
+    private Opening openMonitored(Tip tip, @Nullable Inclusions inclusions) throws StoreFailed, InterruptedException {
         // A rewind this process could not persist is persisted before anything opens on the chain (M33B1-CDX-84). When
         // the record refuses it (history to recover first), the open recovers, then the rewind is persisted and the chain
         // opened again, so this opening reconciles it.
@@ -980,15 +990,57 @@ public final class ChainJournal {
     }
 
     /**
+     * What a settlement pass read before its provider read (M33B1-CDX-148, -154, -DES-30): the chain's fence, and the
+     * fingerprint of the other modules' journals. A fence is lifted only while both are unchanged, so neither a fence
+     * installed meanwhile nor a journal lost meanwhile is lifted over by an older tip; this pass's own writes (the record's
+     * generation, its own journal) do not block it.
+     */
+    public record Before(@Nullable Fence fence, Map<String, String> others) {
+    }
+
+    public Before before() throws StoreFailed, InterruptedException {
+        try (var held = store.lock(chainKey)) {
+            ChainRecord c = store.record(chainKey).value();
+            return new Before(c == null ? null : c.fence(), others());
+        }
+    }
+
+    private Map<String, String> others() throws StoreFailed {
+        Map<String, String> m = new java.util.TreeMap<>(store.journalFingerprint(chainKey));
+        m.remove(module);
+        return m;
+    }
+
+    /** One per store and chain in this process (M33B1-CDX-153, -155): settlement passes, restores and opens of a chain. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> MONITORS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The chain's in-process monitor: every read-then-decide sequence on the chain in this IDE (a settlement pass, a
+     * restore, an open) holds it, so no other module's sequence interleaves with it (M33B1-CDX-153, -155). Other IDE
+     * processes are outside E11's model beyond the file locks.
+     */
+    public java.util.concurrent.locks.ReentrantLock monitor() {
+        return MONITORS.computeIfAbsent(unsavedKey(), k -> new java.util.concurrent.locks.ReentrantLock());
+    }
+
+    /** Whether the record lists this module while its journal is missing or unreadable (M33B1-CDX-158). */
+    public boolean ownJournalMissing() throws StoreFailed, InterruptedException {
+        try (var held = store.lock(chainKey)) {
+            ChainRecord c = store.record(chainKey).value();
+            return c != null && c.modules().containsKey(module) && !store.journal(chainKey, module).ok();
+        }
+    }
+
+    /**
      * As {@link #observed(long)}, for a tip read after {@code before} was read (M33B1-CDX-148): a fence is lifted only
      * while the record is still the one read before the provider read (same generation), so a fence another module
      * installed meanwhile is never lifted by an older tip. The next pass, reading afresh, lifts it.
      */
-    public boolean observed(long tip, @Nullable ChainRecord before) throws StoreFailed, InterruptedException {
+    public boolean observed(long tip, @Nullable Before before) throws StoreFailed, InterruptedException {
         return observed(tip, before, true);
     }
 
-    private boolean observed(long tip, @Nullable ChainRecord before, boolean bound) throws StoreFailed, InterruptedException {
+    private boolean observed(long tip, @Nullable Before before, boolean bound) throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
             Classified now = judge(f);
@@ -1011,7 +1063,7 @@ public final class ChainJournal {
                 persist(f, c.withFence(new Fence(c.recovered(), "the chain is back below where IntelliAda recovered lost history")));
                 return false;
             }
-            boolean fresh = !bound || (before != null && before.generation() == c.generation());
+            boolean fresh = !bound || (before != null && java.util.Objects.equals(before.fence(), c.fence()) && before.others().equals(others()));
             if (c.fence() != null && tip > c.fence().until() && fresh) {
                 Map<String, Long> modules = new LinkedHashMap<>();
                 for (var m : c.modules().entrySet()) {
