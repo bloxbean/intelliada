@@ -392,6 +392,13 @@ public final class Settlement {
         }
         List<Entry> entries = journal.entries();
         if (entries.isEmpty() && !restoreOpen) {
+            // Nothing journaled, but a fence a later tip lifts (a lost journal's bound): observed at a checked tip, so an
+            // empty recovering module is released without a restart (M33B1-CDX-93).
+            if (rec != null && rec.fence() != null) {
+                ChainView.Tip at = chain.tip();
+                chainCheck.run();
+                journal.observed(at.slot());
+            }
             needPoll = false;
             return true;
         }

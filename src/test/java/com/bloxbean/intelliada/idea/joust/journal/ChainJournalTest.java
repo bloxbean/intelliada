@@ -1308,13 +1308,126 @@ public class ChainJournalTest {
         }
     }
 
-    /** CDX-85: the well-known principals an ACL parent may grant writes to. */
+    /** A principal with an identity apart from its display name (on Windows, its security identifier). */
+    private record P(String name, String sid) implements java.nio.file.attribute.UserPrincipal {
+        @Override
+        public String getName() {
+            return name;
+        }
+    }
+
+    private static java.nio.file.attribute.AclEntry write(java.nio.file.attribute.UserPrincipal p) {
+        return java.nio.file.attribute.AclEntry.newBuilder().setType(java.nio.file.attribute.AclEntryType.ALLOW).setPrincipal(p)
+                .setPermissions(java.nio.file.attribute.AclEntryPermission.ADD_FILE, java.nio.file.attribute.AclEntryPermission.DELETE_CHILD).build();
+    }
+
+    /** CDX-85, -91: an ACL parent may grant writes only to this user and trusted identities, compared by identity. */
     @Test
-    public void onlyWellKnownPrincipalsMayWriteAnAclParent() {
-        assertTrue(JournalStore.trustedPrincipal("NT AUTHORITY\\SYSTEM"));
-        assertTrue(JournalStore.trustedPrincipal("BUILTIN\\Administrators"));
-        assertFalse(JournalStore.trustedPrincipal("BUILTIN\\Users"));
-        assertFalse(JournalStore.trustedPrincipal("Everyone"));
-        assertFalse(JournalStore.trustedPrincipal("HOST\\someone"));
+    public void anAclParentIsJudgedByIdentityNotName() throws Exception {
+        Path d = Path.of("C:/Users/me/.intelliada");
+        P me = new P("HOST\\me", "S-1-5-21-1-1001"), admins = new P("BUILTIN\\Administrators", "S-1-5-32-544");
+        P lookalike = new P("CORP\\Administrators", "S-1-5-21-9-1234"), users = new P("BUILTIN\\Users", "S-1-5-32-545");
+        JournalStore.aclCheck(d, me, me, List.of(write(me), write(admins)), Set.of(admins));
+        for (P other : List.of(lookalike, users)) {
+            try {
+                JournalStore.aclCheck(d, me, me, List.of(write(me), write(other)), Set.of(admins));
+                fail(other.name() + " was trusted");
+            } catch (java.io.IOException expected) {
+                assertTrue(expected.getMessage(), expected.getMessage().contains(other.name()));
+            }
+        }
+        try {
+            JournalStore.aclCheck(d, users, me, List.of(), Set.of(admins));
+            fail("another owner");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage().contains("another user"));
+        }
+    }
+
+    // ---- round 12 (M33B1-CDX-87..90, -94) ------------------------------------------------------------------------------
+
+    private void failRecordWrites(JournalStore s, boolean fail) {
+        s.failWritesForTests = fail ? p -> p.getFileName().toString().startsWith("record") : p -> false;
+    }
+
+    /** CDX-87: a rewind found by an open whose record write fails is still held; other modules refuse. */
+    @Test
+    public void aRewindFoundByAnOpenIsHeldWhenItsWriteFails() throws Exception {
+        JournalStore s = store();
+        JournalStore.Inclusion x = new JournalStore.Inclusion(450, 450, "11".repeat(32));
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.confirmed, 450L).withInclusion(x));
+        failRecordWrites(s, true);
+        try {
+            j(s, MOD_B).open(() -> 600, h -> null);   // A's final inclusion is gone
+            fail("the write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        assertNotNull(j(s, MOD_A).unsavedReason());
+        failRecordWrites(s, false);
+        try {
+            j(s, MOD_A).admit(submitted("2", tx(List.of(ref(3, 0)), 900)), 600, 600);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+        }
+        assertTrue("the retry recorded it with A pending", j(s, MOD_A).record().rewind().pending().contains(MOD_A));
+    }
+
+    /** CDX-89: an approval is not promoted while a rewind is unsaved. */
+    @Test
+    public void anApprovalIsNotHandedOutDuringAnUnsavedRewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_B).admit(Bodies.entry("1", tx(List.of(ref(1, 0)), 900), JournalStore.Handout.approvalPending), 400, 400);
+        failRecordWrites(s, true);
+        try {
+            j(s, MOD_A).beginRewind(100, "the clock went back");
+            fail("the write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        try {
+            j(s, MOD_B).handout("1", JournalStore.Handout.exported, 400);
+            fail("handed out");
+        } catch (ChainJournal.Fenced expected) {
+        }
+        assertEquals(JournalStore.Handout.approvalPending, j(s, MOD_B).entries().get(0).handout());
+        failRecordWrites(s, false);
+        j(s, MOD_B).unsavedRewind();
+    }
+
+    /** CDX-90: pruning refuses while a rewind is unsaved. */
+    @Test
+    public void pruningRefusesDuringAnUnsavedRewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        long seen = s.record(JournalStore.key(CHAIN)).value().rewinds();
+        failRecordWrites(s, true);
+        try {
+            j(s, MOD_B).beginRewind(480, "the clock went back");
+            fail("the write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        assertFalse(j(s, MOD_A).remove(Set.of("1"), seen));
+        assertEquals(1, j(s, MOD_A).entries().size());
+        failRecordWrites(s, false);
+        j(s, MOD_A).unsavedRewind();
+    }
+
+    /** CDX-94: a module that only asks never becomes pending in the rewind it persists. */
+    @Test
+    public void aRetryDoesNotMakeTheAskerPending() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        failRecordWrites(s, true);
+        try {
+            j(s, MOD_A).beginRewind(100, "the clock went back");
+            fail("the write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        failRecordWrites(s, false);
+        assertNotNull(j(s, MOD_B).unsavedRewind());
+        var r = j(s, MOD_B).record().rewind();
+        assertTrue(r.pending().contains(MOD_A));
+        assertFalse("B has no journal and did not detect it", r.pending().contains(MOD_B));
+        assertNull(j(s, MOD_B).unsavedReason());
     }
 }

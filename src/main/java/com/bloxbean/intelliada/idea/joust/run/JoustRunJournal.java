@@ -124,7 +124,9 @@ public final class JoustRunJournal implements AutoCloseable {
             synchronized (callLock) {
                 try {
                     if (session.get() == null || session.get().ended() != null) return;
-                    if (!settlement.restoring() && journal.entries().isEmpty()) return;
+                    // Idle only with nothing journaled, no restore, and no fence on the chain that a later tip lifts
+                    // (M33B1-CDX-93).
+                    if (!settlement.restoring() && journal.entries().isEmpty() && !fencedChain()) return;
                     settlement.poll();   // the chain check runs inside, after the observation
                 } catch (Exception e) {
                     LOG.info("JOUST settlement pass: " + e.getClass().getSimpleName());
@@ -144,13 +146,9 @@ public final class JoustRunJournal implements AutoCloseable {
                     + opening.completeAbove() + waitFor(opening.completeAbove());
         }
         if (table.deepRollback()) return "a final transaction was rolled back; stop the dev host and start it again";
-        try {
-            String unsaved = journal.unsavedRewind();   // M33B1-CDX-84
-            if (unsaved != null) return "a rewind on this chain is being recorded (" + unsaved + "); start the dev host again";
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return "interrupted";
-        }
+        // A query only (M33B1-DES-24): the retry runs in the settlement pass and in open.
+        String unsaved = journal.unsavedReason();   // M33B1-CDX-84
+        if (unsaved != null) return "a rewind on this chain is being recorded (" + unsaved + "); start the dev host again";
         // The chain's record: a fence or a rewind another host of this chain found (M33B1-DES-3).
         try {
             JournalStore.ChainRecord c = journal.record();
@@ -231,6 +229,15 @@ public final class JoustRunJournal implements AutoCloseable {
     /** Records how a journaled body was handed out (forward only; serialized with discard). */
     void handedOut(String reservation, JournalStore.Handout h) throws Exception {
         settlement.handedOut(reservation, h);
+    }
+
+    private boolean fencedChain() {
+        try {
+            JournalStore.ChainRecord c = journal.record();
+            return c != null && c.fence() != null;
+        } catch (Exception e) {
+            return true;   // unreadable: the pass reads it and reports
+        }
     }
 
     /** D17: at least every {@code settlementSlots/2} slots while anything is live. */

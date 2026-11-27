@@ -983,25 +983,56 @@ public final class JournalStore {
     static void aclPrivate(Path dir) throws IOException {
         java.nio.file.attribute.AclFileAttributeView v = Files.getFileAttributeView(dir, java.nio.file.attribute.AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
         if (v == null) throw new IOException("the privacy of " + dir + " cannot be verified on this file system");
-        var owner = v.getOwner();
-        var me = dir.getFileSystem().getUserPrincipalLookupService().lookupPrincipalByName(System.getProperty("user.name"));
-        if (!owner.equals(me)) throw new IOException("the journal's parent directory " + dir + " belongs to another user");
-        Set<java.nio.file.attribute.AclEntryPermission> writes = java.util.EnumSet.of(
-                java.nio.file.attribute.AclEntryPermission.ADD_FILE, java.nio.file.attribute.AclEntryPermission.ADD_SUBDIRECTORY,
-                java.nio.file.attribute.AclEntryPermission.DELETE_CHILD, java.nio.file.attribute.AclEntryPermission.DELETE,
-                java.nio.file.attribute.AclEntryPermission.WRITE_ACL, java.nio.file.attribute.AclEntryPermission.WRITE_OWNER);
-        for (var e : v.getAcl()) {
-            if (e.type() != java.nio.file.attribute.AclEntryType.ALLOW || java.util.Collections.disjoint(e.permissions(), writes)) continue;
-            if (e.principal().equals(me) || trustedPrincipal(e.principal().getName())) continue;
+        var lookup = dir.getFileSystem().getUserPrincipalLookupService();
+        // This process's own identity, as the POSIX branch takes it (M33B1-SEC-14): never a name that can resolve elsewhere.
+        aclCheck(dir, v.getOwner(), me(), v.getAcl(), trustedPrincipals(lookup));
+    }
+
+    private static final Set<java.nio.file.attribute.AclEntryPermission> ACL_WRITES = java.util.EnumSet.of(
+            java.nio.file.attribute.AclEntryPermission.ADD_FILE, java.nio.file.attribute.AclEntryPermission.ADD_SUBDIRECTORY,
+            java.nio.file.attribute.AclEntryPermission.DELETE_CHILD, java.nio.file.attribute.AclEntryPermission.DELETE,
+            java.nio.file.attribute.AclEntryPermission.WRITE_DATA, java.nio.file.attribute.AclEntryPermission.APPEND_DATA,
+            java.nio.file.attribute.AclEntryPermission.WRITE_ACL, java.nio.file.attribute.AclEntryPermission.WRITE_OWNER);
+
+    /**
+     * The rule, by principal identity (M33B1-CDX-91): on Windows a principal's equality is its security identifier, so a
+     * domain group that merely shares a well-known name is not trusted.
+     */
+    static void aclCheck(Path dir, java.nio.file.attribute.UserPrincipal owner, java.nio.file.attribute.UserPrincipal me,
+                         List<java.nio.file.attribute.AclEntry> acl, Set<java.nio.file.attribute.UserPrincipal> trusted) throws IOException {
+        if (!owner.equals(me)) throw new IOException("the journal directory " + dir + " belongs to another user");
+        for (var e : acl) {
+            if (e.type() != java.nio.file.attribute.AclEntryType.ALLOW || java.util.Collections.disjoint(e.permissions(), ACL_WRITES)) continue;
+            if (e.principal().equals(me) || trusted.contains(e.principal())) continue;
             throw new IOException(e.principal().getName() + " can change " + dir + "; remove its write access to use IntelliAda's journal");
         }
     }
 
-    /** The system, administrators and the creator-owner placeholder (well-known names, any domain prefix). */
-    static boolean trustedPrincipal(String name) {
-        String n = name.contains("\\") ? name.substring(name.lastIndexOf('\\') + 1) : name;
-        return n.equalsIgnoreCase("SYSTEM") || n.equalsIgnoreCase("Administrators") || n.equalsIgnoreCase("CREATOR OWNER")
-                || n.equalsIgnoreCase("TrustedInstaller");
+    /**
+     * The local system, the built-in administrators, the creator-owner placeholder and the installer service, resolved by
+     * the OS to their identities. One that does not resolve (a localized name) is simply not trusted: a refusal, never
+     * an acceptance.
+     */
+    private static Set<java.nio.file.attribute.UserPrincipal> trustedPrincipals(java.nio.file.attribute.UserPrincipalLookupService lookup) {
+        Set<java.nio.file.attribute.UserPrincipal> out = new java.util.HashSet<>();
+        for (String n : List.of("NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators", "CREATOR OWNER", "NT SERVICE\\TrustedInstaller")) {
+            try {
+                out.add(lookup.lookupPrincipalByName(n));
+            } catch (IOException | UnsupportedOperationException e) {
+                // not resolvable here: not trusted
+            }
+        }
+        return out;
+    }
+
+    /** A new directory on an ACL file system: this user only, inherited by what is created in it (M33B1-CDX-92). */
+    private static void aclRestrict(Path dir) throws IOException {
+        java.nio.file.attribute.AclFileAttributeView v = Files.getFileAttributeView(dir, java.nio.file.attribute.AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (v == null) throw new IOException("the privacy of " + dir + " cannot be established on this file system");
+        var me = me();
+        v.setAcl(List.of(java.nio.file.attribute.AclEntry.newBuilder().setType(java.nio.file.attribute.AclEntryType.ALLOW).setPrincipal(me)
+                .setPermissions(java.util.EnumSet.allOf(java.nio.file.attribute.AclEntryPermission.class))
+                .setFlags(java.nio.file.attribute.AclEntryFlag.FILE_INHERIT, java.nio.file.attribute.AclEntryFlag.DIRECTORY_INHERIT).build()));
     }
 
     private void privateDir(Path dir) throws IOException {
@@ -1040,6 +1071,7 @@ public final class JournalStore {
                         Files.createDirectory(p, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
                     } else {
                         Files.createDirectory(p);
+                        aclRestrict(p);
                     }
                     forceDir(p.getParent());   // the new directory's entry is durable before anything is written in it
                 } catch (FileAlreadyExistsException raced) {
@@ -1055,6 +1087,8 @@ public final class JournalStore {
                 var owner = v.getOwner();
                 if (!owner.equals(me())) throw new IOException("a journal directory belongs to another user");
                 v.setPermissions(PosixFilePermissions.fromString("rwx------"));
+            } else {
+                aclPrivate(p);   // every directory of the store, existing ones included (M33B1-CDX-92)
             }
         }
     }

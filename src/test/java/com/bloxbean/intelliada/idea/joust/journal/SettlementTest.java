@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -1258,5 +1259,23 @@ public class SettlementTest {
         }, List.of());
         assertNotNull("the host is stopped", fence.get());
         assertNotNull("the rewind stands", journal.record().rewind());
+    }
+
+    // ---- round 12 (M33B1-CDX-93) --------------------------------------------------------------------------------------
+
+    /** CDX-93: an empty module still observes the chain while a fence on it waits for a later tip. */
+    @Test
+    public void anEmptyModuleLiftsAFenceWithoutARestart() throws Exception {
+        chain.at(600);
+        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);   // a chain record, then nothing journaled
+        other.remove(Set.of("x"));
+        Settlement s = restored(List.of(), List.of());
+        String k = JournalStore.key(CHAIN);
+        JournalStore.ChainRecord c = store.record(k).value();
+        store.writeRecord(c.withFence(new JournalStore.Fence(700, "a lost journal's bound")));
+        chain.at(701);
+        assertTrue(s.poll());
+        assertNull("lifted at 701", store.record(k).value().fence());
     }
 }

@@ -215,13 +215,12 @@ public final class ChainJournal {
         // A rewind this process could not persist is persisted before anything opens on the chain (M33B1-CDX-84). When
         // the record refuses it (history to recover first), the open recovers, then the rewind is persisted and the chain
         // opened again, so this opening reconciles it.
-        Unsaved u = UNSAVED.get(unsavedKey());
-        if (u != null) {
+        if (UNSAVED.containsKey(unsavedKey())) {
             try {
-                beginRewind(u.tip(), u.reason());
+                persistUnsaved();
             } catch (StoreFailed refused) {
                 open1(tip, inclusions);
-                beginRewind(u.tip(), u.reason());
+                persistUnsaved();
             }
         }
         return open1(tip, inclusions);
@@ -349,8 +348,7 @@ public final class ChainJournal {
                             known.addAll(c.rewind().evidence());
                             at = Math.min(at, c.rewind().tip());
                         }
-                        c = c.withNewRewind(new Rewind(at, touched, pending, Rewind.newId(), known));
-                        persist(f, c);
+                        c = persistRewind(f, c, new Rewind(at, touched, pending, Rewind.newId(), known));   // M33B1-CDX-87
                     }
                     // Back at or below a recovered bound (M33B1-CDX-43): a lost journal's bodies may land again.
                     if (c.recovered() != null && tipAtDetection <= c.recovered() && c.fence() == null) {
@@ -444,11 +442,16 @@ public final class ChainJournal {
 
     /** Every module with a journaled body on the chain (a rewind's pending reconciliations). */
     private Set<String> pendingModules(Files f) {
+        return pendingModules(f, true);
+    }
+
+    /** Every module with journaled bodies, and this one when {@code self}. */
+    private Set<String> pendingModules(Files f, boolean self) {
         Set<String> pending = new LinkedHashSet<>();
         for (var e : f.journals().entrySet()) {
             if (e.getValue().ok() && !e.getValue().value().entries().isEmpty()) pending.add(e.getKey());
         }
-        pending.add(module);
+        if (self) pending.add(module);
         return pending;
     }
 
@@ -539,6 +542,8 @@ public final class ChainJournal {
         }
         if (unsavedRewind() != null) throw new Fenced("a rewind of this chain is being recorded; start the dev host again");   // M33B1-CDX-84
         try (var held = store.lock(chainKey)) {
+            // Decided under the lock (M33B1-CDX-88): a rewind registered by another module before it took the lock.
+            if (unsavedHere()) throw new Fenced("a rewind of this chain is being recorded; start the dev host again");
             Files f = load();
             Classified k = judge(f);
             if (k.kind() != Kind.NEW && k.kind() != Kind.INTACT) {
@@ -730,7 +735,7 @@ public final class ChainJournal {
             Files f = load();
             Kind k = judge(f).kind();
             ChainRecord c = f.record();
-            if (k != Kind.INTACT || c == null || c.fence() != null || c.rewind() != null) {
+            if (k != Kind.INTACT || c == null || c.fence() != null || c.rewind() != null || unsavedHere()) {   // M33B1-CDX-89
                 throw new Fenced("the chain's history is not complete now; nothing is handed out");
             }
             if (c.recovered() != null && tip <= c.recovered()) {
@@ -766,7 +771,7 @@ public final class ChainJournal {
         try (var held = store.lock(chainKey)) {
             if (rewindsSeen >= 0) {
                 ChainRecord c = store.record(chainKey).value();
-                if (c == null || c.rewind() != null || c.rewinds() != rewindsSeen) return false;
+                if (c == null || c.rewind() != null || c.rewinds() != rewindsSeen || unsavedHere()) return false;   // M33B1-CDX-90
             }
             removeLocked(reservations);
             return true;
@@ -924,8 +929,13 @@ public final class ChainJournal {
      * journaled body on the chain must reconcile on a fresh host before the rewind clears, and admission stays closed
      * meanwhile. Other hosts of the chain see it in the record and stop.
      */
-    /** A rewind detected in this process whose persistence failed, per chain key (M33B1-CDX-84). */
-    private record Unsaved(long tip, String reason) {
+    /**
+     * A rewind detected in this process and not yet persisted, per store and chain (M33B1-CDX-84, -87): the whole rewind
+     * (its tip, reason, pending modules and evidence), registered before the chain lock is taken and before any write,
+     * cleared once persisted. Admission, handout and pruning check it under the chain lock (M33B1-CDX-88..90); every
+     * host of the chain stops on it; the next open persists it.
+     */
+    private record Unsaved(Rewind rewind) {
     }
 
     private static final java.util.concurrent.ConcurrentHashMap<String, Unsaved> UNSAVED = new java.util.concurrent.ConcurrentHashMap<>();
@@ -935,36 +945,89 @@ public final class ChainJournal {
         return store.root() + "|" + chainKey;
     }
 
+    private boolean unsavedHere() {
+        return UNSAVED.containsKey(unsavedKey());
+    }
+
+    private static Rewind union(Rewind a, @Nullable Rewind b) {
+        if (b == null) return a;
+        Set<String> pending = new LinkedHashSet<>(a.pending());
+        pending.addAll(b.pending());
+        Set<String> evidence = new LinkedHashSet<>(a.evidence());
+        evidence.addAll(b.evidence());
+        return new Rewind(Math.min(a.tip(), b.tip()), a.reason(), pending, Rewind.newId(), evidence);
+    }
+
+    /** Registers {@code r} (merged with any unsaved rewind) in this process before anything is written. */
+    private Unsaved register(Rewind r) {
+        return UNSAVED.compute(unsavedKey(), (k, u) -> new Unsaved(u == null ? r : union(r, u.rewind())));
+    }
+
+    /**
+     * Under the chain lock: persists {@code r} merged with this process's unsaved rewind, registered first, so a failed
+     * write keeps it in memory (M33B1-CDX-87). Returns the record written.
+     */
+    private ChainRecord persistRewind(Files f, ChainRecord c, Rewind r) throws StoreFailed {
+        Unsaved u = register(r);
+        ChainRecord next = c.withNewRewind(u.rewind());
+        persist(f, next);
+        UNSAVED.remove(unsavedKey(), u);
+        return next;
+    }
+
+    /** Persists this process's unsaved rewind of the chain, if any; StoreFailed when it still cannot be written. */
+    private void persistUnsaved() throws StoreFailed, InterruptedException {
+        Unsaved u = UNSAVED.get(unsavedKey());
+        if (u == null) return;
+        try (var held = store.lock(chainKey)) {
+            Files f = load();
+            ChainRecord c = existing(f);
+            if (c.rewind() != null && c.rewind().id().equals(u.rewind().id())) {
+                UNSAVED.remove(unsavedKey(), u);
+                return;
+            }
+            // The modules it already named and those with journaled bodies; never the caller for asking (M33B1-CDX-94).
+            Set<String> pending = new LinkedHashSet<>(u.rewind().pending());
+            pending.addAll(pendingModules(f, false));
+            persistRewind(f, c, union(new Rewind(u.rewind().tip(), u.rewind().reason(), pending, Rewind.newId(), u.rewind().evidence()), c.rewind()));
+        }
+    }
+
     /**
      * A rewind of this chain that this process detected and has not yet persisted, retried now (M33B1-CDX-84): its
      * reason while one was pending (persisted by this retry or not), or null. Every host of the chain stops on it, and
      * admission refuses until it is persisted.
      */
+    /** The reason of this process's unsaved rewind of the chain, or null: a query, with no write (M33B1-DES-24). */
+    public @Nullable String unsavedReason() {
+        Unsaved u = UNSAVED.get(unsavedKey());
+        return u == null ? null : u.rewind().reason();
+    }
+
     public @Nullable String unsavedRewind() throws InterruptedException {
         Unsaved u = UNSAVED.get(unsavedKey());
         if (u == null) return null;
         try {
-            beginRewind(u.tip(), u.reason());
+            persistUnsaved();
         } catch (StoreFailed e) {
             // still unsaved; refused meanwhile
         }
-        return u.reason();
+        return u.rewind().reason();
     }
 
+    /**
+     * Persists a rewind's reconciliation before any host is restarted (D17 "Rewind"; M33B1-CDX-5): every module with a
+     * journaled body on the chain, and this one, must reconcile on a fresh host before the rewind clears, and admission
+     * stays closed meanwhile. Other hosts of the chain see it and stop. Held in this process before the lock is taken
+     * (M33B1-CDX-84, -88).
+     */
     public void beginRewind(long tip, String reason) throws StoreFailed, InterruptedException {
-        // Held in this process first: a failed write still stops every module of the chain here (M33B1-CDX-84).
-        Unsaved mine = UNSAVED.merge(unsavedKey(), new Unsaved(tip, reason), (a, b) -> a.tip() <= b.tip() ? a : b);
-        tip = Math.min(tip, mine.tip());
+        register(new Rewind(tip, reason, new LinkedHashSet<>(Set.of(module)), Rewind.newId(), Set.of()));
         try (var held = store.lock(chainKey)) {
             Files f = load();
             ChainRecord c = existing(f);
-            Set<String> pending = new LinkedHashSet<>(c.rewind() == null ? Set.of() : c.rewind().pending());
-            pending.addAll(pendingModules(f));
-            long at = c.rewind() == null ? tip : Math.min(tip, c.rewind().tip());
             // A new id each time (M33B1-CDX-5): a restore observed before this rewind cannot acknowledge it.
-            persist(f, c.withNewRewind(new Rewind(at, reason, pending, Rewind.newId())));
-            long saved = at;
-            UNSAVED.computeIfPresent(unsavedKey(), (k, u) -> u.tip() >= saved ? null : u);
+            persistRewind(f, c, union(new Rewind(tip, reason, pendingModules(f, true), Rewind.newId(), Set.of()), c.rewind()));
         }
     }
 
