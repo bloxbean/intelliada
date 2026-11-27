@@ -74,6 +74,100 @@ public class JoustArchitectureTest {
         assertTrue("the decoder call is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::decoder));
     }
 
+    /** The methods each compiled class invokes, as {@code owner.name}. */
+    static java.util.Set<String> invoked(byte[] b) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        new org.jetbrains.org.objectweb.asm.ClassReader(b).accept(new org.jetbrains.org.objectweb.asm.ClassVisitor(org.jetbrains.org.objectweb.asm.Opcodes.ASM9) {
+            @Override
+            public org.jetbrains.org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                return new org.jetbrains.org.objectweb.asm.MethodVisitor(org.jetbrains.org.objectweb.asm.Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                        out.add(owner + "." + n);
+                    }
+
+                    @Override
+                    public void visitInvokeDynamicInsn(String n, String d, org.jetbrains.org.objectweb.asm.Handle bsm, Object... args) {
+                        for (Object a : args) {
+                            if (a instanceof org.jetbrains.org.objectweb.asm.Handle h) out.add(h.getOwner() + "." + h.getName());
+                        }
+                    }
+                };
+            }
+        }, 0);
+        return out;
+    }
+
+    /**
+     * ADR-005 §12 E10, L43 (M3.3b1): until M3.3b3 wires the panel's write path, no production class admits a body to the
+     * journal, builds one for handout, hands one out or discards one (#38). Method references count (invokedynamic
+     * handles). Only the commit that wires these paths may relax this test, referencing #38.
+     */
+    @Test
+    public void nothingInProductionReachesAdmissionOrABuildForHandout() throws Exception {
+        Path root = Path.of("build/classes/java/main/com/bloxbean/intelliada/idea");
+        assertTrue(Files.isDirectory(root));
+        List<String> bad = new ArrayList<>();
+        try (var w = Files.walk(root)) {
+            for (Path c : (Iterable<Path>) w.filter(p -> p.toString().endsWith(".class"))::iterator) {
+                String rel = root.relativize(c).toString().replace('\\', '/');
+                for (String m : invoked(Files.readAllBytes(c))) {
+                    // ChainJournal.admit only through JoustRunJournal; that, its handout record and the build path from nowhere.
+                    boolean admitOutsideTheSession = m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.admit")
+                            && !rel.equals("joust/journal/Settlement.class") && !rel.equals("joust/journal/ChainJournal.class");
+                    boolean settlementAdmit = (m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.admit")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.handedOut"))
+                            && !rel.equals("joust/run/JoustRunJournal.class");
+                    if (settlementAdmit) bad.add(rel + " calls " + m);
+                    // The whole deferred surface of ADR-005 L43 (#38; M33B1-DES-29): discard and the journal's handout too.
+                    boolean deferred = m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.discard")
+                            || (m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.discard") && !rel.equals("joust/run/JoustRunSession.class"))
+                            || (m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.discard")
+                                && !rel.equals("joust/run/JoustRunJournal.class") && !own(rel, "joust/journal/Settlement"))
+                            || (m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.handout")
+                                && !own(rel, "joust/journal/Settlement") && !own(rel, "joust/journal/ChainJournal"));
+                    if (deferred) bad.add(rel + " calls " + m);
+                    if (admitOutsideTheSession || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.admit")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.handedOut")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.build")) bad.add(rel + " calls " + m);
+                }
+            }
+        }
+        assertTrue("E10: " + bad, bad.isEmpty());
+        // The scan sees calls: a test class that admits is found by the same reader.
+        try (var in = getClass().getResourceAsStream("/com/bloxbean/intelliada/idea/joust/journal/ChainJournalTest.class")) {
+            assertNotNull(in);
+            assertTrue(invoked(in.readAllBytes()).contains("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.admit"));
+        }
+    }
+
+    /**
+     * SEC-15: a page request carries listings only, never a build around {@code build()}'s checks. (A session needs a
+     * live host; the guard is asserted where it stands.)
+     */
+    @Test
+    public void aPageRequestIsAListingOnly() throws Exception {
+        String src = Files.readString(Path.of("src/main/java/com/bloxbean/intelliada/idea/joust/run/JoustRunSession.java"));
+        int page = src.indexOf("public JsonNode nextPage(");
+        assertTrue(page > 0);
+        String body = src.substring(page, src.indexOf("\n    }\n", page));
+        assertTrue(body, body.contains("!method.equals(\"instances\") && !method.equals(\"objects\")"));
+        assertTrue(body, body.indexOf("throw new IllegalArgumentException") < body.indexOf("return call("));
+    }
+
+    /** {@code rel} is the class {@code base} itself or one of its nested classes, never a similarly named one (M33B1-CDX-159). */
+    static boolean own(String rel, String base) {
+        return rel.equals(base + ".class") || rel.startsWith(base + "$");
+    }
+
+    @Test
+    public void aSimilarlyNamedClassIsNotExempt() {
+        assertTrue(own("joust/journal/Settlement.class", "joust/journal/Settlement"));
+        assertTrue(own("joust/journal/Settlement$Observation.class", "joust/journal/Settlement"));
+        assertFalse(own("joust/journal/SettlementWorker.class", "joust/journal/Settlement"));
+        assertFalse(own("joust/journal/ChainJournalHelper.class", "joust/journal/ChainJournal"));
+    }
+
     @Test
     public void noEncoderAndDecodingOnlyInTheReviewModal() throws Exception {
         Path root = Path.of("build/classes/java/main/com/bloxbean/intelliada/idea/joust");

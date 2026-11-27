@@ -198,6 +198,8 @@ public final class HostSnapshot {
         return out;
     }
 
+    private static final java.util.regex.Pattern MODULE_INFO_VERSIONED = java.util.regex.Pattern.compile("META-INF/versions/[1-9][0-9]{0,2}/module-info\\.class");
+
     /** A version directory as the JDK spells it: a feature number without leading zeros (M33A-CDX-55). */
     private static final java.util.regex.Pattern VERSIONED = java.util.regex.Pattern.compile("META-INF/versions/([1-9][0-9]{0,2})/(.+)");
 
@@ -205,7 +207,8 @@ public final class HostSnapshot {
     static String className(String entry) {
         // Exact, as in a jar (M33A-CDX-45). What a directory serves under another spelling is resolved separately.
         // A package-info class counts: it is loaded from its package, so it marks the entry as supplying it (M33A-CDX-69).
-        if (!entry.endsWith(".class") || entry.endsWith("module-info.class")) return null;
+        // The module descriptor by its exact entry name, base or versioned; a class merely ending so is a class (M33A-CDX-71).
+        if (!entry.endsWith(".class") || entry.equals("module-info.class") || MODULE_INFO_VERSIONED.matcher(entry).matches()) return null;
         java.util.regex.Matcher m = VERSIONED.matcher(entry);
         return m.matches() ? m.group(2) : entry;
     }

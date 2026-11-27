@@ -380,6 +380,24 @@ public class JoustAnchorsTest extends BasePlatformTestCase {
         }
     }
 
+    /** M33A-CDX-71: only the module descriptor's exact name is not a class; a class ending in module-info is one. */
+    public void testOnlyTheModuleDescriptorIsNotAClass() throws Exception {
+        Path jar = newFolder().resolve("mi.jar");
+        try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
+            for (String e : List.of("module-info.class", "META-INF/versions/11/module-info.class", "org/julclang/state/runtime/Examplemodule-info.class")) {
+                out.putNextEntry(new java.util.zip.ZipEntry(e));
+                out.write(new byte[]{(byte) 0xca, (byte) 0xfe});
+                out.closeEntry();
+            }
+        }
+        HostSnapshot s = snapshot(List.of(jar));
+        try {
+            assertEquals(java.util.Set.of("org/julclang/state/runtime/Examplemodule-info.class"), s.classesAt(0));
+        } finally {
+            s.delete();
+        }
+    }
+
     /** M33A-CDX-56: a blueprint with a UTF-8 BOM, which the runtime reads, anchors to the same hash. */
     public void testABlueprintWithAByteOrderMarkAnchors() throws Exception {
         Examples ex = examples("testABlueprintWithAByteOrderMarkAnchors");

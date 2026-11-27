@@ -88,5 +88,16 @@ public class JoustVersionPolicyTest {
         assertFalse(v.maySign());
         assertTrue(v.why(), v.why().contains("another class-path entry"));
         sh.snapshot().delete();
+        // M33A-CDX-70: a directory's exploded versioned copy is never loaded, so it supplies no runtime class.
+        Path exploded = Files.createTempDirectory("exploded");
+        Files.createDirectories(exploded.resolve("META-INF/versions/21/org/julclang/state/runtime"));
+        Files.writeString(exploded.resolve("META-INF/versions/21/org/julclang/state/runtime/package-info.class"), "x");
+        List<Path> withExploded = new ArrayList<>();
+        withExploded.add(exploded);
+        withExploded.addAll(jars);
+        var ex = SnapshotOf.create(withExploded, Files.createTempDirectory("policy"));
+        var ve = JoustVersionPolicy.check(sets, ex.spec(), ex.snapshot(), init(LABEL), 25, List.of(desc(2)));
+        assertTrue(ve.why(), ve.maySign());
+        ex.snapshot().delete();
     }
 }

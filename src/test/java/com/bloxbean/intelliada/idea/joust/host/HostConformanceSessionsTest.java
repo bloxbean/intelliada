@@ -42,6 +42,17 @@ public class HostConformanceSessionsTest {
         assertTrue("the cancelled listing ended as internal/cancelled: " + r.errors, r.errors.contains("internal/cancelled"));
     }
 
+    /** I22, M3.3b: the kit's maps session (a host initialized restoring, a restore, then a map call) runs to its end. */
+    @Test
+    public void theRecordedMapsSessionRunsToItsEnd() throws Exception {
+        Kit kit = kit("theRecordedMapsSessionRunsToItsEnd");
+        if (kit == null) return;
+        Result r = drive(kit, "sessions/maps.json");
+        assertNull("no violation: " + r.ended, r.violation);
+        assertEquals("the fake host accepted every frame: " + r.stderr, 0, r.exit);
+        assertTrue("the session's calls ran: " + r.calls, r.calls >= 4);
+    }
+
     @Test
     public void everyHostFaultEndsTheSession() throws Exception {
         Kit kit = kit("everyHostFaultEndsTheSession");

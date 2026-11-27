@@ -27,6 +27,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class JoustRunSession {
 
+    private static final com.intellij.openapi.diagnostic.Logger LOG = com.intellij.openapi.diagnostic.Logger.getInstance(JoustRunSession.class);
+
     static final Duration CALL_TIMEOUT = Duration.ofSeconds(90);
     static final long BYTES_PER_CALL = 32L * 1024 * 1024;
 
@@ -81,6 +83,139 @@ public final class JoustRunSession {
         this.running = running;
         this.clock = CLOCKS.computeIfAbsent(running.session(), k -> new Clock());
         this.lastNow = clock.floor;
+        this.journal = JOURNALS.get(running.session());
+    }
+
+    // ---- D17: the journal of a host session (M3.3b1) ------------------------------------------------------------------
+
+    /** The journal of each host session this IDE launched; a reused host keeps its own. */
+    private static final java.util.Map<HostSession, JoustRunJournal> JOURNALS =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private final @Nullable JoustRunJournal journal;
+
+    /** Hosts this IDE started read-only, without the journal, and why (M33B1-FAB-1, -12): adopted read-only again. */
+    private static final java.util.Map<HostSession, String> READ_ONLY =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /**
+     * Starts (or reuses) the module's host for a binding (D11, D17): a new host's chain history is classified first, so
+     * {@code initialize} carries {@code restoring}, its reverse reads go through the settlement guard, and once its
+     * catalog is verified it is restored from the journal. A reused host keeps the journal it was started with.
+     * {@code store} overrides this user's journal (tests).
+     */
+    public static JoustRunSession start(JoustHostService service, java.nio.file.Path moduleDir, Binding b,
+                                        @Nullable com.bloxbean.intelliada.idea.joust.journal.JournalStore store, Launcher launcher,
+                                        java.util.function.Consumer<JoustHostService.Running> adopted) throws Exception {
+        JoustHostService.Running seen = service.running(moduleDir);
+        // The journal is optional while nothing is built (M33B1-FAB-1): a store IntelliAda cannot use (a linked or
+        // foreign ~/.intelliada, a file system without directory sync) starts the host read-only, without it, and says
+        // why when building is asked for. Views, listings and decoding work as before.
+        JoustRunJournal fresh = null;
+        String journalless = null;
+        if (seen == null) {
+            try {
+                fresh = JoustRunJournal.open(b, moduleDir, store);
+            } catch (com.bloxbean.intelliada.idea.joust.journal.JournalStore.StoreFailed unusable) {
+                journalless = unusable.getMessage();
+                LOG.warn("JOUST: starting the dev host without IntelliAda's journal: " + journalless);
+            }
+        }
+        JoustHostService.Running r = null;
+        boolean owned = false, done = false;
+        try {
+            ObjectNode init = fresh != null ? JoustRunJournal.initParams(b.identity(), fresh.restoring()) : initParams(b.identity());
+            HostSession.Reads reads = fresh != null ? fresh.reads(reads(b)) : reads(b);
+            r = launcher.launch(init, b.key(), reads);
+            adopted.accept(r);
+            // Reuse only of the host that was seen (M33B1-CDX-150): one launched meanwhile never opened its journal.
+            if (journalless == null && fresh == null && (seen == null || r.session() != seen.session())) {
+                service.stop(moduleDir);
+                throw new NetworkIdentity.Refused("the dev host it was about to reuse stopped meanwhile; start it again");
+            }
+            // A host whose own start has not yet registered its journal is never adopted without it (M33B1-CDX-156); one
+            // started read-only, without a journal, is adopted read-only again (M33B1-FAB-12).
+            JoustRunJournal existing = JOURNALS.get(r.session());
+            if (journalless == null && fresh == null && existing == null) journalless = READ_ONLY.get(r.session());
+            if (journalless == null && fresh == null && (existing == null || !existing.ready())) {   // registered and started (M33B1-CDX-163)
+                throw new NetworkIdentity.Refused("the dev host is still starting; try again in a moment");
+            }
+            if (fresh == null && seen == null && journalless != null && READ_ONLY.putIfAbsent(r.session(), journalless) == null) {
+                HostSession ro = r.session();
+                ro.onEnded(why -> READ_ONLY.remove(ro));
+            }
+            owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;
+            if (owned) {
+                HostSession ended = r.session();
+                ended.onEnded(why -> JOURNALS.remove(ended));   // no entry outlives its session (M33B1-CDX-35)
+            }
+            JoustRunSession made = new JoustRunSession(b, r);
+            made.journalless = journalless;
+            made.verifyCatalog();   // the host's catalog is the build's, or the host is stopped (M33A-CDX-2)
+            if (owned) {
+                // The model's margin is the one the host was initialized with (M33B1-DES-7).
+                if (r.requested().path("time").path("settlementSlots").asLong(-1) != fresh.settlementSlots()) {
+                    throw new NetworkIdentity.Refused("the dev host was initialized with another settlement margin than IntelliAda's journal");
+                }
+                synchronized (made.clock) {
+                    fresh.started(r.session(), made.clock, made::checkBinding);
+                }
+            }
+            done = true;
+            return made;
+        } finally {
+            if (!done) {
+                // Every startup failure releases the module's lock and its journal (M33B1-CDX-17).
+                if (owned) {
+                    JOURNALS.remove(r.session());
+                    service.stop(moduleDir);
+                }
+            }
+            if (fresh != null && (!owned || !done)) fresh.close();
+        }
+    }
+
+    /**
+     * Discards a body the host prepared that was never handed out (D17): checked against the host-table model, its
+     * journal entry removed. A handed-out body is refused: chain evidence or expiry releases it (I30).
+     */
+    void discard(String reservation) throws Exception {
+        if (journal == null) throw new NetworkIdentity.Refused(journalBlocks());
+        synchronized (clock) {
+            journal.discard(reservation);
+        }
+    }
+
+    /** How a host is started or reused: {@link JoustHostService#start} from the panel, {@code launch} in tests. */
+    @FunctionalInterface
+    public interface Launcher {
+        JoustHostService.Running launch(ObjectNode initialize, String binding, HostSession.Reads reads) throws Exception;
+    }
+
+    /**
+     * A {@code prepare} or {@code publish} through the journal's bookkeeping (the deployment checked first): an unsigned
+     * body the host reserved. Nothing is handed out or admitted here; M3.3b2's signing flow builds on it.
+     */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
+    JsonNode build(String method, ObjectNode params) throws Exception {
+        if (!method.equals("prepare") && !method.equals("publish")) throw new IllegalArgumentException(method);
+        String blocked = journalBlocks();
+        if (blocked != null) throw new NetworkIdentity.Refused(blocked);
+        checkDeployment(method.equals("publish") ? params.path("contract").textValue() : params.path("call").path("contract").textValue());
+        return call(method, params, true);
+    }
+
+    @Nullable JoustRunJournal journalForTests() {
+        return journal;
+    }
+
+    /** Why building is blocked by the journal (D17's fences, a fenced host, an open restore), or null. */
+    /** Why this host runs without the journal (the store could not be used; M33B1-FAB-1), or null. */
+    private volatile @Nullable String journalless;
+
+    @Nullable String journalBlocks() {
+        if (journal == null && journalless != null) return "IntelliAda's journal cannot be used (" + journalless + "); building needs it";
+        if (journal == null) return "this dev host was started without IntelliAda's journal; restart it from the run panel";
+        return journal.buildingBlocked();
     }
 
     public Binding binding() {
@@ -160,9 +295,10 @@ public final class JoustRunSession {
         n.putArray("protocol").add(1);
         n.putObject("network").put("networkId", id.networkId()).put("protocolMagic", id.magic()).put("mainnet", false);
         n.putObject("clock").put("zeroSlot", id.zeroSlot()).put("zeroTimeMs", id.zeroTimeMs()).put("slotLengthMs", id.slotLengthMs());
-        boolean devnet = id.networkClass() == NetworkIdentity.NetworkClass.DEVNET;
-        int ttl = devnet ? Math.min(900, id.horizonSlots()) : 7200;
-        n.putObject("time").put("maxTtlSlots", ttl).put("settlementSlots", devnet ? 60 : 2160).put("maxNowAheadSlots", 900);
+        // D14b, from the one policy the journal also uses (M33B1-DES-7).
+        n.putObject("time").put("maxTtlSlots", com.bloxbean.intelliada.idea.joust.journal.TimePolicy.maxTtlSlots(id))
+                .put("settlementSlots", com.bloxbean.intelliada.idea.joust.journal.TimePolicy.settlementSlots(id.networkClass()))
+                .put("maxNowAheadSlots", com.bloxbean.intelliada.idea.joust.journal.TimePolicy.MAX_NOW_AHEAD);
         n.putObject("limits").put("callDeadlineMs", 60000).put("readsPerCall", 256).put("readBytesPerCall", BYTES_PER_CALL);
         n.put("restoring", false);
         return n;
@@ -174,8 +310,39 @@ public final class JoustRunSession {
     }
 
     /** {@code max(previous now, the bound node's tip slot)}: never decreasing within the session (I28). */
-    long now() throws BlockfrostApi.Failed, InterruptedException {
-        return monotone(lastNow, tipSlot(binding.api().get("/blocks/latest")));
+    /** The tip the last {@link #now()} read, before the monotone clock: what a build is checked against (M33B1-CDX-126). */
+    private final java.util.concurrent.atomic.AtomicLong lastTip = new java.util.concurrent.atomic.AtomicLong(-1);
+
+    long now() throws Exception {
+        long tip = tipSlot(binding.api().get("/blocks/latest"));
+        // A chain far below the session's now (a rewind, even with an empty journal; M33B1-CDX-34): the host would refuse
+        // every read as nowImplausible, so it is stopped and must be started again. D14: first a transient read, re-read
+        // until three readings span at least 10 s (M33B1-DES-12); a recovered reading is used instead.
+        long floor = lastNow.get();
+        long ahead = com.bloxbean.intelliada.idea.joust.journal.TimePolicy.MAX_NOW_AHEAD;
+        if (floor >= 0 && floor - tip > ahead) {
+            long since = System.nanoTime();
+            int reads = 1;
+            while (reads < 3 || System.nanoTime() - since < 10_000_000_000L) {
+                Thread.sleep(2_000);
+                tip = tipSlot(binding.api().get("/blocks/latest"));
+                reads++;
+                if (floor - tip <= ahead || reads > 12) break;
+            }
+        }
+        if (floor >= 0 && floor - tip > ahead) {
+            // A chain this host cannot follow: it is stopped; a restart restores its transactions from the chain.
+            // Fenced and stopped whatever the write does (M33B1-CDX-79).
+            try {
+                if (journal != null) journal.clockRewound(tip, "the chain went back to slot " + tip + ", far below a session's now");
+            } finally {
+                stopHost();
+            }
+            throw new NetworkIdentity.Refused("the chain went back to slot " + tip + ", far below this session's now (" + floor
+                    + "); the dev host was stopped. Start it again");
+        }
+        lastTip.set(tip);   // the chain as read, apart from the host's monotone clock (M33B1-CDX-126)
+        return monotone(lastNow, tip);
     }
 
     /**
@@ -212,7 +379,25 @@ public final class JoustRunSession {
                 p.setAll(params);
                 params = p;
             }
-            return running.session().call(method, params, CALL_TIMEOUT, () -> false);
+            if (journal == null) return running.session().call(method, params, CALL_TIMEOUT, () -> false);
+            // D17: settlement before the call when anything is live; the call's read tips go to the host-table model.
+            journal.beforeCall(method, params.path("now").asLong(0), lastTip.get());
+            // The host call alone in the try; the journal step once, with the outcome (M33B1-DES-11).
+            JsonNode r = null;
+            String error = null;
+            Exception failure = null;
+            try {
+                r = running.session().call(method, params, CALL_TIMEOUT, () -> false);
+            } catch (HostError e) {
+                error = e.kind() + "/" + e.code();
+                failure = e;
+            } catch (Exception e) {
+                error = "transport";
+                failure = e;
+            }
+            journal.afterCall(method, r, error);
+            if (failure != null) throw failure;
+            return r;
         }
     }
 
@@ -266,7 +451,10 @@ public final class JoustRunSession {
     /** Why the session cannot sign, or null; views, listings and decoding work either way (D11 step 4). */
     public @Nullable String signingDisabled() {
         synchronized (signingDisabled) {
-            return signingDisabled.isEmpty() ? null : "read-only: " + String.join("; ", signingDisabled);
+            java.util.List<String> why = new java.util.ArrayList<>(signingDisabled);
+            String j = journalBlocks();
+            if (j != null) why.add(j);
+            return why.isEmpty() ? null : "read-only: " + String.join("; ", why);
         }
     }
 
@@ -463,6 +651,8 @@ public final class JoustRunSession {
 
     /** A later page of an {@code instances} or {@code objects} listing (protocol: listing, after, limit; M31B-CDX-10). */
     public JsonNode nextPage(String method, String listing, long after, int limit) throws Exception {
+        // Listings only (M33B1-SEC-15): a build never goes out through a page request, around build()'s checks.
+        if (!method.equals("instances") && !method.equals("objects")) throw new IllegalArgumentException("not a listing: " + method);
         return call(method, HostJson.object().put("listing", listing).put("after", after).put("limit", limit), false);
     }
 
