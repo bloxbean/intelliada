@@ -250,6 +250,13 @@ public final class Settlement {
     /** The fence the last {@link #rewindMissed} snapshot showed, or null (M33B1-CDX-116). */
     private volatile JournalStore.@Nullable Fence lastFence;
 
+    private volatile @Nullable Long lastRecovered;
+
+    /** The chain's recovered bound as of the last rewind check (M33B1-CDX-126). */
+    public @Nullable Long lastRecovered() {
+        return lastRecovered;
+    }
+
     /** The chain's fence as of the last rewind check, the same locked read (M33B1-CDX-116). */
     public JournalStore.@Nullable Fence lastFence() {
         return lastFence;
@@ -358,9 +365,10 @@ public final class Settlement {
         String unsaved = snap.unsaved();
         JournalStore.ChainRecord rec = snap.record();
         lastFence = rec == null || rec.fence() == null ? null : rec.fence();
+        lastRecovered = rec == null ? null : rec.recovered();
         // A session opened read-only on a permanently fenced chain keeps its views (M33B1-CDX-114), whatever files
         // reappear beside the marker.
-        if (snap.permanent() && permanentAtStart && unsaved == null && fenced == null) return false;
+        if (snap.permanent() && permanentAtStart && fenced == null) return false;   // views only; building is refused (M33B1-CDX-125)
         if (rec != null) recordSeen = true;
         String lost = snap.lost();
         String why = unsaved != null ? "a rewind on this chain is being recorded (" + unsaved + ")"

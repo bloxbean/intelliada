@@ -1669,4 +1669,71 @@ public class ChainJournalTest {
         s.writeRecord(new JournalStore.ChainRecord(CHAIN, null, java.util.Map.of(), 0, null, null, List.of()));
         assertNull(j(s, MOD_A).snapshot().lost());
     }
+
+    // ---- round 19 (M33B1-CDX-127..130) ---------------------------------------------------------------------------------
+
+    /** CDX-127: a generation-zero record that counts rewinds is not trusted. */
+    @Test
+    public void aGenerationZeroRecordCountingRewindsIsLostHistory() throws Exception {
+        JournalStore s = store();
+        s.writeRecord(new JournalStore.ChainRecord(CHAIN, null, java.util.Map.of(), 0, null, null, List.of(), null, 3));
+        assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_A).open(500).history());
+    }
+
+    /** CDX-128: two spellings of one store share one unsaved rewind. */
+    @Test
+    public void twoSpellingsOfOneStoreShareTheUnsavedRewind() throws Exception {
+        Path real = tmp.newFolder("realhome").toPath();
+        Path alias = Files.createSymbolicLink(tmp.getRoot().toPath().resolve("aliashome"), real);
+        Files.createDirectories(real.resolve("p"));
+        JournalStore a = new JournalStore(real.resolve("p").resolve("j")), b = new JournalStore(alias.resolve("p").resolve("j"));
+        assertEquals(a.identity(), b.identity());
+        j(a, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        a.failWritesForTests = p -> p.getFileName().toString().startsWith("record");
+        try {
+            j(a, MOD_A).beginRewind(100, "the clock went back");
+            fail("the write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        assertNotNull("seen through the other spelling", j(b, MOD_B).snapshot().unsaved());
+        a.failWritesForTests = p -> false;
+        j(a, MOD_A).unsavedRewind();
+    }
+
+    /** CDX-129, -130: a re-entered lock still owes the sync; another chain does not. */
+    @Test
+    public void pendingSyncsBindTheirChainAndReentry() throws Exception {
+        JournalStore s = store();
+        String other = "devnet-43-" + "cd".repeat(32);
+        s.failSyncsForTests = true;
+        try {
+            j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+            fail("the sync was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        assertNotNull("another chain is not blocked", new ChainJournal(s, other, MOD_A, 60).snapshot());
+        try (var held = s.lock(JournalStore.key(CHAIN))) {
+            fail("the outer lock owes the sync");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failSyncsForTests = false;
+        try (var held = s.lock(JournalStore.key(CHAIN))) {
+            // A sync fails while the outer lock is held: the re-entered lock owes it (CDX-129).
+            s.failSyncsForTests = true;
+            try {
+                j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 900)), 400, 400);
+                fail("the sync was to fail");
+            } catch (JournalStore.StoreFailed expected) {
+            }
+            try {
+                j(s, MOD_B).snapshot();
+                fail("re-entry over a change that is not durable");
+            } catch (JournalStore.StoreFailed expected) {
+            }
+            s.failSyncsForTests = false;
+            assertNotNull(j(s, MOD_B).snapshot());
+        } finally {
+            s.failSyncsForTests = false;
+        }
+    }
 }

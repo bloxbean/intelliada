@@ -302,11 +302,34 @@ public final class JournalStore {
      * Directories whose entry changed (a rename) but whose sync failed (M33B1-CDX-122): every lock taken afterwards
      * syncs them first, and fails while one cannot be, so no operation reports success over a change that is not durable.
      */
-    private static final Set<Path> UNSYNCED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.concurrent.ConcurrentHashMap<Path, String> UNSYNCED = new java.util.concurrent.ConcurrentHashMap<>();
 
-    private void syncPending() throws StoreFailed {
-        for (Path d : List.copyOf(UNSYNCED)) {
-            if (!d.startsWith(root.toAbsolutePath().normalize())) continue;
+    /** Records {@code dir} as owed a sync for the chain the written file belongs to (M33B1-CDX-128, -130). */
+    private void unsynced(Path dir, Path file) {
+        String name = file.getFileName().toString();
+        String chain = name.endsWith(".json") && dir.getFileName() != null && dir.getFileName().toString().equals("registry")
+                ? name.substring(0, name.length() - 5) : chainOf(dir);
+        Path real;
+        try {
+            real = dir.toRealPath();
+        } catch (IOException e) {
+            real = Path.of(identity()).resolve(root.relativize(dir.toAbsolutePath().normalize()));
+        }
+        UNSYNCED.put(real, chain == null ? "" : chain);
+    }
+
+    /** The chain a store directory belongs to ({@code chains/<key>/...}), or null for a shared one. */
+    private @Nullable String chainOf(Path dir) {
+        Path rel = root.toAbsolutePath().normalize().relativize(dir.toAbsolutePath().normalize());
+        return rel.getNameCount() >= 2 && rel.getName(0).toString().equals("chains") ? rel.getName(1).toString() : null;
+    }
+
+    private void syncPending(String chainKey) throws StoreFailed {
+        Path me = Path.of(identity());
+        for (var en : List.copyOf(UNSYNCED.entrySet())) {
+            Path d = en.getKey();
+            // This store's, and this chain's or shared (M33B1-CDX-128, -130).
+            if (!d.startsWith(me) || !(en.getValue().isEmpty() || en.getValue().equals(chainKey))) continue;
             try {
                 if (failSyncsForTests) throw new IOException("a test's sync failure");
                 forceDir(d);
@@ -322,6 +345,26 @@ public final class JournalStore {
     /** Tests: directory syncs fail while set. */
     volatile boolean failSyncsForTests;
 
+    /**
+     * The store's physical identity (M33B1-CDX-128): the real path of its deepest existing ancestor, with the rest of
+     * the root's components after it. It is the same for every spelling of one store, before and after the root exists.
+     */
+    public String identity() {
+        Path p = root.toAbsolutePath().normalize();
+        java.util.Deque<Path> rest = new java.util.ArrayDeque<>();
+        while (p != null) {
+            try {
+                Path real = p.toRealPath();
+                for (Path r : rest) real = real.resolve(r);
+                return real.toString();
+            } catch (IOException e) {
+                if (p.getFileName() != null) rest.addFirst(p.getFileName());
+                p = p.getParent();
+            }
+        }
+        return root.toAbsolutePath().normalize().toString();
+    }
+
     public Held lock(String chainKey) throws StoreFailed, InterruptedException {
         requireKey(chainKey);
         // Keyed by the directory's real path: two spellings of one store share one in-process lock, so this JVM never
@@ -336,7 +379,14 @@ public final class JournalStore {
         ReentrantLock in = LOCKS.computeIfAbsent(real, k -> new ReentrantLock());
         if (!in.tryLock(30, TimeUnit.SECONDS)) throw new StoreFailed("the chain's journal is busy");
         if (in.getHoldCount() > 1) {
-            return in::unlock;   // re-entered by the same thread: the file lock is already held
+            // Re-entered by the same thread: the file lock is already held; pending syncs are still owed (M33B1-CDX-129).
+            try {
+                syncPending(chainKey);
+            } catch (StoreFailed e) {
+                in.unlock();
+                throw e;
+            }
+            return in::unlock;
         }
         FileChannel ch = null;
         try {
@@ -347,7 +397,7 @@ public final class JournalStore {
                 if (System.nanoTime() > end) throw new StoreFailed("another IDE holds the chain's journal");
                 Thread.sleep(50);
             }
-            syncPending();   // nothing proceeds over a change that is not yet durable (M33B1-CDX-122)
+            syncPending(chainKey);   // nothing proceeds over a change that is not yet durable (M33B1-CDX-122)
             FileChannel channel = ch;
             FileLock lock = fl;
             return () -> {
@@ -685,7 +735,7 @@ public final class JournalStore {
             try {
                 forceDir(f.getParent());
             } catch (IOException e) {
-                UNSYNCED.add(f.getParent().toAbsolutePath().normalize());
+                unsynced(f.getParent(), f);
                 throw e;
             }
         } catch (NoSuchFileException gone) {
@@ -986,7 +1036,7 @@ public final class JournalStore {
                 if (failSyncsForTests) throw new IOException("a test's sync failure");
                 forceDir(dir);
             } catch (IOException e) {
-                UNSYNCED.add(dir.toAbsolutePath().normalize());   // retried before the next locked operation (M33B1-CDX-122)
+                unsynced(dir, f);   // retried before the next locked operation on its chain (M33B1-CDX-122, -130)
                 throw e;
             }
         } catch (IOException e) {

@@ -160,12 +160,18 @@ public final class JoustRunJournal implements AutoCloseable {
             }
             if (c != null && c.rewind() != null) return "another module on this chain is reconciling a rewind";
             if (c != null && c.fence() != null) {
-                return "building waits until the chain passes slot " + c.fence().until() + waitFor(c.fence().until());
+                return fenceMessage(c.fence().until());
             }
         } catch (Exception e) {
             return "IntelliAda's journal for this chain cannot be read (" + e.getClass().getSimpleName() + ")";
         }
         return null;
+    }
+
+    /** One message for a fence, wherever it refuses a build (M33B1-DES-27, -CDX-131). */
+    private String fenceMessage(long until) {
+        if (settlement.highestSlot() > until) return "the chain has passed slot " + until + "; IntelliAda lifts the fence on its next pass. Try again";
+        return "building waits until the chain passes slot " + until + waitFor(until);
     }
 
     /** A rough wall time until {@code slot} at the session's slot length (M33B1-DES-4). */
@@ -181,11 +187,16 @@ public final class JoustRunJournal implements AutoCloseable {
      * inconclusive pass withholds the call while anything is live (M33B1-CDX-16).
      */
     void beforeCall(long now) throws Exception {
-        beforeCall("view", now);
+        beforeCall("view", now, -1);
+    }
+
+    void beforeCall(String method, long now) throws Exception {
+        beforeCall(method, now, -1);
     }
 
     /** As {@link #beforeCall(long)}; a build ({@code prepare}, {@code publish}) also refuses under a chain fence. */
-    void beforeCall(String method, long now) throws Exception {
+    /** {@code tip}: the chain's tip as read for this call (−1 unknown), apart from the host's monotone {@code now}. */
+    void beforeCall(String method, long now, long tip) throws Exception {
         lastNow.accumulateAndGet(now, Math::max);
         if (mustSettleFirst(journal.entries(), settlement.pollNeeded())) {
             if (!settlement.poll()) {
@@ -199,13 +210,15 @@ public final class JoustRunJournal implements AutoCloseable {
         // the in-memory rewind included (-121). A rewind since this host started stops it (CDX-95); a fence refuses a
         // build, while views and listings go on (CDX-116).
         if (settlement.rewindMissed()) throw new ChainJournal.Fenced("the dev host was stopped: " + settlement.fenced());
+        boolean build = method.equals("prepare") || method.equals("publish");
         JournalStore.Fence fence = settlement.lastFence();
-        if (fence != null && (method.equals("prepare") || method.equals("publish"))) {
-            // Already passed, but no pass has lifted it yet (M33B1-DES-27): said so, and the next pass lifts it.
-            if (settlement.highestSlot() > fence.until()) {
-                throw new ChainJournal.Fenced("the chain has passed slot " + fence.until() + "; IntelliAda lifts the fence on its next pass. Try again");
-            }
-            throw new ChainJournal.Fenced("building waits until the chain passes slot " + fence.until() + waitFor(fence.until()));
+        if (fence != null && build) throw new ChainJournal.Fenced(fenceMessage(fence.until()));
+        // A chain back at or below where lost history was recovered, by the tip read for this call, not the host's
+        // clock (M33B1-CDX-126): opening or admission there would refuse too.
+        Long recovered = settlement.lastRecovered();
+        if (build && recovered != null && tip >= 0 && tip <= recovered) {
+            throw new ChainJournal.Fenced("the chain is back at slot " + tip + ", at or below where IntelliAda recovered lost history (slot "
+                    + recovered + "); stop the dev host and start it again");
         }
     }
 

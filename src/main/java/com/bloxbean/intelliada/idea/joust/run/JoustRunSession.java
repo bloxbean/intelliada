@@ -269,6 +269,9 @@ public final class JoustRunSession {
     }
 
     /** {@code max(previous now, the bound node's tip slot)}: never decreasing within the session (I28). */
+    /** The tip the last {@link #now()} read, before the monotone clock: what a build is checked against (M33B1-CDX-126). */
+    private final java.util.concurrent.atomic.AtomicLong lastTip = new java.util.concurrent.atomic.AtomicLong(-1);
+
     long now() throws Exception {
         long tip = tipSlot(binding.api().get("/blocks/latest"));
         // A chain far below the session's now (a rewind, even with an empty journal; M33B1-CDX-34): the host would refuse
@@ -297,6 +300,7 @@ public final class JoustRunSession {
             throw new NetworkIdentity.Refused("the chain went back to slot " + tip + ", far below this session's now (" + floor
                     + "); the dev host was stopped. Start it again");
         }
+        lastTip.set(tip);   // the chain as read, apart from the host's monotone clock (M33B1-CDX-126)
         return monotone(lastNow, tip);
     }
 
@@ -336,7 +340,7 @@ public final class JoustRunSession {
             }
             if (journal == null) return running.session().call(method, params, CALL_TIMEOUT, () -> false);
             // D17: settlement before the call when anything is live; the call's read tips go to the host-table model.
-            journal.beforeCall(method, params.path("now").asLong(0));
+            journal.beforeCall(method, params.path("now").asLong(0), lastTip.get());
             // The host call alone in the try; the journal step once, with the outcome (M33B1-DES-11).
             JsonNode r = null;
             String error = null;

@@ -149,6 +149,9 @@ public final class ChainJournal {
         // cannot (M33B1-SEC-1).
         if (f.reg().lost()) return new Classified(Kind.LOST_MARK, List.of(), "the chain's registry entry is unreadable");
         if (!f.reg().exists() && c.generation() >= 1) return new Classified(Kind.LOST_MARK, List.of(), "the chain's registry entry is missing");
+        // Every record change raises the generation; a generation-zero record counting rewinds was never written by this
+        // format's writer, so its count proves nothing (M33B1-CDX-127).
+        if (c.generation() == 0 && c.rewinds() > 0) return new Classified(Kind.LOST_MARK, List.of(), "the chain record's rewind count is not one this version writes");
         if (f.reg().ok() && f.reg().value().generation() > c.generation()) {
             return new Classified(Kind.LOST_MARK, List.of(), "the chain record is older than the registry");
         }
@@ -227,6 +230,7 @@ public final class ChainJournal {
             // past generation zero, or newer.
             if (reg.lost()) return new Snapshot(c, "the chain's registry entry is unreadable", false);
             if (reg.value() == null && c.generation() >= 1) return new Snapshot(c, "the chain's registry entry is missing", false);
+            if (c.generation() == 0 && c.rewinds() > 0) return new Snapshot(c, "the chain record's rewind count is not one this version writes", false);
             if (reg.value() == null) return new Snapshot(c, null, false);
             if (reg.value().generation() > c.generation()) return new Snapshot(c, "the chain record is older than the registry", false);
             return new Snapshot(c, null, false);
@@ -558,9 +562,11 @@ public final class ChainJournal {
         // A record rebuilt without the old one counts as a rewind no host saw (M33B1-CDX-101): its count is the new
         // generation, above any count the lost record held (each count change was a record write), so every host
         // opened before the rebuild stops on the count check.
+        PENDING_REGISTRY.put(unsavedKey(), gen);   // a pair from before the record's write (M33B1-CDX-117)
         store.writeRecord(new ChainRecord(chain, bound, modules, gen, new Fence(bound, why), rewind, regs,
                 c == null ? null : c.recovered(), gen));   // also over a stale record (M33B1-CDX-106)
         store.writeRegistry(new RegistryEntry(chain, base, base, gen));
+        PENDING_REGISTRY.remove(unsavedKey(), gen);
         return bound;
     }
 
@@ -654,8 +660,11 @@ public final class ChainJournal {
             }
             // The mark first, then the registry, then the entry: a crash between them over-covers (and the journal behind
             // its record's generation is then lost history, fenced until the mark).
+            // Tracked as a pair from before the record's write, as every record/registry pair is (M33B1-CDX-117).
+            PENDING_REGISTRY.put(unsavedKey(), next.generation());
             store.writeRecord(next);
             store.writeRegistry(r);
+            PENDING_REGISTRY.remove(unsavedKey(), next.generation());
             store.writeJournal(new ModuleJournal(chain, module, revision, entries));
             lastWritten = revision;
         }
@@ -691,11 +700,13 @@ public final class ChainJournal {
         RegistryEntry reg = f.reg().value();
         if (reg == null) throw new Fenced("the chain's registry entry is missing or unreadable");
         long gen = Math.max(c.generation(), reg.generation()) + 1;
+        PENDING_REGISTRY.put(unsavedKey(), gen);   // a pair from before the record's write (M33B1-CDX-117)
         store.writeRecord(c.with(c.mark(), modules, gen, c.fence(), c.rewind(), c.registrations()));
         try {
             // The registry and the journal after the record: a failure of either is this instance's known failed write,
             // which the same owner may finish later (M33B1-CDX-60).
             store.writeRegistry(repaired(reg, c, gen));
+            PENDING_REGISTRY.remove(unsavedKey(), gen);
             store.writeJournal(new ModuleJournal(chain, module, revision, entries));
         } catch (StoreFailed failed) {
             failedAt = revision;   // the record holds this revision; the journal stays at lastWritten (a known failed write)
@@ -1006,7 +1017,7 @@ public final class ChainJournal {
 
     /** Per store and chain: one process can hold several stores (tests). */
     private String unsavedKey() {
-        return store.root() + "|" + chainKey;
+        return store.identity() + "|" + chainKey;   // the store's physical identity, as its lock uses (M33B1-CDX-128)
     }
 
     private boolean unsavedHere() {
