@@ -74,6 +74,56 @@ public class JoustArchitectureTest {
         assertTrue("the decoder call is seen: " + refs, refs.stream().anyMatch(JoustArchitectureTest::decoder));
     }
 
+    /** The methods each compiled class invokes, as {@code owner.name}. */
+    static java.util.Set<String> invoked(byte[] b) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        new org.jetbrains.org.objectweb.asm.ClassReader(b).accept(new org.jetbrains.org.objectweb.asm.ClassVisitor(org.jetbrains.org.objectweb.asm.Opcodes.ASM9) {
+            @Override
+            public org.jetbrains.org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                return new org.jetbrains.org.objectweb.asm.MethodVisitor(org.jetbrains.org.objectweb.asm.Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                        out.add(owner + "." + n);
+                    }
+
+                    @Override
+                    public void visitInvokeDynamicInsn(String n, String d, org.jetbrains.org.objectweb.asm.Handle bsm, Object... args) {
+                        for (Object a : args) {
+                            if (a instanceof org.jetbrains.org.objectweb.asm.Handle h) out.add(h.getOwner() + "." + h.getName());
+                        }
+                    }
+                };
+            }
+        }, 0);
+        return out;
+    }
+
+    /**
+     * ADR-005 §12 E10 (M3.3b1): until M3.3b3 wires the panel's write path, no production class admits a body to the
+     * journal or builds one for handout. Method references count (invokedynamic handles).
+     */
+    @Test
+    public void nothingInProductionReachesAdmissionOrABuildForHandout() throws Exception {
+        Path root = Path.of("build/classes/java/main/com/bloxbean/intelliada/idea");
+        assertTrue(Files.isDirectory(root));
+        List<String> bad = new ArrayList<>();
+        try (var w = Files.walk(root)) {
+            for (Path c : (Iterable<Path>) w.filter(p -> p.toString().endsWith(".class"))::iterator) {
+                String rel = root.relativize(c).toString().replace('\\', '/');
+                for (String m : invoked(Files.readAllBytes(c))) {
+                    if (m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.admit")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.build")) bad.add(rel + " calls " + m);
+                }
+            }
+        }
+        assertTrue("E10: " + bad, bad.isEmpty());
+        // The scan sees calls: a test class that admits is found by the same reader.
+        try (var in = getClass().getResourceAsStream("/com/bloxbean/intelliada/idea/joust/journal/ChainJournalTest.class")) {
+            assertNotNull(in);
+            assertTrue(invoked(in.readAllBytes()).contains("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.admit"));
+        }
+    }
+
     @Test
     public void noEncoderAndDecodingOnlyInTheReviewModal() throws Exception {
         Path root = Path.of("build/classes/java/main/com/bloxbean/intelliada/idea/joust");

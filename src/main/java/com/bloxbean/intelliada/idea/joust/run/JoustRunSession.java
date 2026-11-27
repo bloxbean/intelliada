@@ -81,6 +81,77 @@ public final class JoustRunSession {
         this.running = running;
         this.clock = CLOCKS.computeIfAbsent(running.session(), k -> new Clock());
         this.lastNow = clock.floor;
+        this.journal = JOURNALS.get(running.session());
+    }
+
+    // ---- D17: the journal of a host session (M3.3b1) ------------------------------------------------------------------
+
+    /** The journal of each host session this IDE launched; a reused host keeps its own. */
+    private static final java.util.Map<HostSession, JoustRunJournal> JOURNALS =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private final @Nullable JoustRunJournal journal;
+
+    /**
+     * Starts (or reuses) the module's host for a binding (D11, D17): a new host's chain history is classified first, so
+     * {@code initialize} carries {@code restoring}, its reverse reads go through the settlement guard, and once its
+     * catalog is verified it is restored from the journal. A reused host keeps the journal it was started with.
+     * {@code store} overrides the IDE system directory's journal (tests).
+     */
+    public static JoustRunSession start(JoustHostService service, java.nio.file.Path moduleDir, Binding b,
+                                        @Nullable com.bloxbean.intelliada.idea.joust.journal.JournalStore store, Launcher launcher,
+                                        java.util.function.Consumer<JoustHostService.Running> adopted) throws Exception {
+        JoustRunJournal fresh = service.running(moduleDir) == null ? JoustRunJournal.open(b, moduleDir, store) : null;
+        boolean owned = false;
+        try {
+            ObjectNode init = fresh != null ? JoustRunJournal.initParams(b.identity(), fresh.restoring()) : initParams(b.identity());
+            HostSession.Reads reads = fresh != null ? fresh.reads(reads(b)) : reads(b);
+            JoustHostService.Running r = launcher.launch(init, b.key(), reads);
+            adopted.accept(r);
+            owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;
+            JoustRunSession made = new JoustRunSession(b, r);
+            made.verifyCatalog();   // the host's catalog is the build's, or the host is stopped (M33A-CDX-2)
+            if (owned) {
+                try {
+                    synchronized (made.clock) {
+                        fresh.started(r.session(), made.clock);
+                    }
+                } catch (Exception e) {
+                    made.stopHost();
+                    throw e;
+                }
+            }
+            return made;
+        } finally {
+            if (fresh != null && !owned) fresh.close();
+        }
+    }
+
+    /** How a host is started or reused: {@link JoustHostService#start} from the panel, {@code launch} in tests. */
+    @FunctionalInterface
+    public interface Launcher {
+        JoustHostService.Running launch(ObjectNode initialize, String binding, HostSession.Reads reads) throws Exception;
+    }
+
+    /**
+     * A {@code prepare} or {@code publish} through the journal's bookkeeping (the deployment checked first): an unsigned
+     * body the host reserved. Nothing is handed out or admitted here; M3.3b2's signing flow builds on it.
+     */
+    JsonNode build(String method, ObjectNode params) throws Exception {
+        if (!method.equals("prepare") && !method.equals("publish")) throw new IllegalArgumentException(method);
+        String blocked = journalBlocks();
+        if (blocked != null) throw new NetworkIdentity.Refused(blocked);
+        checkDeployment(method.equals("publish") ? params.path("contract").textValue() : params.path("call").path("contract").textValue());
+        return call(method, params, true);
+    }
+
+    @Nullable JoustRunJournal journalForTests() {
+        return journal;
+    }
+
+    /** Why building is blocked by the journal (D17's fences, a fenced host, an open restore), or null. */
+    @Nullable String journalBlocks() {
+        if (journal == null) return "this dev host was started without IntelliAda's journal; restart it from the run panel";
+        return journal.buildingBlocked();
     }
 
     public Binding binding() {
@@ -212,7 +283,20 @@ public final class JoustRunSession {
                 p.setAll(params);
                 params = p;
             }
-            return running.session().call(method, params, CALL_TIMEOUT, () -> false);
+            if (journal == null) return running.session().call(method, params, CALL_TIMEOUT, () -> false);
+            // D17: settlement before the call when anything is live; the call's read tips go to the host-table model.
+            journal.beforeCall(params.path("now").asLong(0));
+            try {
+                JsonNode r = running.session().call(method, params, CALL_TIMEOUT, () -> false);
+                journal.afterCall(method, r, null);
+                return r;
+            } catch (HostError e) {
+                journal.afterCall(method, null, e.kind() + "/" + e.code());
+                throw e;
+            } catch (Exception e) {
+                journal.afterCall(method, null, "transport");
+                throw e;
+            }
         }
     }
 
@@ -266,7 +350,10 @@ public final class JoustRunSession {
     /** Why the session cannot sign, or null; views, listings and decoding work either way (D11 step 4). */
     public @Nullable String signingDisabled() {
         synchronized (signingDisabled) {
-            return signingDisabled.isEmpty() ? null : "read-only: " + String.join("; ", signingDisabled);
+            java.util.List<String> why = new java.util.ArrayList<>(signingDisabled);
+            String j = journalBlocks();
+            if (j != null) why.add(j);
+            return why.isEmpty() ? null : "read-only: " + String.join("; ", why);
         }
     }
 

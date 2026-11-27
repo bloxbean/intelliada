@@ -276,15 +276,11 @@ public final class JoustRunPanel implements Disposable {
                     // Stop at any point cancels this launch: before the host starts it is never started, and a host
                     // that started meanwhile is stopped (M31B-CDX-17).
                     s = l.run(x -> JoustRunSession.bind(n.node()),
-                            b -> {
-                                JoustHostService.Running r = service.start(guard, m.dir(), JoustRunSession.initParams(b.identity()),
-                                        b.key(), JoustRunSession.reads(b), why -> { });
-                                // New or reused, the panel observes the end of the host it adopts (M31B-CDX-36).
-                                r.session().onEnded(why -> ui(() -> ended(l, why)));
-                                JoustRunSession made = new JoustRunSession(b, r);
-                                made.verifyCatalog();   // the host's catalog is the build's, or the host is stopped (M33A-CDX-2)
-                                return made;
-                            },
+                            // New or reused, the panel observes the end of the host it adopts (M31B-CDX-36); a new host is
+                            // classified against IntelliAda's journal first and restored from it (D17).
+                            b -> JoustRunSession.start(service, m.dir(), b, null,
+                                    (init, key, reads) -> service.start(guard, m.dir(), init, key, reads, why -> { }),
+                                    r -> r.session().onEnded(why -> ui(() -> ended(l, why)))),
                             started -> service.stop(started.running().moduleDir()),
                             indicator::isCanceled);
                 } catch (InterruptedException e) {

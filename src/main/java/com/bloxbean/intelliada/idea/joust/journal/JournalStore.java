@@ -279,6 +279,37 @@ public final class JournalStore {
         }
     }
 
+    /**
+     * I33: the one live host of a module on a chain, across IDE processes. Held for the host session's life; refused at
+     * once when another process (or another session in this one) holds it.
+     */
+    public Held ownModule(String chainKey, String moduleKey) throws StoreFailed {
+        requireKey(chainKey);
+        requireKey(moduleKey);
+        FileChannel ch = null;
+        try {
+            privateDir(chainDir(chainKey));
+            ch = FileChannel.open(chainDir(chainKey).resolve(moduleKey + ".host"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            FileLock fl = tryFileLock(ch);
+            if (fl == null) throw new StoreFailed("another dev host of this module is running on this chain (in this IDE or another)");
+            FileChannel channel = ch;
+            return () -> {
+                try {
+                    fl.release();
+                } catch (IOException ignored) {
+                    // closing the channel releases it
+                }
+                closeQuietly(channel);
+            };
+        } catch (IOException e) {
+            closeQuietly(ch);
+            throw new StoreFailed("the module's host lock cannot be taken (" + e.getClass().getSimpleName() + ")", e);
+        } catch (StoreFailed | RuntimeException e) {
+            closeQuietly(ch);
+            throw e;
+        }
+    }
+
     private static @Nullable FileLock tryFileLock(FileChannel ch) throws IOException {
         try {
             return ch.tryLock();
