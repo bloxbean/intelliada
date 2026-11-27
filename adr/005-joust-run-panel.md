@@ -1030,6 +1030,20 @@ invariant.
     - **`open`.** Inclusions recorded during an open are read before it completes. Fork evidence renews a rewind. Both
       lost is persisted before any provider read.
     - **Failed writes.** A failed registry write is a known failed write, which its owner finishes.
+  - **M3.3b1 round 7 (#34).**
+    - **Overlap.** Every journaled body holds its inputs until it leaves the journal, final and expired ones included;
+      only a discarded one releases them. This replaces the per-case reopening rules. The cost is that an expired body's
+      inputs wait out its retention window before another body may spend them (about 17 minutes on a devnet).
+    - **Rewinds.**
+      - A rewind carries the evidence that made it. It is renewed only on evidence not yet recorded, or at a lower point.
+      - A stale record is never advanced. A lost mark the registry proves is persisted under `open`'s first lock.
+      - A first rewind on a new chain creates the registry entry.
+    - **`open`.** It reads a fresh tip each round, and re-reads inclusions recorded differently since they were read.
+    - **Revisions.** Module revisions are allocated above the chain generation, so they are never reused.
+    - **Settlement.**
+      - A fenced host's model is never synced to the journal.
+      - An expired body the chain shows included within its margin stops the host; the journal keeps it `shallow`.
+      - The host is fenced before the evidence is written (SEC-10).
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1218,3 +1232,4 @@ Security and design approved round 8.
 - **r30** (2026-11-27): §12 E10 — M3.3b1 round 4.
 - **r31** (2026-11-27): §12 E10 — M3.3b1 round 5.
 - **r32** (2026-11-27): §12 E10 — M3.3b1 round 6 (chain rewinds only from chain evidence).
+- **r33** (2026-11-27): §12 E10 — M3.3b1 round 7 (one overlap rule; rewind evidence).
