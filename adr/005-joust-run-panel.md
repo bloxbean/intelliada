@@ -903,6 +903,32 @@ invariant.
       re-read (ADR5-CDX-26).
     - **Bodies are read by `TxCbor`**, IntelliAda's own structural reader. It agrees with the host's hash, validity,
       inputs, collateral, reference inputs, signers and publications on every kit vector without a violation (62).
+  - **M3.3b1 round 1 (#34).**
+    - **One classification.** Opening a host and admitting a body classify the chain's history with the same function, so
+      a body is admitted only where a fresh host would find complete history. A missing or unreadable registry entry
+      beside an admitted record is a lost mark: the entry is what shows a restored record is not stale. Its residual: a
+      rewind before detection while the entry is lost. The registry entry is never rebuilt at admission; lost-mark
+      recovery rewrites it with the derived base, so a later loss cannot derive a lower bound.
+    - **Generations per module.** The record binds each module's journal to the generation of its last admission. A
+      journal behind it (an older backup) is a lost journal.
+    - **Rewinds per module.** A rewind lists every module with a journaled body. It clears only once each has reconciled
+      on a fresh host, and admission stays closed meanwhile. Other hosts of the chain stop at their next pass or call, and
+      are refused building at once. Admission enforces this across processes; no host is stopped from outside.
+    - **Settlement.**
+      - Only a successful call's read tips are certain. Any error, `internal/evaluator` included, leaves them uncertain.
+      - A reply resolves only its own reservation's copies.
+      - Accepted read tips are written to the journal.
+      - Rollbacks are reported first, at the body's own inclusion slot, so one event finalizes no other body.
+      - An inconclusive pass withholds the next forward call while anything is live.
+      - The model commits a body's facts from its bytes.
+    - **Observation.** It follows E1's rule: answers identical before and after a later tip hold at it. A lower tip is
+      re-read inside the pass until three readings span at least 10 s; forward calls wait meanwhile.
+    - **Retention** of a final entry runs from the later of its inclusion and its `validTo`.
+    - **Discard.** A body never handed out (`none`, `approvalPending`) is discarded through the model, with its journal
+      entry removed. A handed-out body is refused (I30).
+    - **Bounds.** A journaled body is at most 64 KiB, four times Conway's maximum transaction size.
+    - **Policy.** D14b's numbers live in one policy class, shared by `initialize` and the journal. A host initialized
+      with another settlement margin is refused.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1085,3 +1111,4 @@ Security and design approved round 8.
 - **r24** (2026-11-26): §12 E9 — M3.3a approved by all three reviewers at `30cc72b`; M33A-CDX-70/71 deferred to the start of M3.3b.
 - **r25** (2026-11-27): §12 E10 and L40 (delegated): M3.3b in three parts.
 - **r26** (2026-11-27): §12 E10 — M3.3b1 as built (store layout, staleness generation, retention, settlement details).
+- **r27** (2026-11-27): §12 E10 — M3.3b1 round 1 (one classification, per-module generations and rewinds, settlement refinements).
