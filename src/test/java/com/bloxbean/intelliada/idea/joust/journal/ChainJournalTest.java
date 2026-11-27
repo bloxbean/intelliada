@@ -1844,4 +1844,22 @@ public class ChainJournalTest {
         j(s, MOD_A).observed(recovered - 1);
         assertEquals("fenced at the mark", mark, s.record(k).value().fence().until());
     }
+
+    // ---- round 23 (M33B1-CDX-148) -------------------------------------------------------------------------------------
+
+    /** CDX-148: a tip read before another module installed a fence never lifts it. */
+    @Test
+    public void anOlderTipNeverLiftsAFenceInstalledAfterIt() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 0, 0);
+        JournalStore.ChainRecord before = s.record(k).value();   // A reads the record, then the tip 561
+        Files.delete(s.journalFile(k, MOD_B));
+        j(s, JournalStore.key("/work/c")).open(0);                // C installs the loss fence meanwhile
+        assertNotNull(s.record(k).value().fence());
+        assertFalse(j(s, MOD_A).observed(561, before));
+        assertNotNull("the fence stands", s.record(k).value().fence());
+        assertTrue("a fresh pass lifts it", j(s, MOD_A).observed(561, s.record(k).value()));
+    }
 }

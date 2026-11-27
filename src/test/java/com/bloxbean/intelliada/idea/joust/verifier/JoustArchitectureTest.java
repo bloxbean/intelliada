@@ -99,8 +99,9 @@ public class JoustArchitectureTest {
     }
 
     /**
-     * ADR-005 §12 E10 (M3.3b1): until M3.3b3 wires the panel's write path, no production class admits a body to the
-     * journal or builds one for handout. Method references count (invokedynamic handles).
+     * ADR-005 §12 E10, L43 (M3.3b1): until M3.3b3 wires the panel's write path, no production class admits a body to the
+     * journal, builds one for handout, hands one out or discards one (#38). Method references count (invokedynamic
+     * handles). Only the commit that wires these paths may relax this test, referencing #38.
      */
     @Test
     public void nothingInProductionReachesAdmissionOrABuildForHandout() throws Exception {
@@ -118,6 +119,14 @@ public class JoustArchitectureTest {
                             || m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.handedOut"))
                             && !rel.equals("joust/run/JoustRunJournal.class");
                     if (settlementAdmit) bad.add(rel + " calls " + m);
+                    // The whole deferred surface of ADR-005 L43 (#38; M33B1-DES-29): discard and the journal's handout too.
+                    boolean deferred = m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.discard")
+                            || (m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.discard") && !rel.equals("joust/run/JoustRunSession.class"))
+                            || (m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.discard")
+                                && !rel.equals("joust/run/JoustRunJournal.class") && !rel.startsWith("joust/journal/Settlement"))
+                            || (m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.handout")
+                                && !rel.startsWith("joust/journal/Settlement") && !rel.startsWith("joust/journal/ChainJournal"));
+                    if (deferred) bad.add(rel + " calls " + m);
                     if (admitOutsideTheSession || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.admit")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.handedOut")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.build")) bad.add(rel + " calls " + m);
@@ -130,6 +139,20 @@ public class JoustArchitectureTest {
             assertNotNull(in);
             assertTrue(invoked(in.readAllBytes()).contains("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.admit"));
         }
+    }
+
+    /**
+     * SEC-15: a page request carries listings only, never a build around {@code build()}'s checks. (A session needs a
+     * live host; the guard is asserted where it stands.)
+     */
+    @Test
+    public void aPageRequestIsAListingOnly() throws Exception {
+        String src = Files.readString(Path.of("src/main/java/com/bloxbean/intelliada/idea/joust/run/JoustRunSession.java"));
+        int page = src.indexOf("public JsonNode nextPage(");
+        assertTrue(page > 0);
+        String body = src.substring(page, src.indexOf("\n    }\n", page));
+        assertTrue(body, body.contains("!method.equals(\"instances\") && !method.equals(\"objects\")"));
+        assertTrue(body, body.indexOf("throw new IllegalArgumentException") < body.indexOf("return call("));
     }
 
     @Test

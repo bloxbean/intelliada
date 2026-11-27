@@ -1406,4 +1406,27 @@ public class SettlementTest {
         assertTrue(host.calls.get(host.calls.size() - 1).startsWith("settled discarded"));
         assertNotNull("fenced again", store.record(k).value().fence());
     }
+
+    // ---- round 23 (M33B1-CDX-149, -151) -------------------------------------------------------------------------------
+
+    /** CDX-149: a restore stays open under a fence installed after its opening. */
+    @Test
+    public void aRestoreStaysOpenUnderAFenceInstalledAfterItsOpening() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
+        seed.admit(submitted("1", a), 1990, 1990);
+        store = st;
+        ChainJournal.Opening o = seed.open(1990);
+        String k = JournalStore.key(CHAIN);
+        JournalStore.ChainRecord c = st.record(k).value();
+        st.writeRecord(c.withFence(new JournalStore.Fence(2100, "another module's lost journal")));
+        st.writeRegistry(new JournalStore.RegistryEntry(CHAIN, 1990, 1990, c.generation()));
+        Settlement s = settlement(new HostTable(60, o.restoring()));
+        host.answer(List.of("7"));
+        s.restore(o);
+        assertTrue(host.calls.toString(), host.calls.contains("restore complete=false n=1"));
+        assertTrue(s.restoring());
+    }
 }

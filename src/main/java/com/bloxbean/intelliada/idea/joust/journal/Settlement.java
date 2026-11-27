@@ -185,6 +185,9 @@ public final class Settlement {
         chainCheck.run();   // the observation is the bound chain's, before it decides anything (M33B1-CDX-12)
         long t = o.tip.slot();
         highest = o.tip;
+        // The current fence holds the restore open too, not only the opening's bound (M33B1-CDX-149): a fence another
+        // module installed while this host started.
+        holdUnderFence(journal.record());
         List<Entry> kept = new ArrayList<>();
         List<Entry> send = new ArrayList<>();
         Set<String> hashes = new HashSet<>();
@@ -202,6 +205,7 @@ public final class Settlement {
         }
         List<List<Entry>> batches = batches(send);
         boolean mayComplete = completeAbove == null || t > completeAbove;
+        JournalStore.ChainRecord beforeRead = atStart;
         List<Entry> restored = new ArrayList<>();
         for (int i = 0; i < batches.size(); i++) {
             boolean last = i == batches.size() - 1;
@@ -212,8 +216,18 @@ public final class Settlement {
         all.addAll(kept);
         if (fenced != null) throw new ChainJournal.Fenced("the session ended during its restore");
         journal.replace(all, opening);   // only over what this opening read, under its fence (M33B1-CDX-36, -CDX-44)
-        if (mayComplete) completed(t);
+        if (mayComplete) completed(t, beforeRead);
     }
+
+    /** Raises the restore's completion bound to the chain's current fence (M33B1-CDX-149). */
+    private void holdUnderFence(JournalStore.@Nullable ChainRecord rec) {
+        if (rec == null || rec.fence() == null) return;
+        long until = rec.fence().until();
+        completeAbove = completeAbove == null ? until : Math.max(completeAbove, until);
+    }
+
+    /** A terminal restore batch sent whose acknowledgement has not finished (M33B1-CDX-151): a later pass retries it. */
+    private boolean ackPending;
 
     private List<Entry> restoreBatch(List<Entry> batch, boolean complete) throws Exception {
         ObjectNode p = HostJson.object();
@@ -307,8 +321,9 @@ public final class Settlement {
         return e.validTo() > t ? State.prepared : State.expired;
     }
 
-    private void completed(long t) throws Exception {
+    private void completed(long t, JournalStore.@Nullable ChainRecord beforeRead) throws Exception {
         restoreOpen = false;
+        ackPending = true;   // cleared only once the acknowledgement finished (M33B1-CDX-151)
         // This host leaves only the rewind it was restored after (M33B1-SEC-6), and only while the chain still shows what
         // it restored, at one coherent chain point read now (M33B1-CDX-76, -77, -82, -83): a body kept final (no host
         // row) must still classify as it was kept, and a body restored shallow must still show the same inclusion.
@@ -339,10 +354,12 @@ public final class Settlement {
                 }
             }
             journal.endRewind(reconciling.id());
-            journal.observed(at);
+            journal.observed(at, beforeRead);
+            ackPending = false;
             return;
         }
-        journal.observed(t);
+        journal.observed(t, beforeRead);
+        ackPending = false;
     }
 
     private static List<List<Entry>> batches(List<Entry> send) {
@@ -465,7 +482,7 @@ public final class Settlement {
             if (rec != null && rec.fence() != null) {
                 ChainView.Tip at = chain.tip();
                 chainCheck.run();
-                journal.observed(at.slot());
+                journal.observed(at.slot(), rec);
             }
             needPoll = false;
             return true;
@@ -594,11 +611,14 @@ public final class Settlement {
         for (Entry e : journal.entries()) if (journal.retentionOver(e, t)) drop.add(e.reservation());
         if (!drop.isEmpty()) journal.remove(drop, rewindsSeen);   // never under a newer rewind (M33B1-CDX-68)
         // 5. Fences that this tip passes, and a restore held open by one.
+        holdUnderFence(rec);   // M33B1-CDX-149
         if (restoreOpen && (completeAbove == null || t > completeAbove)) {
             restoreBatch(List.of(), true);
-            completed(t);
+            completed(t, rec);
+        } else if (ackPending) {
+            completed(t, rec);   // the acknowledgement retried, never the terminal batch (M33B1-CDX-151)
         } else {
-            journal.observed(t);
+            journal.observed(t, rec);   // never lifts a fence installed after rec was read (M33B1-CDX-148)
         }
         needPoll = false;
         return true;

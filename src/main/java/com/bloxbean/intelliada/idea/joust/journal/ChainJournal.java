@@ -592,6 +592,7 @@ public final class ChainJournal {
      * As {@link #admit(Entry, long, long)}; {@code rewindsSeen} is the chain's rewind count the admitting host started
      * (or was restored) at (−1: unchecked). A host that missed a rewind admits nothing (M33B1-CDX-34).
      */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     public void admit(Entry e, long tip, long now, long rewindsSeen) throws StoreFailed, Fenced, InterruptedException {
         if (e.handout() == JournalStore.Handout.none || e.state() != JournalStore.State.prepared) {
             throw new IllegalArgumentException("admission journals a prepared body being handed out");
@@ -817,6 +818,7 @@ public final class ChainJournal {
         handout(reservation, h, Long.MAX_VALUE);
     }
 
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     public void handout(String reservation, JournalStore.Handout h, long tip) throws StoreFailed, Fenced, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
@@ -974,6 +976,19 @@ public final class ChainJournal {
      * unfenced afterwards (no fence, no rewind, not permanent, history intact).
      */
     public boolean observed(long tip) throws StoreFailed, InterruptedException {
+        return observed(tip, null, false);
+    }
+
+    /**
+     * As {@link #observed(long)}, for a tip read after {@code before} was read (M33B1-CDX-148): a fence is lifted only
+     * while the record is still the one read before the provider read (same generation), so a fence another module
+     * installed meanwhile is never lifted by an older tip. The next pass, reading afresh, lifts it.
+     */
+    public boolean observed(long tip, @Nullable ChainRecord before) throws StoreFailed, InterruptedException {
+        return observed(tip, before, true);
+    }
+
+    private boolean observed(long tip, @Nullable ChainRecord before, boolean bound) throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
             Files f = load();
             Classified now = judge(f);
@@ -996,7 +1011,8 @@ public final class ChainJournal {
                 persist(f, c.withFence(new Fence(c.recovered(), "the chain is back below where IntelliAda recovered lost history")));
                 return false;
             }
-            if (c.fence() != null && tip > c.fence().until()) {
+            boolean fresh = !bound || (before != null && before.generation() == c.generation());
+            if (c.fence() != null && tip > c.fence().until() && fresh) {
                 Map<String, Long> modules = new LinkedHashMap<>();
                 for (var m : c.modules().entrySet()) {
                     Loaded<ModuleJournal> j = f.journals().getOrDefault(m.getKey(), Loaded.missing());

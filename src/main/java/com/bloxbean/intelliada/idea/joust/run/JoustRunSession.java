@@ -100,7 +100,8 @@ public final class JoustRunSession {
     public static JoustRunSession start(JoustHostService service, java.nio.file.Path moduleDir, Binding b,
                                         @Nullable com.bloxbean.intelliada.idea.joust.journal.JournalStore store, Launcher launcher,
                                         java.util.function.Consumer<JoustHostService.Running> adopted) throws Exception {
-        JoustRunJournal fresh = service.running(moduleDir) == null ? JoustRunJournal.open(b, moduleDir, store) : null;
+        JoustHostService.Running seen = service.running(moduleDir);
+        JoustRunJournal fresh = seen == null ? JoustRunJournal.open(b, moduleDir, store) : null;
         JoustHostService.Running r = null;
         boolean owned = false, done = false;
         try {
@@ -108,6 +109,11 @@ public final class JoustRunSession {
             HostSession.Reads reads = fresh != null ? fresh.reads(reads(b)) : reads(b);
             r = launcher.launch(init, b.key(), reads);
             adopted.accept(r);
+            // Reuse only of the host that was seen (M33B1-CDX-150): one launched meanwhile never opened its journal.
+            if (fresh == null && (seen == null || r.session() != seen.session())) {
+                service.stop(moduleDir);
+                throw new NetworkIdentity.Refused("the dev host it was about to reuse stopped meanwhile; start it again");
+            }
             owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;
             if (owned) {
                 HostSession ended = r.session();
@@ -611,6 +617,8 @@ public final class JoustRunSession {
 
     /** A later page of an {@code instances} or {@code objects} listing (protocol: listing, after, limit; M31B-CDX-10). */
     public JsonNode nextPage(String method, String listing, long after, int limit) throws Exception {
+        // Listings only (M33B1-SEC-15): a build never goes out through a page request, around build()'s checks.
+        if (!method.equals("instances") && !method.equals("objects")) throw new IllegalArgumentException("not a listing: " + method);
         return call(method, HostJson.object().put("listing", listing).put("after", after).put("limit", limit), false);
     }
 
