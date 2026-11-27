@@ -840,23 +840,29 @@ public final class JournalStore {
      * file, and the file itself, passes {@link #aclPrivate}. Access there is not governed by the path (traversal is not
      * checked), so a private root does not make what is under it private. On POSIX the 0700 root does.
      */
-    private void readable(Path f) throws IOException, StoreFailed {
-        Path dir = f.getParent();
+    /** The directories above a file to be read, verified before the file is looked at (M33B1-CDX-111). */
+    private void trustedDirectories(@Nullable Path dir) throws StoreFailed {
         if (dir == null) return;
         try {
             realDirectories(dir);
-        } catch (IOException e) {
-            throw new StoreFailed(e.getMessage(), e);
-        }
-        if (posix(dir)) return;
-        guardParent(root.getParent());
-        for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) {
-            try {
-                aclPrivate(p);
-            } catch (IOException e) {
-                throw new StoreFailed("the journal is not private: " + e.getMessage(), e);
+            Path parent = root.getParent();
+            if (parent == null || posix(parent)) return;
+            guardParent(parent);
+            for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) {
+                try {
+                    aclPrivate(p);
+                } catch (NoSuchFileException absent) {
+                    // not created yet
+                }
             }
+        } catch (IOException e) {
+            throw new StoreFailed("the journal is not private: " + e.getMessage(), e);
         }
+    }
+
+    private void readable(Path f) throws IOException, StoreFailed {
+        Path dir = f.getParent();
+        if (dir == null || posix(dir)) return;
         try {
             aclPrivate(f);
         } catch (java.nio.file.AccessDeniedException denied) {
@@ -871,13 +877,22 @@ public final class JournalStore {
      * or other reparse point, and it resolves to itself under the root's real path.
      */
     private void realDirectories(Path dir) throws IOException {
-        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            Files.readAttributes(root, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (NoSuchFileException absent) {
+            return;
+        }
         guardParent(root.getParent());   // before the root's real path is derived through it (M33B1-CDX-107)
         Path realRoot = root.getParent() == null ? root.toRealPath() : root.getParent().toRealPath().resolve(root.getFileName());
         if (!root.toRealPath().equals(realRoot)) throw new IOException("the journal's root resolves elsewhere: " + root);
         for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) {
-            if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) continue;
-            var a = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            // Throwing reads (M33B1-CDX-111): only a missing component is skipped; one that cannot be read refuses.
+            java.nio.file.attribute.BasicFileAttributes a;
+            try {
+                a = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            } catch (NoSuchFileException absent) {
+                continue;
+            }
             if (a.isSymbolicLink() || a.isOther() || !a.isDirectory()) throw new IOException("a journal directory is a link or junction: " + p);
             if (!p.toRealPath().equals(realRoot.resolve(root.relativize(p)))) throw new IOException("a journal directory resolves elsewhere: " + p);
         }
@@ -886,6 +901,7 @@ public final class JournalStore {
     private @Nullable JsonNode read(Path f) throws StoreFailed {
         byte[] b;
         try {
+            trustedDirectories(f.getParent());   // before the leaf is interpreted, present or not (M33B1-CDX-111)
             // A throwing no-follow read (M33B1-CDX-108): missing and denied are told apart, never both "absent".
             var fa = Files.readAttributes(f, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
             if (fa.isSymbolicLink() || fa.isOther()) throw new StoreFailed("a journal file is a link: " + f.getFileName());

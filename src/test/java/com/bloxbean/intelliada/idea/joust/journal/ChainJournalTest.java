@@ -1548,4 +1548,37 @@ public class ChainJournalTest {
         assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_A).open(500).history());
         assertNotEquals(seen, s.record(k).value().rewinds());
     }
+
+    // ---- round 16 (M33B1-CDX-112, -113) --------------------------------------------------------------------------------
+
+    /** CDX-112: a second rewind after a first one's failed registry write completes that write first. */
+    @Test
+    public void aSecondRewindCompletesTheFirstRegistryWrite() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        Path reg = s.registryFile(k).getFileName();
+        s.failWritesForTests = p -> p.getFileName().equals(reg);
+        try {
+            j(s, MOD_A).beginRewind(100, "the first");
+            fail("the registry write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failWritesForTests = p -> false;
+        j(s, MOD_B).beginRewind(90, "a further rollback");
+        assertTrue(Files.exists(s.registryFile(k)));
+        assertNull(j(s, MOD_B).unsavedReason());
+        assertFalse("no loss of the mark", j(s, MOD_B).open(500).history() == ChainJournal.History.LOST_MARK);
+    }
+
+    /** CDX-113: the trust snapshot never parses module journals. */
+    @Test
+    public void theSnapshotReadsNoJournal() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        Files.writeString(s.journalFile(k, MOD_A), "not json");   // a parse would see a lost journal
+        ChainJournal.Snapshot snap = j(s, MOD_B).snapshot();
+        assertNotNull(snap.record());
+        assertNull(snap.lost());
+    }
 }

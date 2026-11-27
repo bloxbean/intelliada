@@ -176,6 +176,7 @@ public final class Settlement {
         reconciling = atStart == null ? null : atStart.rewind();
         rewindsSeen = opening.rewinds();
         recordSeen = journal.record() != null;
+        permanentAtStart = opening.permanent() != null;
         if (!opening.restoring()) return;
         completeAbove = opening.completeAbove();
         restoreOpen = true;
@@ -245,6 +246,9 @@ public final class Settlement {
 
     /** Whether this host has read the chain's record (a new chain has none until its first write; M33B1-CDX-101). */
     private boolean recordSeen;
+
+    /** Whether this host was opened read-only on a permanently fenced chain (M33B1-CDX-114). */
+    private boolean permanentAtStart;
 
     /** The chain's rewind count this host started (or was restored) at; −1 unchecked (M33B1-CDX-34). */
     private long rewindsSeen = -1;
@@ -341,19 +345,19 @@ public final class Settlement {
     public synchronized boolean rewindMissed() throws Exception {
         if (fenced != null) return true;
         String unsaved = journal.unsavedReason();
-        JournalStore.ChainRecord rec = journal.record();
+        // The record, its count and its trust from one locked read (M33B1-CDX-110), without parsing journals (-113).
+        ChainJournal.Snapshot snap = journal.snapshot();
+        JournalStore.ChainRecord rec = snap.record();
         if (rec != null) recordSeen = true;
+        // A session opened read-only on a permanently fenced chain keeps its views (M33B1-CDX-114).
+        String lost = snap.permanent() && permanentAtStart ? null : snap.lost();
         String why = unsaved != null ? "a rewind on this chain is being recorded (" + unsaved + ")"
+                : lost != null ? "the chain's record cannot be trusted (" + lost + ")"
                 // Gone after this host saw it (M33B1-CDX-101); a new chain has none until its first write.
                 : rec == null ? (recordSeen ? "the chain's record is missing" : null)
                 : rec.rewind() != null && !same(rec.rewind(), reconciling) ? "a rewind on this chain is being reconciled (" + rec.rewind().reason() + ")"
                 : rewindsSeen >= 0 && rec.rewinds() != rewindsSeen ? "a rewind on this chain was reconciled while this host ran"
                 : null;
-        // A record missing or proven stale while history exists (M33B1-CDX-101, -106): the count it shows proves nothing.
-        if (why == null && (rec == null || rewindsSeen >= 0)) {
-            String lost = journal.recordLost();
-            if (lost != null) why = "the chain's record cannot be trusted (" + lost + ")";
-        }
         if (why == null) return false;
         if (rewind == null) rewind = why;
         fence(why + "; start the dev host again");

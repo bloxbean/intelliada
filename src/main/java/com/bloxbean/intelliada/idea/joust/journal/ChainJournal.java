@@ -179,9 +179,33 @@ public final class ChainJournal {
      * fence handles it.
      */
     public @Nullable String recordLost() throws StoreFailed, InterruptedException {
+        return snapshot().lost();
+    }
+
+    /**
+     * The chain record and whether it can be trusted, from one chain-lock acquisition (M33B1-CDX-110), reading only the
+     * record, the registry, the both-lost marker and the journal directory's listing: no journal is parsed
+     * (M33B1-CDX-113, -DES-26). {@code lost} is set when the chain is permanently fenced, the record is unreadable, it
+     * is missing while a registry or a module journal proves history, or the registry proves it stale.
+     */
+    public record Snapshot(@Nullable ChainRecord record, @Nullable String lost, boolean permanent) {
+    }
+
+    public Snapshot snapshot() throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
-            Classified k = judge(load());
-            return k.kind() == Kind.LOST_MARK || k.kind() == Kind.BOTH_LOST ? k.why() : null;
+            if (store.permanentlyFenced(chainKey)) return new Snapshot(null, PERMANENT, true);
+            Loaded<RegistryEntry> reg = store.registry(chainKey);
+            Loaded<ChainRecord> rec = store.record(chainKey);
+            if (rec.lost()) return new Snapshot(null, "the chain record is unreadable", false);
+            ChainRecord c = rec.value();
+            if (c == null) {
+                boolean history = reg.value() != null || reg.lost() || !store.journalModules(chainKey).isEmpty();
+                return new Snapshot(null, history ? "the chain record is missing" : null, false);
+            }
+            if (reg.value() != null && reg.value().generation() > c.generation()) {
+                return new Snapshot(c, "the chain record is older than the registry", false);
+            }
+            return new Snapshot(c, null, false);
         }
     }
 
@@ -1117,7 +1141,26 @@ public final class ChainJournal {
      * entry behind the record is repaired first, its maxima raised to the record's mark, so it never carries a lower base
      * forward under a fresh generation (M33B1-CDX-59).
      */
+    /** Registry writes this process began after their record's write, per store and chain: the generation (M33B1-CDX-112). */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Long> PENDING_REGISTRY = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void writeRegistry(RegistryEntry r) throws StoreFailed {
+        PENDING_REGISTRY.put(unsavedKey(), r.generation());
+        store.writeRegistry(r);
+        PENDING_REGISTRY.remove(unsavedKey(), r.generation());
+    }
+
     private void persist(Files f, ChainRecord c) throws StoreFailed {
+        // A registry write this process began after its record's and that failed is completed first (M33B1-CDX-112): a
+        // later rewind never turns that one failed write into lost history.
+        Long pend = PENDING_REGISTRY.get(unsavedKey());
+        if (pend != null && f.rec().ok() && f.rec().value().generation() == pend) {
+            RegistryEntry r = f.reg().value();
+            if (r == null && !f.reg().lost()) store.writeRegistry(new RegistryEntry(chain, 0, 0, pend));
+            else if (r != null && r.generation() < pend) store.writeRegistry(repaired(r, f.rec().value(), pend));
+            PENDING_REGISTRY.remove(unsavedKey(), pend);
+            f = load();
+        }
         // A record the registry proves stale is never advanced past it (M33B1-CDX-62): the session must recover first.
         Kind kind = classify(f).kind();
         if (kind == Kind.LOST_MARK || kind == Kind.BOTH_LOST) {
@@ -1129,12 +1172,12 @@ public final class ChainJournal {
             // older record is behind it (M33B1-CDX-67).
             long gen = c.generation() + 1;
             store.writeRecord(c.with(c.mark(), c.modules(), gen, c.fence(), c.rewind(), c.registrations()));
-            store.writeRegistry(new RegistryEntry(chain, 0, 0, gen));
+            writeRegistry(new RegistryEntry(chain, 0, 0, gen));
             return;
         }
         long gen = Math.max(c.generation(), reg.generation()) + 1;
         store.writeRecord(c.with(c.mark(), c.modules(), gen, c.fence(), c.rewind(), c.registrations()));
-        store.writeRegistry(repaired(reg, c, gen));
+        writeRegistry(repaired(reg, c, gen));
     }
 
     /** {@code reg} at generation {@code gen}; when it was behind {@code c}, its maxima raised to {@code c}'s mark. */

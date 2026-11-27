@@ -1340,4 +1340,22 @@ public class SettlementTest {
         assertTrue(s.rewindMissed());
         assertTrue(fence.get(), fence.get().contains("cannot be trusted"));
     }
+
+    // ---- round 16 (M33B1-CDX-114) -------------------------------------------------------------------------------------
+
+    /** CDX-114: a session opened read-only on a permanently fenced chain keeps running for views. */
+    @Test
+    public void aReadOnlySessionKeepsItsViews() throws Exception {
+        chain.at(600);
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        ChainJournal other = new ChainJournal(st, CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
+        String k = JournalStore.key(CHAIN);
+        java.nio.file.Files.delete(st.recordFile(k));
+        java.nio.file.Files.delete(st.registryFile(k));
+        Settlement s = restored(List.of(), List.of());
+        assertTrue(store.permanentlyFenced(k));
+        assertFalse(s.rewindMissed());
+        assertNull(fence.get());
+    }
 }
