@@ -430,8 +430,9 @@ calls** wait for M3c (D17's designation journal). `@Params` and `@AuthorizedBy` 
   so the next call's `now` follows it (D14b); an epoch shift also resets the clock (D14). A **snapshot restore or rollback** rewinds: IntelliAda persists the
   fence and the reconciliation, restarts the host with `restoring:true`, restores (D17), then re-checks each recorded
   instance (I17).
-- **Persistence:** recorded instances per project and per chain identity (D14) in IntelliAda's state under the IDE
-  system directory, not in `.idea/`, with no keys; validated as untrusted on load.
+- **Persistence:** recorded instances per project and per chain identity (D14) in IntelliAda's per-user state
+  (`~/.intelliada/`, beside the journal, r37, M33B1-DES-21: an IDE update or a second IDE product must not forget
+  them), not in `.idea/` and not in an IDE's system directory, with no keys; validated as untrusted on load (M3.4).
 
 ### D16. Results and errors
 
@@ -688,7 +689,8 @@ read kind on Blockfrost (ADR5-DES-12).
   "this JOUST version has no dev host" in the panel.
 - **Plugin size:** the checker and its minimal closure add a measured amount (recorded in M3.3a).
 - **Disk:** each live host has its own snapshot (about 95 MB for a Counter); deleted when the host ends, swept at start.
-- **Data:** journals, high-water marks and recorded instances under the IDE system directory, schema-versioned, no keys;
+- **Data:** journals, high-water marks and recorded instances in the per-user `~/.intelliada/` (D17, r36/r37), schema-versioned,
+  no keys; snapshots stay per IDE (D11 step 3);
   accounts move to `PasswordSafe` by an explicit migration (D13a).
 
 ## 6. Risks
@@ -991,7 +993,9 @@ invariant.
       - Admission needs a body built in this session and still prepared.
       - Handouts move under the chain lock, on intact history.
     - **Durability.**
-      - Each ancestor directory's link is synced once per process, up to the IDE system directory.
+      - Each ancestor directory's link is synced once per process, up to the user's home. The root's parent
+        (`~/.intelliada`) must be a real directory owned by the user that no other user can write; one the store
+        creates is 0700, and a loose one refuses with a `chmod go-w` hint (r37, M33B1-CDX-80, -SEC-13).
       - A closing session finishes any pass in progress before it releases its module lock.
   - **M3.3b1 round 5 (#34).**
     - **Rewinds.**
@@ -1272,3 +1276,4 @@ Security and design approved round 8.
 - **r34** (2026-11-27): §12 E10 — the overlap rule's cost on public networks, and an M3.5 item (DES-18).
 - **r35** (2026-11-27): §12 E11 and L41 (delegated): the journal's fault model and the review stopping rule.
 - **r36** (2026-11-27): D17 and §12 E10/E11 — the journal store moves to a per-user directory (M33B1-DES-20, -SEC-12).
+- **r37** (2026-11-27): D15 persistence and §5 Data per user (M33B1-DES-21); E10 Files: the store's parent directory is checked (M33B1-CDX-80, -SEC-13).
