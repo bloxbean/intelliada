@@ -1004,7 +1004,9 @@ invariant.
         empty access list, which the JDK also reports for a null DACL, is refused. Before a file's bytes are trusted,
         every directory from the root to it and the file itself are checked: Windows does not govern access by path, so
         a private root does not make what is under it private. With neither POSIX nor ACL attributes, the store refuses
-        (M33B1-CDX-85, -91, -92, -96..98, -SEC-14).
+        (M33B1-CDX-85, -91, -92, -96..98, -SEC-14). Every directory from the root down must be a real directory
+        (no link, junction or other reparse point) that resolves to itself under the root's real path, on every OS and
+        on reads too (M33B1-CDX-103).
       - A rewind the process detected, by any path (a clock rewind, a settlement pass or an open), is held in memory
         for the chain before its write, whole: its tip, reason, pending modules and evidence. It is cleared once
         persisted. Admission, handout and pruning check it under the chain lock, and every host of the chain in the
@@ -1098,11 +1100,18 @@ invariant.
     - concurrent IDE processes on one chain directory beyond what the module lock already refuses;
     - deliberate tampering with the store by the same OS user (other users are kept out by the private directories and
       owner checks, which stay in scope);
+    - security-descriptor content the JDK does not expose on Windows: conditional, callback and object ACEs, and
+      mandatory labels (L42, M33B1-CDX-102). Placing it takes WRITE_DAC, which only the owner, an already-trusted
+      principal or an administrator's policy holds. #37 must close before M3.3b2 merges, or M3.3b2 refuses signing on
+      non-POSIX stores;
     - file-system behaviour beyond atomic rename and fsync.
   - **The rule.** In-scope P0/P1 findings, and security P2s, are fixed in the PR. Out-of-scope findings, and P2s that
     cost only availability, become issues that must close before **M3.3b2** (signing) merges. A cheap fix of an
     out-of-scope finding is still made. One final Codex round runs, scoped to this model.
-  - **Filed so far:** #35 (M33B1-CDX-73, availability).
+  - **Filed so far:** #35 (M33B1-CDX-73, availability); #37 (M33B1-CDX-102, Windows descriptors; L42).
+  - **A gate for M3.3b2 (L42):** the signer binds each journaled body to a hash held in memory from its build, or
+    re-derives its inputs and outputs from the chain before signing. A journal changed behind IntelliAda's back can
+    then cause a refusal or a failed transaction, never a different spend.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1112,6 +1121,7 @@ invariant.
 | L39 | Migration copies and hides (never writes the legacy store); unconfirmed until a later session; class bound to the secret (E8a) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 2 |
 | L40 | M3.3b in three stacked parts: journal and settlement, signer and Deploy sequence, panel write path; nothing reaches signing before the third (E10) | delegated | 2026-11-27 | two advisors (both asked for a split; one for three parts, one for two with a fallback cut) |
 | L41 | #34's journal guarantee is stated as a fault model (E11): in-model P0/P1s and security P2s block; multi-fault, multi-process and tampering findings become issues that must close before M3.3b2 merges; one final Codex round scoped to the model | delegated | 2026-11-27 | two advisors (both: stop open-ended point fixes, state a fault model, gate follow-ups before signing, one final scoped round); Codex P1s r1–r8: 16, 18, –, 15, 7, 8, 8, 7 |
+| L42 | Windows security-descriptor content the JDK does not expose is out of model (E11). Links, junctions and reparse points are refused. #37 (native validation, exercised by the Windows CI job) must close before M3.3b2 merges, or M3.3b2 refuses signing on non-POSIX stores. The signer binds bodies to their build (E11) | delegated | 2026-11-27 | two advisors (both: option B with a reparse refusal and a gate on signing); CDX-102/103; Windows cannot be tested here |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -1300,3 +1310,4 @@ Security and design approved round 8.
 - **r38** (2026-11-27): E10 Files: a loose parent of the user's is tightened; ACL file systems; an unsaved rewind is held in memory (M33B1-DES-22, -CDX-84, -CDX-85).
 - **r39** (2026-11-27): E10 Files: ACL identities; the unsaved rewind as a whole record checked under the lock; empty modules observe fences (M33B1-CDX-87..94, -DES-24, -SEC-14).
 - **r40** (2026-11-27): E10 Files: reads checked on ACL file systems; null DACLs; the rewind count read on every forward call (M33B1-CDX-95..100).
+- **r41** (2026-11-27): E11 and L42 (delegated): Windows descriptor completeness out of model, a gate for M3.3b2; E10: links and junctions refused (M33B1-CDX-101..105).
