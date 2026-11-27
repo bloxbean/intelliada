@@ -195,8 +195,8 @@ public final class JoustRunJournal implements AutoCloseable {
 
     /** After a forward call (call lock held), once, with its outcome (M33B1-DES-11). */
     void afterCall(String method, @Nullable JsonNode result, @Nullable String error) throws Exception {
-        HostSession s = session.get();
-        settlement.complete(method, result, error, s == null ? -1 : s.lastCallId());
+        // The call this thread dispatched, carried with its own outcome (M33B1-CDX-24, -DES-15).
+        settlement.complete(method, result, error, HostSession.callOfThisThread());
     }
 
     /** D14: a chain far below the session's now is a rewind of the chain, recorded for every module before the stop. */

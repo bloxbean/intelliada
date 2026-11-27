@@ -112,7 +112,8 @@ public final class JournalStore {
 
         /** The host's state; {@code at} is the inclusion slot of a shallow or confirmed reservation. */
         public Entry withState(State s, @Nullable Long at) {
-            return new Entry(reservation, txHash, cbor, validFrom, validTo, handout, node, s, at, at == null ? null : inclusion, events, label);
+            // The inclusion evidence stays with the entry until it is cleared on purpose (a reported rollback; M33B1-CDX-48).
+            return new Entry(reservation, txHash, cbor, validFrom, validTo, handout, node, s, at, inclusion, events, label);
         }
 
         /** The chain's evidence of the body's inclusion, as IntelliAda observed it (null: not seen on chain). */
@@ -181,7 +182,7 @@ public final class JournalStore {
      * lost history; M33B1-CDX-2, -DES-8), the admission generation, the recovery fence and the outstanding rewind.
      */
     public record ChainRecord(String chain, @Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence,
-                              @Nullable Rewind rewind, List<Registration> registrations, @Nullable Long recovered) {
+                              @Nullable Rewind rewind, List<Registration> registrations, @Nullable Long recovered, long rewinds) {
         public ChainRecord {
             modules = Map.copyOf(modules);
             registrations = List.copyOf(registrations);
@@ -189,12 +190,20 @@ public final class JournalStore {
 
         public ChainRecord(String chain, @Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence,
                            @Nullable Rewind rewind, List<Registration> registrations) {
-            this(chain, mark, modules, generation, fence, rewind, registrations, null);
+            this(chain, mark, modules, generation, fence, rewind, registrations, null, 0);
         }
 
         ChainRecord with(@Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence, @Nullable Rewind rewind,
                          List<Registration> registrations) {
-            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations, recovered);
+            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations, recovered, rewinds);
+        }
+
+        /**
+         * A new rewind recorded (M33B1-CDX-34): every rewind raises the chain's rewind count, and a host admits only at
+         * the count it was started (or restored) at, so one that missed a rewind must restart.
+         */
+        public ChainRecord withNewRewind(Rewind r) {
+            return new ChainRecord(chain, mark, modules, generation, fence, r, registrations, recovered, rewinds + 1);
         }
 
         /**
@@ -202,7 +211,7 @@ public final class JournalStore {
          * a lost journal held, so it is fenced again.
          */
         public ChainRecord withRecovered(@Nullable Long r) {
-            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations, r);
+            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations, r, rewinds);
         }
 
         public ChainRecord withFence(@Nullable Fence f) {
@@ -381,6 +390,19 @@ public final class JournalStore {
     /** Directories whose entry in their parent this process has synced. */
     private static final Set<String> DURABLE = ConcurrentHashMap.newKeySet();
 
+    /**
+     * Syncs {@code dir}'s entry in its parent once per process; recorded only after the sync succeeded, and a concurrent
+     * writer waits for it, so no write is acknowledged above a sync still in progress or one that failed (M33B1-CDX-15).
+     */
+    private static void durable(Path dir) throws IOException {
+        if (DURABLE.contains(dir.toString())) return;
+        synchronized (DURABLE) {
+            if (DURABLE.contains(dir.toString())) return;
+            forceDir(dir.getParent());
+            DURABLE.add(dir.toString());
+        }
+    }
+
     /** The IDE system directory (the store's ancestors are synced up to it); outside an IDE, none. */
     private static @Nullable Path systemDir() {
         try {
@@ -431,7 +453,9 @@ public final class JournalStore {
         JsonNode n = read(recordFile(chainKey));
         if (n == null) return Loaded.missing();
         try {
-            fields(n, "version", "chain", "mark", "modules", "generation", "fence", "rewind", "registrations", "recovered");
+            // Two fields are optional (a record written before them reads with their defaults; M33B1-CDX-52).
+            fieldsOptional(n, Set.of("recovered", "rewinds"), "version", "chain", "mark", "modules", "generation", "fence", "rewind",
+                    "registrations", "recovered", "rewinds");
             version(n);
             Map<String, Long> modules = new java.util.LinkedHashMap<>();
             JsonNode ms = n.get("modules");
@@ -479,7 +503,9 @@ public final class JournalStore {
             long generation = slot(n, "generation");
             // A record that lists handouts has a mark, and no module is ahead of the record (M33B1-CDX-18).
             if (!modules.isEmpty() && mark == null) throw new Bad();
-            return new Loaded<>(new ChainRecord(chain, mark, modules, generation, fence, rewind, regs, nullableSlot(n, "recovered")), true);
+            Long recovered = n.has("recovered") ? nullableSlot(n, "recovered") : null;
+            long rewinds = n.has("rewinds") ? slot(n, "rewinds") : 0;
+            return new Loaded<>(new ChainRecord(chain, mark, modules, generation, fence, rewind, regs, recovered, rewinds), true);
         } catch (Bad b) {
             return Loaded.unreadable();
         }
@@ -560,6 +586,7 @@ public final class JournalStore {
         }
         if (c.recovered() == null) n.putNull("recovered");
         else n.put("recovered", c.recovered());
+        n.put("rewinds", c.rewinds());
         ArrayNode rs = n.putArray("registrations");
         for (Registration g : c.registrations()) {
             ObjectNode o = rs.addObject().put("credential", g.credential()).put("txHash", g.txHash());
@@ -647,6 +674,13 @@ public final class JournalStore {
         Bad() {
             super(null, null, false, false);
         }
+    }
+
+    private static void fieldsOptional(JsonNode n, Set<String> optional, String... allowed) throws Bad {
+        if (!n.isObject()) throw new Bad();
+        Set<String> a = Set.of(allowed);
+        for (var it = n.fieldNames(); it.hasNext(); ) if (!a.contains(it.next())) throw new Bad();
+        for (String f : allowed) if (!optional.contains(f) && !n.has(f)) throw new Bad();
     }
 
     private static void fields(JsonNode n, String... allowed) throws Bad {
@@ -890,7 +924,7 @@ public final class JournalStore {
         Path system = systemDir();
         for (Path a = root.getParent(); a != null && a.getParent() != null && !a.equals(system); a = a.getParent()) {
             if (posix(a) && !Files.getOwner(a.getParent(), LinkOption.NOFOLLOW_LINKS).equals(me())) break;
-            if (DURABLE.add(a.toString())) forceDir(a.getParent());
+            durable(a);
         }
         for (Path p : chain) {
             if (Files.isSymbolicLink(p)) throw new IOException("a journal directory is a symbolic link");
@@ -909,7 +943,7 @@ public final class JournalStore {
             if (!Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) throw new IOException("a journal path is not a directory");
             // Its entry in its parent made durable once per process, whoever created it (a retry after a crash between
             // creation and sync, or a concurrent first use; M33B1-CDX-15).
-            if (DURABLE.add(p.toString()) && p.getParent() != null) forceDir(p.getParent());
+            if (p.getParent() != null) durable(p);
             if (posix(p)) {
                 PosixFileAttributeView v = Files.getFileAttributeView(p, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
                 var owner = v.getOwner();

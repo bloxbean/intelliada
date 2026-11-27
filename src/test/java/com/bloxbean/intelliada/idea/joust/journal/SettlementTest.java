@@ -936,4 +936,85 @@ public class SettlementTest {
             assertNotNull(fence.get());
         }
     }
+
+    // ---- round 5 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-44: a call that returns after its session closed commits nothing. */
+    @Test
+    public void aCallAfterCloseCommitsNothing() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        read(s, "utxos", "value", 2100, false);
+        s.close("ended");
+        s.complete("view", HostJson.object(), null);
+        assertEquals(State.prepared, journal.entries().get(0).state());
+    }
+
+    /** CDX-47: a tip below an accepted read's is a lower tip (a rewind when it touches the journal). */
+    @Test
+    public void aTipBelowAnAcceptedReadIsLower() throws Exception {
+        String a = tx(List.of(ref(1)), 500);
+        chain.at(100);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        read(s, "utxos", "value", 600, false);
+        s.complete("view", HostJson.object(), null);
+        assertEquals(State.expired, journal.entries().get(0).state());
+        chain.at(400);   // the chain is back below the expired body's validTo
+        s.poll();
+        assertNotNull(s.rewind());
+    }
+
+    /** CDX-48: a body the host expired that the chain shows included is a reconciliation, with its evidence kept. */
+    @Test
+    public void aLandedBodyTheHostExpiredIsAReconciliation() throws Exception {
+        String a = tx(List.of(ref(1)), 500);
+        chain.at(400);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        read(s, "utxos", "value", 600, false);   // uncertain: the upper copy expires it
+        s.endCall("view", null, "bad/readLimit");
+        chain.include(hash(a), 490);
+        chain.at(495);
+        host.answer(new HostError("bad", "conflict", "scripted", List.of(), null));
+        s.poll();
+        assertNotNull(fence.get());
+        assertNotNull(journal.record().rewind());
+        assertNotNull("the inclusion evidence is kept", journal.entries().get(0).inclusion());
+    }
+
+    /** CDX-49: an approval is never promoted for a body that is no longer prepared. */
+    @Test
+    public void anExpiredApprovalIsNeverExported() throws Exception {
+        chain.at(90);
+        Settlement s = settlement(new HostTable(60, false));
+        String b = tx(List.of(ref(2)), 200);
+        s.beginCall();
+        s.endCall("prepare", prepared("2", b), null);
+        s.admit(entry("2", b, JournalStore.Handout.approvalPending), 90, 90);
+        s.beginCall();
+        read(s, "utxos", "value", 300, false);
+        s.complete("view", HostJson.object(), null);
+        try {
+            s.handedOut("2", JournalStore.Handout.exported);
+            fail("exported an expired body");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+    }
+
+    /** CDX-53: a prepared reply stating a fractional validity fences the host. */
+    @Test
+    public void aFractionalValidityFences() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        ObjectNode r = prepared("1", tx(List.of(ref(1)), 500));
+        ((ObjectNode) r.get("prepared")).put("validTo", 500.9);
+        s.beginCall();
+        s.endCall("prepare", r, null);
+        assertNotNull(fence.get());
+        assertNull(t.lower("1"));
+    }
 }

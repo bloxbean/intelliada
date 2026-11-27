@@ -161,6 +161,7 @@ public final class Settlement {
     public synchronized void restore(ChainJournal.Opening opening) throws Exception {
         JournalStore.ChainRecord atStart = journal.record();
         reconciling = atStart == null ? null : atStart.rewind();
+        rewindsSeen = opening.rewinds();
         if (!opening.restoring()) return;
         completeAbove = opening.completeAbove();
         restoreOpen = true;
@@ -199,7 +200,7 @@ public final class Settlement {
         List<Entry> all = new ArrayList<>(restored);
         all.addAll(kept);
         if (fenced != null) throw new ChainJournal.Fenced("the session ended during its restore");
-        journal.replace(all, opening.revision());   // only over the journal this opening read (M33B1-CDX-44)
+        journal.replace(all, opening);   // only over what this opening read, under its fence (M33B1-CDX-36, -CDX-44)
         if (mayComplete) completed(t);
     }
 
@@ -231,6 +232,9 @@ public final class Settlement {
         }
         return out;
     }
+
+    /** The chain's rewind count this host started (or was restored) at; −1 unchecked (M33B1-CDX-34). */
+    private long rewindsSeen = -1;
 
     /** The rewind outstanding when this host was restored: it reconciled that one (and keeps running while others do). */
     private @Nullable JournalStore.Rewind reconciling;
@@ -410,6 +414,16 @@ public final class Settlement {
             settle(e, "confirmed", e.inclusion().slot(), e.inclusion().slot());
             unreported.remove(e.reservation());
             if (fenced != null) return false;
+            // The host expired a body the chain shows included (it accepted a tip that was uncertain here): a chain
+            // reconciliation, persisted with the evidence kept, before anything is released (M33B1-CDX-48).
+            HostTable.Res after = table.lower(e.reservation());
+            if (after != null && after.st() != HostTable.St.shallow && after.st() != HostTable.St.confirmed) {
+                String why = "the dev host expired " + e.label() + ", which the chain shows included";
+                journal.beginRewind(t, why);
+                rewind = why;
+                fence(why + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
+                return false;
+            }
         }
         // 3. The thresholds this tip reaches (none while restore is open: the host applies none, and refuses expiry).
         for (Entry e : table.reconciling() ? List.<Entry>of() : journal.entries()) {
@@ -476,6 +490,7 @@ public final class Settlement {
         }
         if (lastNow.getAsLong() - tip > TimePolicy.MAX_NOW_AHEAD) return "the chain went back to slot " + tip + ", far below the session's now";
         highest = t;   // a lower tip that touches nothing: the new baseline (I31: the journal and the mark are kept)
+        acceptedHigh = Math.min(acceptedHigh, t.slot());
         rebased = true;
         return null;
     }
@@ -495,7 +510,10 @@ public final class Settlement {
 
     private boolean rebased;
 
+    private volatile long acceptedHigh = -1;
+
     private boolean lower(ChainView.Tip t) {
+        if (t.slot() < acceptedHigh) return true;
         return highest != null && (t.slot() < highest.slot() || t.height() < highest.height()
                 || (t.slot() == highest.slot() && !t.hash().equals(highest.hash())));
     }
@@ -614,7 +632,7 @@ public final class Settlement {
                 || up.st() != HostTable.St.prepared || !lo.txHash().equals(e.txHash())) {
             throw new ChainJournal.Fenced("only a body this dev host prepared in this session, and still holds prepared, is handed out");
         }
-        journal.admit(e, tip, now);
+        journal.admit(e, tip, now, rewindsSeen);
         if (e.handout() != Handout.approvalPending) builtHere.remove(e.reservation());
     }
 
@@ -626,6 +644,13 @@ public final class Settlement {
         if (h == Handout.none || h == Handout.approvalPending) throw new IllegalArgumentException("a handout only moves to submitted or exported");
         if (fenced != null || rewind != null) throw new ChainJournal.Fenced("the dev host was stopped");
         if (!builtHere.contains(reservation)) throw new ChainJournal.Fenced("only a body this dev host prepared in this session is handed out");
+        HostTable.Res lo = table.lower(reservation), up = table.upper(reservation);
+        if (lo == null || up == null || lo.st() != HostTable.St.prepared || up.st() != HostTable.St.prepared) {
+            throw new ChainJournal.Fenced("the body is no longer prepared; it is not handed out");   // M33B1-CDX-49
+        }
+        Entry cur = null;
+        for (Entry x : journal.entries()) if (x.reservation().equals(reservation)) cur = x;
+        if (cur == null || cur.state() != State.prepared) throw new ChainJournal.Fenced("the journaled body is not prepared");
         // Under the chain lock, on intact history with no fence or rewind (M33B1-CDX-45).
         journal.handout(reservation, h);
         builtHere.remove(reservation);
@@ -769,8 +794,12 @@ public final class Settlement {
                 if (!finished) table.uncertain(r.tip());
                 continue;
             }
-            if (clean) table.accepted(r.tip());
-            else table.uncertain(r.tip());
+            if (clean) {
+                table.accepted(r.tip());
+                acceptedHigh = Math.max(acceptedHigh, r.tip());   // a later lower tip is measured against it (M33B1-CDX-47)
+            } else {
+                table.uncertain(r.tip());
+            }
         }
         callTips.clear();
         callEpoch.incrementAndGet();   // late answers of this call are charged to no other
@@ -790,8 +819,13 @@ public final class Settlement {
                 }
                 String id = p.path("reservation").textValue();
                 if (why == null && (id == null || !JournalStore.RESERVATION.matcher(id).matches())) why = "it gave a malformed reservation id";
+                JsonNode to = p.get("validTo"), from = p.get("validFrom");
+                // Integers only (M33B1-CDX-53): a fractional or out-of-range slot is never coerced.
+                if (why == null && (to == null || !to.isIntegralNumber() || !to.canConvertToLong() || to.longValue() < 0
+                        || (from != null && !from.isNull() && (!from.isIntegralNumber() || !from.canConvertToLong() || from.longValue() < 0)))) {
+                    why = "it stated its prepared body's validity as other than slot integers";
+                }
                 if (why == null) {
-                    JsonNode from = p.get("validFrom");
                     Long stated = from == null || from.isNull() ? null : from.longValue();
                     if (!b.txHash().equals(p.path("txHash").textValue()) || b.validTo() == null || b.validTo() != p.path("validTo").longValue()
                             || !java.util.Objects.equals(b.validFrom(), stated)) {
@@ -821,6 +855,12 @@ public final class Settlement {
     }
 
     public synchronized void complete(String method, @Nullable JsonNode result, @Nullable String error, long call) throws Exception {
+        if (closed) {
+            // A call that returns after its session closed commits nothing (M33B1-CDX-44).
+            callTips.clear();
+            if (error == null && (method.equals("prepare") || method.equals("publish"))) throw new ChainJournal.Fenced("the session ended");
+            return;
+        }
         // Advancing evidence is accepted only from the bound chain (M33B1-CDX-41).
         boolean advancingTips = callTips.stream().anyMatch(r -> (call < 0 || r.call() == call) && advancing(r.kind(), r.outcome()));
         if (advancingTips) {

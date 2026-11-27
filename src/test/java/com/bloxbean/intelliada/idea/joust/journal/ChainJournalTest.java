@@ -813,4 +813,99 @@ public class ChainJournalTest {
         }
         assertNull("no rewind recorded", j(s, MOD_A).record().rewind());
     }
+
+    // ---- round 5 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-34: a host that started before a rewind admits nothing (the chain's rewind count moved). */
+    @Test
+    public void aHostThatMissedARewindAdmitsNothing() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        long seen = s.record(JournalStore.key(CHAIN)).value().rewinds();
+        j(s, MOD_B).beginRewind(0, "test");
+        j(s, MOD_B).endRewind(j(s, MOD_B).record().rewind().id());
+        j(s, MOD_A).endRewind(j(s, MOD_A).record().rewind() == null ? "x" : j(s, MOD_A).record().rewind().id());
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 1000)), 0, 0, seen);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("rewound"));
+        }
+    }
+
+    /** CDX-36: a fenced recovery's replacement needs the fence that authorized it still persisted. */
+    @Test
+    public void aRecoveryWithoutItsFenceIsRefused() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 500)), 0, 0);
+        byte[] beforeFence = Files.readAllBytes(s.recordFile(k));
+        byte[] reg = Files.readAllBytes(s.registryFile(k));
+        Files.delete(s.journalFile(k, MOD_B));
+        ChainJournal.Opening o = j(s, MOD_A).open(100);
+        assertEquals(ChainJournal.History.LOST_JOURNAL, o.history());
+        Files.write(s.recordFile(k), beforeFence);   // the record from before the fence was written
+        Files.write(s.registryFile(k), reg);
+        try {
+            j(s, MOD_A).replace(o.survivors(), o);
+            fail("replaced without its fence");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("fence"));
+        }
+    }
+
+    /** CDX-43: an admission keeps the remembered recovery bound. */
+    @Test
+    public void anAdmissionKeepsTheRecoveredBound() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(JournalStore.key(CHAIN), MOD_A));
+        j(s, MOD_B).open(0);
+        assertTrue(j(s, MOD_B).observed(561));
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(9, 0)), 700)), 562, 562);
+        assertEquals(560L, (long) s.record(JournalStore.key(CHAIN)).value().recovered());
+        assertEquals(ChainJournal.History.FENCED, j(s, MOD_B).open(100).history());
+    }
+
+    /** CDX-46: an admission at a chain point far below recorded evidence records a rewind and is refused. */
+    @Test
+    public void anAdmissionFarBelowRecordedEvidenceIsARewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 300)), 100, 100);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+        assertNotNull(j(s, MOD_A).record().rewind());
+    }
+
+    /** CDX-50: opening at the same chain point does not renew a rewind still being reconciled. */
+    @Test
+    public void anOpenAtTheSamePointKeepsTheRewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        j(s, MOD_B).open(100);   // records the rewind
+        String id = j(s, MOD_B).record().rewind().id();
+        j(s, MOD_B).open(100);
+        assertEquals(id, j(s, MOD_B).record().rewind().id());
+    }
+
+    /** CDX-52: a record without the later optional fields reads with their defaults. */
+    @Test
+    public void aRecordWithoutTheOptionalFieldsReads() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        Path r = s.recordFile(k);
+        String text = Files.readString(r).replaceAll(",\\s*\"recovered\" : null", "").replaceAll(",\\s*\"rewinds\" : 0", "");
+        assertFalse(text.contains("recovered"));
+        Files.writeString(r, text);
+        assertTrue(s.record(k).ok());
+        assertEquals(ChainJournal.History.COMPLETE, j(s, MOD_A).open(0).history());
+    }
 }

@@ -84,6 +84,17 @@ public final class HostSession implements AutoCloseable {
     private long nextId = 1;
     private volatile long lastCall;
 
+    private static final ThreadLocal<Long> THIS_THREADS_CALL = new ThreadLocal<>();
+
+    /**
+     * The JSON-RPC id of the forward call this thread dispatched last (M33B1-CDX-24, -DES-15): the call whose outcome
+     * the thread is now accounting for, whatever another thread dispatched since. −1 when it dispatched none.
+     */
+    public static long callOfThisThread() {
+        Long id = THIS_THREADS_CALL.get();
+        return id == null ? -1 : id;
+    }
+
     /** The JSON-RPC id of the last forward call dispatched (calls are serial: the one that just returned). */
     public long lastCallId() {
         return lastCall;
@@ -206,6 +217,7 @@ public final class HostSession implements AutoCloseable {
             }
             c = current = new Call(nextId++, method, System.nanoTime() + hardTimeout.toNanos());
             lastCall = c.id;
+            THIS_THREADS_CALL.set(c.id);
         }
         // The turn and the in-flight slot are held until the host's terminal answer (or the session's end), even if this
         // thread stops waiting: an interrupted caller must not let another request onto the wire (M31A-CDX-6). The
