@@ -413,7 +413,7 @@ public final class Settlement {
             unreported.add(e.reservation());
             // Decided before anything is published (M33B1-CDX-48): the event's states reach the journal only if the host
             // holds the body included as the chain shows it.
-            settle(e.reservation(), e.txHash(), "confirmed", e.inclusion().slot(), e.inclusion().slot(), false);
+            checkReply(e.reservation(), e.txHash(), "confirmed", e.inclusion().slot(), e.inclusion().slot());
             unreported.remove(e.reservation());
             if (fenced != null) return false;
             // The host expired a body the chain shows included (it accepted a tip that was uncertain here; M33B1-CDX-48).
@@ -529,7 +529,7 @@ public final class Settlement {
     }
 
     private boolean settle(String reservation, String txHash, String status, @Nullable Long slot, long tip) throws Exception {
-        if (!settle(reservation, txHash, status, slot, tip, false)) return false;
+        if (!checkReply(reservation, txHash, status, slot, tip)) return false;
         if (!deferJournal) publish(reservation, status + (slot == null ? "" : "@" + slot) + " tip " + tip);
         return true;
     }
@@ -547,8 +547,8 @@ public final class Settlement {
         }
     }
 
-    /** One {@code settled} event checked against the model; {@code publish} is always false here (the caller publishes). */
-    private boolean settle(String reservation, String txHash, String status, @Nullable Long slot, long tip, boolean unused) throws Exception {
+    /** Sends one {@code settled} event and checks the reply against the model (I32); the caller publishes (M33B1-DES-17). */
+    private boolean checkReply(String reservation, String txHash, String status, @Nullable Long slot, long tip) throws Exception {
         HostTable.Expected x = table.expect(reservation, txHash, status, slot, tip);
         ObjectNode p = HostJson.object().put("reservation", reservation).put("txHash", txHash).put("status", status);
         if (slot != null) p.put("slot", slot);
