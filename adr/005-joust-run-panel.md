@@ -965,6 +965,31 @@ invariant.
     - **Serialization.** Admission and handout changes run on the settlement monitor that discard runs under.
     - **The clock check.** `now()` re-reads a tip far below the session's `now` under D14's rule (three readings over at
       least 10 s) before it stops the host (DES-12).
+  - **M3.3b1 round 4 (#34).**
+    - **Writes.**
+      - An ordinary journal write needs the journal current with its record. The one exception is the revision this
+        session itself last wrote, after its own failed write.
+      - A restore's replacement goes only over the revision its opening read.
+      - Journals are size-checked before any write.
+    - **Recovery.**
+      - The highest recovery fence ever lifted is remembered. A chain back at or below it is fenced again.
+      - A lost mark found when a fence would lift is persisted first.
+      - `open` re-reads every module's retained inclusions, and renews a rewind still being reconciled when another one
+        touches it.
+    - **Settlement.**
+      - Reads are owned by the forward call that held them at dispatch.
+      - The read guard compares the whole recorded inclusion.
+      - A `deepRollback` reply persists the rewind before any state.
+      - A rollback's tip crosses no reservation's threshold.
+      - Read tips are accepted only after the bound chain's check.
+      - A clock far below `now` records a chain rewind.
+    - **The signer's entry points.**
+      - Discard re-checks both copies after its pass and requires a `discarded` reply.
+      - Admission needs a body built in this session and still prepared.
+      - Handouts move under the chain lock, on intact history.
+    - **Durability.**
+      - Each ancestor directory's link is synced once per process, up to the IDE system directory.
+      - A closing session finishes any pass in progress before it releases its module lock.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1150,3 +1175,4 @@ Security and design approved round 8.
 - **r27** (2026-11-27): §12 E10 — M3.3b1 round 1 (one classification, per-module generations and rewinds, settlement refinements).
 - **r28** (2026-11-27): §12 E10 — M3.3b1 round 2 (revisions per write, rewind ids, offline rewinds, discard limits).
 - **r29** (2026-11-27): §12 E10 — M3.3b1 round 3 (generation on every write; serialized handouts; `now()` re-read).
+- **r30** (2026-11-27): §12 E10 — M3.3b1 round 4.
