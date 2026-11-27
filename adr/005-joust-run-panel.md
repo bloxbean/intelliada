@@ -454,7 +454,9 @@ calls** wait for M3c (D17's designation journal). `@Params` and `@AuthorizedBy` 
 The protocol makes these the client's duties (dev-host-1 "Reservation journal (D8)"); JOUST's playground journal
 (`journal.js`) is the reference.
 
-- **Store and lock (ADR5-DES-2, ADR5-CDX-2):** under the IDE system directory, one journal per **chain identity (D14)
+- **Store and lock (ADR5-DES-2, ADR5-CDX-2):** in a per-user directory independent of the IDE product and version
+  (`~/.intelliada/joust-journal/`; r36, M33B1-DES-20, -SEC-12: an IDE's system directory is not migrated on upgrade and
+  differs between products, so a store there would lose every record of a handed-out body on an ordinary update), one journal per **chain identity (D14)
   and contract module** (the host that reserved), and one **chain record** per chain holding its high-water mark and
   the list of module journals that ever held a handed-out body there; a **registry entry per chain**, a file of its own
   (independently replaceable, written under that chain's lock; ADR5-CDX-24), records that the chain has a record and
@@ -876,7 +878,8 @@ invariant.
   - **Until M3.3b3, no production action, service or tool-window path reaches admission or the signer;** a test checks
     it. Yano's part of the exit waits for bloxbean/yano#269 (E2, L36).
   - **M3.3b1 as built.**
-    - **Files.** The store lives under the IDE system directory (`intelliada/joust-journal/`): `registry/<chain>.json` sits
+    - **Files.** The store lives in `~/.intelliada/joust-journal/`, per user and independent of the IDE product and
+      version (r36): `registry/<chain>.json` sits
       apart from `chains/<chain>/` (the record, one journal per module, the lock), so either can be lost alone. Writes are
       atomic and durable; directories are private and this user's; loads are strict (another version, an unknown field,
       a body whose hash or validity differs from the entry's: unreadable, never empty).
@@ -1055,19 +1058,22 @@ invariant.
   - **What #34's review was asked to cover.** After eight Codex rounds, each raising six or more new P1s (design and
     security approved from round 4), the journal's guarantee is stated as a fault model. The review is scoped to it.
   - **In scope:**
-    - one IntelliJ process per chain directory;
+    - one IntelliJ process per chain directory, where the store is **per user**, shared by every IDE product and version
+      (r36), so side-by-side IDEs see one store and its locks;
     - any number of contract modules in it;
     - chain events treated as normal, not as faults: rollbacks, forks, rewinds and lagging providers;
     - at most one independent fault at a time: one crash or kill at any point, one failed or partial write, one
       provider timeout or error, or one file lost or unreadable.
-  - **Always in scope:** anything that breaks the on-disk format, or an invariant the signing PRs rely on. Those are: no
+  - **Always in scope:** anything that breaks the on-disk format, the store's location and lifetime (an IDE update or a
+    second IDE product is normal operation, never a fault; SEC-12), or an invariant the signing PRs rely on. Those are: no
     lost record of a handed-out body, no input released while its body can still land, no double hand-out after
     recovery, and no silent overwrite.
   - **Out of scope, filed as a follow-up:**
     - findings that need two or more independent faults together (a restored backup between writes plus a timeout, for
       example);
     - concurrent IDE processes on one chain directory beyond what the module lock already refuses;
-    - deliberate tampering with the store;
+    - deliberate tampering with the store by the same OS user (other users are kept out by the private directories and
+      owner checks, which stay in scope);
     - file-system behaviour beyond atomic rename and fsync.
   - **The rule.** In-scope P0/P1 findings, and security P2s, are fixed in the PR. Out-of-scope findings, and P2s that
     cost only availability, become issues that must close before **M3.3b2** (signing) merges. A cheap fix of an
@@ -1265,3 +1271,4 @@ Security and design approved round 8.
 - **r33** (2026-11-27): §12 E10 — M3.3b1 round 7 (one overlap rule; rewind evidence).
 - **r34** (2026-11-27): §12 E10 — the overlap rule's cost on public networks, and an M3.5 item (DES-18).
 - **r35** (2026-11-27): §12 E11 and L41 (delegated): the journal's fault model and the review stopping rule.
+- **r36** (2026-11-27): D17 and §12 E10/E11 — the journal store moves to a per-user directory (M33B1-DES-20, -SEC-12).
