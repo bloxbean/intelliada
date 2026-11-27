@@ -1622,4 +1622,51 @@ public class ChainJournalTest {
         assertEquals(ChainJournal.History.NEW_CHAIN, j(s, MOD_B).open(500).history());
         assertNull(j(s, MOD_B).snapshot().lost());
     }
+
+    // ---- round 18 (M33B1-CDX-122, -123, -124) --------------------------------------------------------------------------
+
+    /** CDX-122: a sync that failed after its rename makes every later locked operation sync it first, or fail. */
+    @Test
+    public void aFailedSyncBlocksUntilItIsRepeated() throws Exception {
+        JournalStore s = store();
+        s.failSyncsForTests = true;
+        try {
+            j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+            fail("the sync was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        try {
+            j(s, MOD_B).snapshot();
+            fail("an operation over a change that is not durable");
+        } catch (JournalStore.StoreFailed expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("durable"));
+        }
+        s.failSyncsForTests = false;
+        assertNotNull(j(s, MOD_B).snapshot());
+    }
+
+    /** CDX-123: an open after a registration's failed registry write finishes it rather than recovering. */
+    @Test
+    public void anOpenFinishesAPendingRegistryWrite() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        Path reg = s.registryFile(k).getFileName();
+        s.failWritesForTests = p -> p.getFileName().equals(reg);
+        try {
+            j(s, MOD_A).learn(new JournalStore.Registration("cd".repeat(28), "ab".repeat(32), 10L, null));
+            fail("the registry write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failWritesForTests = p -> false;
+        assertFalse(j(s, MOD_B).open(500).history() == ChainJournal.History.LOST_MARK);
+        assertTrue(Files.exists(s.registryFile(k)));
+    }
+
+    /** CDX-124: a generation-zero record without a registry is trusted, as classify accepts it. */
+    @Test
+    public void aGenerationZeroRecordWithoutARegistryIsTrusted() throws Exception {
+        JournalStore s = store();
+        s.writeRecord(new JournalStore.ChainRecord(CHAIN, null, java.util.Map.of(), 0, null, null, List.of()));
+        assertNull(j(s, MOD_A).snapshot().lost());
+    }
 }

@@ -117,6 +117,9 @@ public final class ChainJournal {
     }
 
     private Files load() throws StoreFailed {
+        // Every locked operation loads first: a record/registry pair this process left part-written is finished here,
+        // before anything classifies history (M33B1-CDX-123).
+        completePendingRegistry();
         boolean permanent = store.permanentlyFenced(chainKey);
         Loaded<RegistryEntry> reg = store.registry(chainKey);
         Loaded<ChainRecord> rec = store.record(chainKey);
@@ -188,11 +191,25 @@ public final class ChainJournal {
      * (M33B1-CDX-113, -DES-26). {@code lost} is set when the chain is permanently fenced, the record is unreadable, it
      * is missing while a registry or a module journal proves history, or the registry proves it stale.
      */
-    public record Snapshot(@Nullable ChainRecord record, @Nullable String lost, boolean permanent) {
+    public record Snapshot(@Nullable ChainRecord record, @Nullable String lost, boolean permanent, @Nullable String unsaved) {
+        Snapshot(@Nullable ChainRecord record, @Nullable String lost, boolean permanent) {
+            this(record, lost, permanent, null);
+        }
+
+        Snapshot with(@Nullable String unsaved) {
+            return new Snapshot(record, lost, permanent, unsaved);
+        }
     }
 
     public Snapshot snapshot() throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
+            // This process's in-memory rewind, read under the same lock (M33B1-CDX-121).
+            return snapshot0().with(unsavedReason());
+        }
+    }
+
+    private Snapshot snapshot0() throws StoreFailed, InterruptedException {
+        {
             if (store.permanentlyFenced(chainKey)) return new Snapshot(null, PERMANENT, true);
             completePendingRegistry();   // this process's own failed registry write, finished first (M33B1-CDX-118)
             Loaded<RegistryEntry> reg = store.registry(chainKey);
@@ -206,8 +223,11 @@ public final class ChainJournal {
                 boolean lost = k.kind() == Kind.LOST_MARK || k.kind() == Kind.BOTH_LOST;
                 return new Snapshot(null, lost ? k.why() : null, k.kind() == Kind.BOTH_LOST);
             }
-            // As classify judges a record (M33B1-CDX-115): its registry entry missing, unreadable, or newer.
-            if (reg.lost() || reg.value() == null) return new Snapshot(c, "the chain's registry entry is missing", false);
+            // As classify judges a record (M33B1-CDX-115, -124): its registry entry unreadable, missing beside a record
+            // past generation zero, or newer.
+            if (reg.lost()) return new Snapshot(c, "the chain's registry entry is unreadable", false);
+            if (reg.value() == null && c.generation() >= 1) return new Snapshot(c, "the chain's registry entry is missing", false);
+            if (reg.value() == null) return new Snapshot(c, null, false);
             if (reg.value().generation() > c.generation()) return new Snapshot(c, "the chain record is older than the registry", false);
             return new Snapshot(c, null, false);
         }
@@ -259,7 +279,8 @@ public final class ChainJournal {
             try {
                 persistUnsaved();
             } catch (StoreFailed refused) {
-                open1(tip, inclusions);
+                Opening o = open1(tip, inclusions);
+                if (o.permanent() != null) return o;   // read-only on a permanently fenced chain (M33B1-CDX-125)
                 persistUnsaved();
             }
         }

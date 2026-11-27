@@ -298,6 +298,30 @@ public final class JournalStore {
         void close();
     }
 
+    /**
+     * Directories whose entry changed (a rename) but whose sync failed (M33B1-CDX-122): every lock taken afterwards
+     * syncs them first, and fails while one cannot be, so no operation reports success over a change that is not durable.
+     */
+    private static final Set<Path> UNSYNCED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private void syncPending() throws StoreFailed {
+        for (Path d : List.copyOf(UNSYNCED)) {
+            if (!d.startsWith(root.toAbsolutePath().normalize())) continue;
+            try {
+                if (failSyncsForTests) throw new IOException("a test's sync failure");
+                forceDir(d);
+                UNSYNCED.remove(d);
+            } catch (NoSuchFileException gone) {
+                UNSYNCED.remove(d);
+            } catch (IOException e) {
+                throw new StoreFailed("a journal directory cannot be made durable (" + e.getClass().getSimpleName() + ")", e);
+            }
+        }
+    }
+
+    /** Tests: directory syncs fail while set. */
+    volatile boolean failSyncsForTests;
+
     public Held lock(String chainKey) throws StoreFailed, InterruptedException {
         requireKey(chainKey);
         // Keyed by the directory's real path: two spellings of one store share one in-process lock, so this JVM never
@@ -323,6 +347,7 @@ public final class JournalStore {
                 if (System.nanoTime() > end) throw new StoreFailed("another IDE holds the chain's journal");
                 Thread.sleep(50);
             }
+            syncPending();   // nothing proceeds over a change that is not yet durable (M33B1-CDX-122)
             FileChannel channel = ch;
             FileLock lock = fl;
             return () -> {
@@ -657,7 +682,12 @@ public final class JournalStore {
         Path f = journalFile(chainKey, moduleKey);
         try {
             Files.move(f, f.resolveSibling(f.getFileName() + ".lost-" + System.currentTimeMillis()), StandardCopyOption.ATOMIC_MOVE);
-            forceDir(f.getParent());
+            try {
+                forceDir(f.getParent());
+            } catch (IOException e) {
+                UNSYNCED.add(f.getParent().toAbsolutePath().normalize());
+                throw e;
+            }
         } catch (NoSuchFileException gone) {
             // nothing to move
         } catch (IOException e) {
@@ -952,7 +982,13 @@ public final class JournalStore {
                 throw new StoreFailed("the journal's file system cannot replace files atomically", e);
             }
             tmp = null;
-            forceDir(dir);
+            try {
+                if (failSyncsForTests) throw new IOException("a test's sync failure");
+                forceDir(dir);
+            } catch (IOException e) {
+                UNSYNCED.add(dir.toAbsolutePath().normalize());   // retried before the next locked operation (M33B1-CDX-122)
+                throw e;
+            }
         } catch (IOException e) {
             throw new StoreFailed("a journal file cannot be written (" + e.getClass().getSimpleName() + "): " + f.getFileName(), e);
         } finally {

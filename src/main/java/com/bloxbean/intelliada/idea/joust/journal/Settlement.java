@@ -352,9 +352,10 @@ public final class Settlement {
      */
     public synchronized boolean rewindMissed() throws Exception {
         if (fenced != null) return true;
-        String unsaved = journal.unsavedReason();
-        // The record, its count and its trust from one locked read (M33B1-CDX-110), without parsing journals (-113).
+        // The record, its count, its trust and this process's unsaved rewind from one locked read (M33B1-CDX-110, -121),
+        // without parsing journals (-113).
         ChainJournal.Snapshot snap = journal.snapshot();
+        String unsaved = snap.unsaved();
         JournalStore.ChainRecord rec = snap.record();
         lastFence = rec == null || rec.fence() == null ? null : rec.fence();
         // A session opened read-only on a permanently fenced chain keeps its views (M33B1-CDX-114), whatever files

@@ -187,13 +187,6 @@ public final class JoustRunJournal implements AutoCloseable {
     /** As {@link #beforeCall(long)}; a build ({@code prepare}, {@code publish}) also refuses under a chain fence. */
     void beforeCall(String method, long now) throws Exception {
         lastNow.accumulateAndGet(now, Math::max);
-        // Every forward call, idle or not (M33B1-CDX-95): a rewind since this host started stops it first.
-        if (settlement.rewindMissed()) throw new ChainJournal.Fenced("the dev host was stopped: " + settlement.fenced());
-        // A fence that same locked read shows refuses a build at dispatch; views and listings go on (M33B1-CDX-116).
-        JournalStore.Fence fence = settlement.lastFence();
-        if (fence != null && (method.equals("prepare") || method.equals("publish"))) {
-            throw new ChainJournal.Fenced("building waits until the chain passes slot " + fence.until() + waitFor(fence.until()));
-        }
         if (mustSettleFirst(journal.entries(), settlement.pollNeeded())) {
             if (!settlement.poll()) {
                 String why = settlement.fenced() != null ? "the dev host was stopped: " + settlement.fenced()
@@ -202,6 +195,18 @@ public final class JoustRunJournal implements AutoCloseable {
             }
         }
         settlement.beforeCall();
+        // The last step before the host call, after any settlement pass (M33B1-CDX-120): one locked read decides it,
+        // the in-memory rewind included (-121). A rewind since this host started stops it (CDX-95); a fence refuses a
+        // build, while views and listings go on (CDX-116).
+        if (settlement.rewindMissed()) throw new ChainJournal.Fenced("the dev host was stopped: " + settlement.fenced());
+        JournalStore.Fence fence = settlement.lastFence();
+        if (fence != null && (method.equals("prepare") || method.equals("publish"))) {
+            // Already passed, but no pass has lifted it yet (M33B1-DES-27): said so, and the next pass lifts it.
+            if (settlement.highestSlot() > fence.until()) {
+                throw new ChainJournal.Fenced("the chain has passed slot " + fence.until() + "; IntelliAda lifts the fence on its next pass. Try again");
+            }
+            throw new ChainJournal.Fenced("building waits until the chain passes slot " + fence.until() + waitFor(fence.until()));
+        }
     }
 
     /**
