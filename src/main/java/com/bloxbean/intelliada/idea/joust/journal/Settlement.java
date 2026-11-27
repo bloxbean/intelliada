@@ -792,6 +792,7 @@ public final class Settlement {
      * Journals a body being handed out (I25), serialized with discard on this monitor (a body is never discarded while
      * it is being handed out). A body admitted as submitted or exported is no longer discardable.
      */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     public synchronized void admit(Entry e, long tip, long now) throws Exception {
         if (fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);
         // Only a body this host prepared in this session and still holds prepared, with the same bytes (M33B1-CDX-40).
@@ -809,6 +810,7 @@ public final class Settlement {
      * Records how a journaled body was handed out, serialized with discard. Handouts only move forward: approval pending
      * to submitted or exported (M33B1-CDX-27).
      */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     public synchronized void handedOut(String reservation, Handout h) throws Exception {
         if (h == Handout.none || h == Handout.approvalPending) throw new IllegalArgumentException("a handout only moves to submitted or exported");
         if (fenced != null || rewind != null) throw new ChainJournal.Fenced("the dev host was stopped");

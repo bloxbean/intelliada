@@ -583,6 +583,7 @@ public final class ChainJournal {
      *
      * @param tip the tip the body was prepared against; {@code now} the {@code now} sent
      */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     public void admit(Entry e, long tip, long now) throws StoreFailed, Fenced, InterruptedException {
         admit(e, tip, now, -1);
     }
@@ -811,6 +812,7 @@ public final class ChainJournal {
      * (M33B1-CDX-45): approval pending to submitted or exported. {@code tip} is a chain point read now: at or below a
      * recovered bound, nothing is handed out (M33B1-CDX-46).
      */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     public void handout(String reservation, JournalStore.Handout h) throws StoreFailed, Fenced, InterruptedException {
         handout(reservation, h, Long.MAX_VALUE);
     }

@@ -257,6 +257,7 @@ public final class JoustRunJournal implements AutoCloseable {
     }
 
     /** Journals a body being handed out (I25; M3.3b2, behind the signing gate). */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     void admit(JournalStore.Entry e, long tip, long now) throws Exception {
         String blocked = buildingBlocked();   // a fenced or blocked session admits nothing (M33B1-CDX-33)
         if (blocked != null) throw new ChainJournal.Fenced(blocked);
@@ -264,6 +265,7 @@ public final class JoustRunJournal implements AutoCloseable {
     }
 
     /** Records how a journaled body was handed out (forward only; serialized with discard). */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     void handedOut(String reservation, JournalStore.Handout h) throws Exception {
         settlement.handedOut(reservation, h);
     }

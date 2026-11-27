@@ -333,19 +333,18 @@ public final class JournalStore {
             Path d = en.getKey();
             // This store's, and this chain's or shared (M33B1-CDX-128, -130).
             if (!d.startsWith(me) || !(en.getValue().contains("") || en.getValue().contains(chainKey))) continue;
-            try {
-                // A rename recorded after this force would be cleared by it: serialized (M33B1-CDX-141).
-                synchronized (UNSYNCED) {
+            // A rename recorded after this force would be cleared by it: forcing and clearing (a gone directory's too) hold
+            // one monitor (M33B1-CDX-141, -147).
+            synchronized (UNSYNCED) {
+                try {
                     if (failSyncsForTests) throw new IOException("a test's sync failure");
                     forceDir(d);
                     UNSYNCED.remove(d);
-                }
-            } catch (NoSuchFileException gone) {
-                synchronized (UNSYNCED) {
+                } catch (NoSuchFileException gone) {
                     UNSYNCED.remove(d);
+                } catch (IOException e) {
+                    throw new StoreFailed("a journal directory cannot be made durable (" + e.getClass().getSimpleName() + ")", e);
                 }
-            } catch (IOException e) {
-                throw new StoreFailed("a journal directory cannot be made durable (" + e.getClass().getSimpleName() + ")", e);
             }
         }
     }

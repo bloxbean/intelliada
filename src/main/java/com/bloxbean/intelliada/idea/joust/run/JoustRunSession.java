@@ -159,6 +159,7 @@ public final class JoustRunSession {
      * A {@code prepare} or {@code publish} through the journal's bookkeeping (the deployment checked first): an unsigned
      * body the host reserved. Nothing is handed out or admitted here; M3.3b2's signing flow builds on it.
      */
+    @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     JsonNode build(String method, ObjectNode params) throws Exception {
         if (!method.equals("prepare") && !method.equals("publish")) throw new IllegalArgumentException(method);
         String blocked = journalBlocks();
