@@ -1015,6 +1015,21 @@ invariant.
       - Directory syncs are recorded only after they succeed.
       - The record's later fields are optional when read.
       - Prepared validity must be slot integers.
+  - **M3.3b1 round 6 (#34).**
+    - **Chain rewinds come only from chain evidence** (DES-16):
+      - `Settlement`'s triggers under D14's rule;
+      - `open`'s rule, where an inclusion is read and found different.
+    - **No chain rewind** in two cases:
+      - An admission far below recorded evidence is refused.
+      - A landed body the host expired stops only that host; the journal keeps it `shallow` at its inclusion.
+    - **Generations.** Every chain-record write (rewinds, fences and registrations included) raises the generation in
+      the record and the registry entry. A lagging registry entry is first repaired to the record's mark.
+    - **Admission.** An expired body whose validity the admission tip reopens still holds its inputs.
+    - **Settlement.** An event's states are published only after its outcome is checked.
+    - **Lost journals.** Newly lost journals need a fence over the current mark.
+    - **`open`.** Inclusions recorded during an open are read before it completes. Fork evidence renews a rewind. Both
+      lost is persisted before any provider read.
+    - **Failed writes.** A failed registry write is a known failed write, which its owner finishes.
 
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
@@ -1202,3 +1217,4 @@ Security and design approved round 8.
 - **r29** (2026-11-27): §12 E10 — M3.3b1 round 3 (generation on every write; serialized handouts; `now()` re-read).
 - **r30** (2026-11-27): §12 E10 — M3.3b1 round 4.
 - **r31** (2026-11-27): §12 E10 — M3.3b1 round 5.
+- **r32** (2026-11-27): §12 E10 — M3.3b1 round 6 (chain rewinds only from chain evidence).
