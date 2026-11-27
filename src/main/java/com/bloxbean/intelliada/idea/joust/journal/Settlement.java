@@ -411,7 +411,9 @@ public final class Settlement {
             journal.update(e.reservation(), x -> x.withInclusion(e.inclusion()).withEvent("included@" + e.inclusion().slot()));
             recorded.put(e.reservation(), e.inclusion());
             unreported.add(e.reservation());
-            settle(e, "confirmed", e.inclusion().slot(), e.inclusion().slot());
+            // Decided before anything is published (M33B1-CDX-48): the event's states reach the journal only if the host
+            // holds the body included as the chain shows it.
+            settle(e.reservation(), e.txHash(), "confirmed", e.inclusion().slot(), e.inclusion().slot(), false);
             unreported.remove(e.reservation());
             if (fenced != null) return false;
             // The host expired a body the chain shows included (it accepted a tip that was uncertain here; M33B1-CDX-48).
@@ -426,6 +428,7 @@ public final class Settlement {
                 fence("it expired " + e.label() + ", which the chain shows included; start it again to restore it from IntelliAda's journal");
                 return false;
             }
+            publish(e.reservation(), "confirmed@" + e.inclusion().slot() + " tip " + e.inclusion().slot());
         }
         // 3. The thresholds this tip reaches (none while restore is open: the host applies none, and refuses expiry).
         for (Entry e : table.reconciling() ? List.<Entry>of() : journal.entries()) {
@@ -526,6 +529,26 @@ public final class Settlement {
     }
 
     private boolean settle(String reservation, String txHash, String status, @Nullable Long slot, long tip) throws Exception {
+        if (!settle(reservation, txHash, status, slot, tip, false)) return false;
+        if (!deferJournal) publish(reservation, status + (slot == null ? "" : "@" + slot) + " tip " + tip);
+        return true;
+    }
+
+    /** The journal takes the host's states after an event (its tip applied to every reservation). */
+    private void publish(String reservation, String note) throws Exception {
+        for (Entry j : journal.entries()) {
+            HostTable.Res r = table.lower(j.reservation());
+            if (r == null) continue;
+            State js = State.valueOf(r.st().name());
+            boolean self = j.reservation().equals(reservation);
+            if (self || js != j.state() || !java.util.Objects.equals(r.slot(), j.slot())) {
+                journal.update(j.reservation(), y -> y.withState(js, r.slot()).withEvent((self ? note : "event tip") + " -> " + js));
+            }
+        }
+    }
+
+    /** One {@code settled} event checked against the model; {@code publish} is always false here (the caller publishes). */
+    private boolean settle(String reservation, String txHash, String status, @Nullable Long slot, long tip, boolean unused) throws Exception {
         HostTable.Expected x = table.expect(reservation, txHash, status, slot, tip);
         ObjectNode p = HostJson.object().put("reservation", reservation).put("txHash", txHash).put("status", status);
         if (slot != null) p.put("slot", slot);
@@ -556,21 +579,7 @@ public final class Settlement {
             // A final inclusion rolled back is a chain rewind, persisted before any releasing state is (M33B1-CDX-26).
             journal.beginRewind(tip, "a final inclusion was rolled back");
         }
-        if (deferJournal) {
-            syncPending = true;   // the model holds the states; the journal takes them at the next successful write
-            return true;
-        }
-        String note = status + (slot == null ? "" : "@" + slot) + " tip " + tip;
-        // The event's tip applied to every reservation of the host: the journal takes each changed state.
-        for (Entry j : journal.entries()) {
-            HostTable.Res r = table.lower(j.reservation());
-            if (r == null) continue;
-            State js = State.valueOf(r.st().name());
-            boolean self = j.reservation().equals(reservation);
-            if (self || js != j.state() || !java.util.Objects.equals(r.slot(), j.slot())) {
-                journal.update(j.reservation(), y -> y.withState(js, r.slot()).withEvent((self ? note : "tip " + tip) + " -> " + js));
-            }
-        }
+        if (deferJournal) syncPending = true;   // the model holds the states; the journal takes them at the next successful write
         return true;
     }
 

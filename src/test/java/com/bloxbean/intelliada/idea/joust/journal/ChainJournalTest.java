@@ -908,4 +908,114 @@ public class ChainJournalTest {
         assertTrue(s.record(k).ok());
         assertEquals(ChainJournal.History.COMPLETE, j(s, MOD_A).open(0).history());
     }
+
+    // ---- round 6 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-46: an expired body whose validity the admission's chain point reopens still holds its inputs. */
+    @Test
+    public void anExpiredBodyValidAgainHoldsItsInputs() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 490, 490);
+            fail("B reused A's input inside its reopened validity");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("reserved"));
+        }
+    }
+
+    /** CDX-54: newly lost journals get a fence covering the current mark; an older, lower one never releases them. */
+    @Test
+    public void aNewlyLostJournalNeedsAFenceOverTheCurrentMark() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        String modC = JournalStore.key("/work/c");
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(k, MOD_A));
+        j(s, MOD_B).open(0);
+        assertTrue(j(s, MOD_B).observed(561));
+        new ChainJournal(s, CHAIN, modC, 60).admit(submitted("1", tx(List.of(ref(3, 0)), 2000)), 562, 562);
+        j(s, MOD_B).open(100);   // the recovered fence (560) comes back
+        Files.delete(s.journalFile(k, modC));
+        assertFalse("560 does not release C's lost history", j(s, MOD_B).observed(561));
+        assertTrue(s.record(k).value().fence().until() >= 2060);
+    }
+
+    /** CDX-55: an inclusion recorded while an open read the others is read too before the open completes. */
+    @Test
+    public void anInclusionRecordedDuringOpenIsChecked() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 900)), 400, 400);
+        JournalStore.Inclusion i1 = new JournalStore.Inclusion(450, 450, "11".repeat(32)), i2 = new JournalStore.Inclusion(500, 500, "22".repeat(32));
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.shallow, 450L).withInclusion(i1));
+        String h2 = Bodies.hash(tx(List.of(ref(2, 0)), 900));
+        java.util.concurrent.atomic.AtomicBoolean once = new java.util.concurrent.atomic.AtomicBoolean();
+        ChainJournal.Opening o = j(s, MOD_B).open(600, h -> {
+            if (once.compareAndSet(false, true)) {
+                // while B reads the first inclusion, A records the second; it is gone on a fork by the time B checks it
+                j(s, MOD_A).update("2", e -> e.withState(JournalStore.State.confirmed, 500L).withInclusion(i2));
+                return i1;
+            }
+            return h.equals(h2) ? null : i1;
+        });
+        assertEquals("the fork is found, not certified", ChainJournal.History.FENCED, o.history());
+        assertNotNull(s.record(k).value().rewind());
+    }
+
+    /** CDX-56: fork evidence renews a rewind still being reconciled, so an older restore cannot acknowledge it. */
+    @Test
+    public void forkEvidenceRenewsARewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        JournalStore.Inclusion i = new JournalStore.Inclusion(500, 500, "11".repeat(32));
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.confirmed, 500L).withInclusion(i));
+        j(s, MOD_A).beginRewind(600, "restore in flight");
+        String before = j(s, MOD_A).record().rewind().id();
+        j(s, MOD_B).open(600, h -> null);   // the inclusion is gone at the same tip
+        assertFalse(before.equals(j(s, MOD_A).record().rewind().id()));
+    }
+
+    /** CDX-57: a restored older record that lacks a recorded rewind is behind the registry: a lost mark. */
+    @Test
+    public void anOlderRecordWithoutARewindIsALostMark() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        byte[] before = Files.readAllBytes(s.recordFile(k));
+        j(s, MOD_A).beginRewind(650, "fork");
+        Files.write(s.recordFile(k), before);
+        assertEquals(ChainJournal.History.LOST_MARK, j(s, MOD_B).open(650).history());
+    }
+
+    /** CDX-58: irreversible loss is persisted before any provider read, even when the read then fails. */
+    @Test
+    public void bothLostIsPersistedBeforeAnyRead() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.shallow, 450L).withInclusion(new JournalStore.Inclusion(450, 450, "11".repeat(32))));
+        Files.delete(s.recordFile(k));
+        Files.delete(s.registryFile(k));
+        ChainJournal.Opening o = j(s, MOD_B).open(500, h -> {
+            throw new java.io.IOException("timeout");
+        });
+        assertEquals(ChainJournal.History.BOTH_LOST, o.history());
+        assertTrue(s.permanentlyFenced(k));
+    }
+
+    /** CDX-59: a registry behind the record is repaired to the record's mark before its generation advances. */
+    @Test
+    public void aLaggingRegistryIsRepairedBeforeItAdvances() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 100, 100);
+        byte[] oldReg = Files.readAllBytes(s.registryFile(k));
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 57_000)), 50_000, 50_000);
+        Files.write(s.registryFile(k), oldReg);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(3, 0)), 700)), 100, 100);
+        assertTrue("the base kept: " + s.registry(k).value().highestTip(), s.registry(k).value().highestTip() >= 57_060);
+    }
 }

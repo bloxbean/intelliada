@@ -1019,4 +1019,40 @@ public class SettlementTest {
         assertNotNull(fence.get());
         assertNull(t.lower("1"));
     }
+
+    // ---- round 6 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
+
+    /** CDX-48: a landed body the host expired is never published expired, not even briefly. */
+    @Test
+    public void anExpiredLandedBodyIsNeverPublishedExpired() throws Exception {
+        String a = tx(List.of(ref(1)), 500);
+        chain.at(400);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        read(s, "utxos", "value", 600, false);
+        s.endCall("view", null, "bad/readLimit");
+        chain.include(hash(a), 490);
+        chain.at(495);
+        java.util.List<State> seen = new java.util.ArrayList<>();
+        host.answer(new HostError("bad", "conflict", "scripted", List.of(), null));
+        s.poll();
+        for (var e : journal.entries()) seen.add(e.state());
+        assertEquals(List.of(State.shallow), seen);
+        assertNotNull(fence.get());
+    }
+
+    /** CDX-60: a failed registry write after the record is this owner's known failed write, which it may finish. */
+    @Test
+    public void aFailedRegistryWriteCanBeFinished() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beforeCall();
+        read(s, "utxos", "value", 2100, false);
+        store.failWritesForTests = p -> p.getFileName().toString().endsWith(".json") && p.getParent().getFileName().toString().equals("registry");
+        s.complete("view", HostJson.object(), null);
+        store.failWritesForTests = p -> false;
+        s.beforeCall();
+        assertEquals(State.expired, journal.entries().get(0).state());
+    }
 }
