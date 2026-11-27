@@ -115,7 +115,8 @@ public final class JoustRunSession {
                 throw new NetworkIdentity.Refused("the dev host it was about to reuse stopped meanwhile; start it again");
             }
             // A host whose own start has not yet registered its journal is never adopted without it (M33B1-CDX-156).
-            if (fresh == null && JOURNALS.get(r.session()) == null) {
+            JoustRunJournal existing = JOURNALS.get(r.session());
+            if (fresh == null && (existing == null || !existing.ready())) {   // registered and started (M33B1-CDX-163)
                 throw new NetworkIdentity.Refused("the dev host is still starting; try again in a moment");
             }
             owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;

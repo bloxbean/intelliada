@@ -1145,7 +1145,7 @@ public class ChainJournalTest {
         JournalStore.Inclusion i = new JournalStore.Inclusion(300, 300, "11".repeat(32));
         j(s, MOD_B).update("1", e -> e.withState(JournalStore.State.confirmed, 300L).withInclusion(i));
         Files.delete(s.journalFile(k, MOD_A));
-        j(s, MOD_B).open(0);
+        j(s, MOD_B).open(400);   // above B's inclusion at 300: no rewind evidence (M33B1-CDX-162 records it otherwise)
         assertTrue(j(s, MOD_B).observed(561));   // recovered at 560
         java.util.Iterator<Long> tips = List.of(600L, 490L, 490L, 490L).iterator();
         ChainJournal.Opening o = j(s, MOD_B).open(tips::next, h -> i);
@@ -1879,5 +1879,57 @@ public class ChainJournalTest {
         Files.delete(s.journalFile(k, MOD_B));                // B's journal lost meanwhile, no record write
         assertFalse(j(s, MOD_A).observed(until + 1, before));
         assertNotNull("the fence stands", s.record(k).value().fence());
+    }
+
+    // ---- round 25 (M33B1-CDX-160, -162) --------------------------------------------------------------------------------
+
+    /** CDX-160: this module's own journal lost after the read is never lifted over by the older tip. */
+    @Test
+    public void ownJournalLostAfterTheReadIsNotLiftedOver() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        String c3 = JournalStore.key("/work/c");
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, c3).admit(submitted("1", tx(List.of(ref(3, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(k, c3));
+        j(s, MOD_B).open(400);
+        long until = s.record(k).value().fence().until();
+        ChainJournal.Before before = j(s, MOD_A).before();
+        Files.delete(s.journalFile(k, MOD_A));   // A's own journal lost meanwhile
+        assertFalse(j(s, MOD_A).observed(until + 1, before));
+        assertNotNull("the fence stands", s.record(k).value().fence());
+    }
+
+    /** SEC-17: a rewind persisted after the read is never lifted over. */
+    @Test
+    public void aRewindPersistedAfterTheReadIsNotLiftedOver() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        String c3 = JournalStore.key("/work/c");
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        j(s, c3).admit(submitted("1", tx(List.of(ref(3, 0)), 500)), 0, 0);
+        Files.delete(s.journalFile(k, c3));
+        j(s, MOD_B).open(400);
+        long until = s.record(k).value().fence().until();
+        ChainJournal.Before before = j(s, MOD_A).before();
+        j(s, MOD_B).beginRewind(50, "a clock rewind");
+        assertFalse(j(s, MOD_A).observed(until + 1, before));
+        assertNotNull("the fence stands", s.record(k).value().fence());
+    }
+
+    /** CDX-162: an open that finds a lost journal also records the rewind the surviving journals show. */
+    @Test
+    public void aLostJournalOpenRecordsTheSurvivorsRewind() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        String c3 = JournalStore.key("/work/c");
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 400, 400);
+        j(s, c3).admit(submitted("1", tx(List.of(ref(3, 0)), 500)), 400, 400);
+        j(s, MOD_A).update("1", e -> e.withState(JournalStore.State.expired, null));
+        Files.delete(s.journalFile(k, c3));
+        long rewinds = s.record(k).value().rewinds();
+        assertEquals(ChainJournal.History.LOST_JOURNAL, j(s, MOD_B).open(480).history());   // A's expired body valid again at 480
+        assertTrue("a rewind recorded", s.record(k).value().rewinds() > rewinds);
+        assertNotNull(s.record(k).value().rewind());
     }
 }

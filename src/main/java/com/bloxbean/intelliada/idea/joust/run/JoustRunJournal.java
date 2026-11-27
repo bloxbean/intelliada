@@ -119,6 +119,7 @@ public final class JoustRunJournal implements AutoCloseable {
         s.onEnded(why -> close());
         settlement.chainCheck(check::run);   // around the restore's observation and every pass (M33B1-CDX-12)
         settlement.restore(opening);
+        ready = true;   // adoptable only now (M33B1-CDX-163)
         long every = tickMillis();
         timer.scheduleWithFixedDelay(() -> {
             synchronized (callLock) {
@@ -137,6 +138,13 @@ public final class JoustRunJournal implements AutoCloseable {
                 }
             }
         }, every, every, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    private volatile boolean ready;
+
+    /** Whether this journal's host finished its startup (restore included) and may be adopted (M33B1-CDX-163). */
+    boolean ready() {
+        return ready;
     }
 
     /** Why building on this session is blocked, or null (views, listings and decoding work either way). */

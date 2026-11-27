@@ -1429,4 +1429,26 @@ public class SettlementTest {
         assertTrue(host.calls.toString(), host.calls.contains("restore complete=false n=1"));
         assertTrue(s.restoring());
     }
+
+    // ---- round 25 (M33B1-CDX-161) -------------------------------------------------------------------------------------
+
+    /** CDX-161: a restore never completes while another module's journal is lost and not yet fenced. */
+    @Test
+    public void aRestoreWaitsForAnUnfencedLoss() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
+        seed.admit(submitted("1", a), 1990, 1990);
+        ChainJournal other = new ChainJournal(st, CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 2400)), 1990, 1990);
+        store = st;
+        ChainJournal.Opening o = seed.open(1990);
+        java.nio.file.Files.delete(st.journalFile(JournalStore.key(CHAIN), JournalStore.key("/work/b")));   // lost after the open
+        Settlement s = settlement(new HostTable(60, o.restoring()));
+        host.answer(List.of("7"));
+        s.restore(o);
+        assertTrue(host.calls.toString(), host.calls.contains("restore complete=false n=1"));
+        assertNotNull("the loss is fenced", st.record(JournalStore.key(CHAIN)).value().fence());
+    }
 }

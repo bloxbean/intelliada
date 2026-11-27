@@ -394,7 +394,17 @@ public final class ChainJournal {
                 case LOST_JOURNALS -> {
                     long until = Math.max(c.mark(), c.fence() == null ? 0 : c.fence().until());
                     persist(f, c.withFence(new Fence(until, k.why())));
-                    return new Opening(survivors, true, until, null, History.LOST_JOURNAL, revision, held(c), c.rewinds());
+                    // The surviving journals' evidence of a rewind is recorded too, before the monitor is released
+                    // (M33B1-CDX-162): a pass at an older tip then never prunes a body this chain point reopened.
+                    Set<String> evidence = evidence(f, tipAtDetection, inclusions);
+                    if (!evidence.isEmpty()) {
+                        Files g = load();
+                        ChainRecord now = g.record();
+                        persistRewind(g, now, union(new Rewind(tipAtDetection, "a rewind found while a journal was lost", pendingModules(g),
+                                Rewind.newId(), evidence), now.rewind()));
+                    }
+                    ChainRecord after = store.record(chainKey).value();
+                    return new Opening(survivors, true, until, null, History.LOST_JOURNAL, revision, held(after), after.rewinds());
                 }
                 case LOST_MARK -> {
                     long bound = lostMark(f, tipAtDetection, k.why());
@@ -995,13 +1005,26 @@ public final class ChainJournal {
      * installed meanwhile nor a journal lost meanwhile is lifted over by an older tip; this pass's own writes (the record's
      * generation, its own journal) do not block it.
      */
-    public record Before(@Nullable Fence fence, Map<String, String> others) {
+    public record Before(@Nullable Fence fence, Map<String, String> others, Set<String> lost, @Nullable String rewind) {
+    }
+
+    /** The journals lost, unreadable or stale as classified now, this module's included (M33B1-CDX-160). */
+    private static Set<String> lostSet(Classified k) {
+        return k.kind() == Kind.LOST_JOURNALS ? new java.util.TreeSet<>(k.lost()) : Set.of();
     }
 
     public Before before() throws StoreFailed, InterruptedException {
         try (var held = store.lock(chainKey)) {
-            ChainRecord c = store.record(chainKey).value();
-            return new Before(c == null ? null : c.fence(), others());
+            Files f = load();
+            ChainRecord c = f.record();
+            return new Before(c == null ? null : c.fence(), others(), lostSet(classify(f)), c == null || c.rewind() == null ? null : c.rewind().id());
+        }
+    }
+
+    /** The modules whose journals are lost, unreadable or stale now (M33B1-CDX-161). */
+    public Set<String> lostModules() throws StoreFailed, InterruptedException {
+        try (var held = store.lock(chainKey)) {
+            return lostSet(classify(load()));
         }
     }
 
@@ -1018,6 +1041,13 @@ public final class ChainJournal {
      * The chain's in-process monitor: every read-then-decide sequence on the chain in this IDE (a settlement pass, a
      * restore, an open) holds it, so no other module's sequence interleaves with it (M33B1-CDX-153, -155). Other IDE
      * processes are outside E11's model beyond the file locks.
+     * <p>Lock order (M33B1-DES-31), never inverted: the session's call lock, then {@code Settlement}'s monitor, then this
+     * chain monitor, then the store's chain lock (in-process plus file lock). {@code open} starts at this monitor;
+     * admission at {@code Settlement}'s. Nothing holding it calls into another module's session or settlement.
+     * <p>Worst-case hold: one pass's provider reads (each within its 10 s deadline, the lower-tip re-reads at least 10 s)
+     * plus one host call of this module ({@code CALL_TIMEOUT}, 90 s); an open's inclusion reads (one per retained
+     * inclusion, each within 10 s). A view that need not settle first never takes it, so another module's stuck pass
+     * never freezes views.
      */
     public java.util.concurrent.locks.ReentrantLock monitor() {
         return MONITORS.computeIfAbsent(unsavedKey(), k -> new java.util.concurrent.locks.ReentrantLock());
@@ -1063,7 +1093,12 @@ public final class ChainJournal {
                 persist(f, c.withFence(new Fence(c.recovered(), "the chain is back below where IntelliAda recovered lost history")));
                 return false;
             }
-            boolean fresh = !bound || (before != null && java.util.Objects.equals(before.fence(), c.fence()) && before.others().equals(others()));
+            // The fence, the other journals' files, and the set of lost or stale journals (this module's included;
+            // M33B1-CDX-160) all as the pass read them before its provider read.
+            boolean fresh = !bound || (before != null && java.util.Objects.equals(before.fence(), c.fence()) && before.others().equals(others())
+                    && before.lost().equals(lostSet(now))
+                    // and the rewind (M33B1-SEC-17): one persisted meanwhile, from any module's clock, is never lifted over
+                    && java.util.Objects.equals(before.rewind(), c.rewind() == null ? null : c.rewind().id()));
             if (c.fence() != null && tip > c.fence().until() && fresh) {
                 Map<String, Long> modules = new LinkedHashMap<>();
                 for (var m : c.modules().entrySet()) {

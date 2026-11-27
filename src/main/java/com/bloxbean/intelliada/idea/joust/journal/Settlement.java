@@ -215,7 +215,9 @@ public final class Settlement {
             }
         }
         List<List<Entry>> batches = batches(send);
-        boolean mayComplete = completeAbove == null || t > completeAbove;
+        // Never while a required journal is lost (M33B1-CDX-161): its loss is fenced by the observation after the exchange,
+        // and a later pass completes the restore above that fence.
+        boolean mayComplete = (completeAbove == null || t > completeAbove) && lossCovered(t);
         ChainJournal.Before beforeRead = before0;
         List<Entry> restored = new ArrayList<>();
         for (int i = 0; i < batches.size(); i++) {
@@ -228,6 +230,17 @@ public final class Settlement {
         if (fenced != null) throw new ChainJournal.Fenced("the session ended during its restore");
         journal.replace(all, opening);   // only over what this opening read, under its fence (M33B1-CDX-36, -CDX-44)
         if (mayComplete) completed(t, beforeRead);
+        else journal.observed(t, beforeRead);   // a loss found now is fenced now, not at the next pass (M33B1-CDX-161)
+    }
+
+    /**
+     * Whether every lost or stale journal is covered by a fence this tip has passed (M33B1-CDX-161): a loss nobody has
+     * fenced yet withholds the terminal batch; the observation after the exchange fences it, and a later pass completes.
+     */
+    private boolean lossCovered(long t) throws Exception {
+        if (journal.lostModules().isEmpty()) return true;
+        JournalStore.ChainRecord c = journal.record();
+        return c != null && c.fence() != null && t > c.fence().until() && (c.mark() == null || c.fence().until() >= c.mark());
     }
 
     /** Raises the restore's completion bound to the chain's current fence (M33B1-CDX-149). */
@@ -508,6 +521,11 @@ public final class Settlement {
             // (M33B1-CDX-157), or this module's own journal missing though the record lists it (M33B1-CDX-158): observed
             // at a checked tip, so an empty module is never left waiting for a restart.
             boolean ownMissing = journal.ownJournalMissing();
+            // A host whose live reservations lost their journal is stopped: start reconciles them again (M33B1-CDX-158).
+            if (ownMissing && table.lowerAll().stream().anyMatch(r -> r.st() == HostTable.St.prepared || r.st() == HostTable.St.shallow)) {
+                fence("this module's journal on the chain was lost while its host held live reservations; start the dev host again");
+                return false;
+            }
             if ((rec != null && rec.fence() != null) || ackPending || ownMissing) {
                 ChainView.Tip at = chain.tip();
                 chainCheck.run();
@@ -642,7 +660,7 @@ public final class Settlement {
         if (!drop.isEmpty()) journal.remove(drop, rewindsSeen);   // never under a newer rewind (M33B1-CDX-68)
         // 5. Fences that this tip passes, and a restore held open by one.
         holdUnderFence(rec);   // M33B1-CDX-149
-        if (restoreOpen && (completeAbove == null || t > completeAbove)) {
+        if (restoreOpen && (completeAbove == null || t > completeAbove) && lossCovered(t)) {   // M33B1-CDX-161
             restoreBatch(List.of(), true);
             completed(t, before);
         } else if (ackPending) {
