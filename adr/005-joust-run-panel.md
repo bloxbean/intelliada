@@ -1129,6 +1129,35 @@ invariant.
     memory at its build (restored bodies are already handed out and never signed again; M33B1-DES-25). A journal
     changed behind IntelliAda's back can then cause a refusal or a failed transaction, never a different spend.
 
+- **E12. The journal simplified for devnets and test networks (L44, the maintainer's decision; supersedes E10's
+  store layout, fences and rewinds, and E11's fault model, for M3.3b1).**
+  - **Why.** The maintainer: IntelliAda is mostly for test networks and devnets, so developer convenience comes before
+    typical security; test-network ADA and tokens have no value. The Fable review of #34 found that the earlier
+    machinery (lost-history fences, a permanent both-lost fence, parent and ACL checks, cross-module rewinds, stale-
+    observation checks) blocked developers for hours, or for good, to prevent a conflicting test transaction.
+  - **What the journal is now.** A history and restart aid that never blocks:
+    - one file per module and chain, `chains/<chain>/<module>.journal.json` (format version 2), written atomically once
+      per update; no chain record, no registry, no both-lost marker; the directory sync is best effort; directories are
+      created private where the file system has POSIX modes, with no parent or ACL checks;
+    - a missing journal is a new start; one that cannot be read (damaged, another version) is moved aside as
+      `.lost-<time>`, said once in the console, and a new one begun;
+    - each module restores only its own bodies, from the chain as it is now; there are no cross-module rewind records;
+    - only live bodies (prepared, or included but not final) hold their inputs; final and expired ones are history,
+      pruned after `2 × settlementSlots`;
+    - a rollback the host cannot follow (a final inclusion rolled back, a body in another block, a lower tip crossing its
+      reservations, a tip far below its `now`) stops the host only while it holds live reservations; a restart restores
+      them; on a devnet a lower tip is acted on at once, on a public network after D14's three readings;
+    - the per-chain in-process monitor stays, entered with a 30 s bound and a message;
+    - a journal store that cannot be used at all starts the host read-only, without the journal (FAB-1).
+  - **What stays strict, because signing (M3.3b2) depends on it:** an entry is written before its body is handed out
+    (I25); the signer signs only a body built in this session, bound to the hash recorded at its build (L42's gate); a
+    handed-out body is released only by chain evidence or expiry (I30); live input overlap across modules is refused;
+    one host per module and chain (I33); `TxCbor`'s checks on every body; `HostTable`'s checking of every reply (I32).
+  - **Mainnet.** No mainnet path exists in M3.3b1 (binding accepts only a local DevKit). M5 decides mainnet's rules,
+    with their own review.
+  - **Superseded follow-ups:** #35 (final entries no longer hold inputs), #37 (no ACL checks), #39 (opens make no
+    provider reads under the monitor, which is bounded). #38 stays for M3.3b2's build, admission and handout paths.
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
@@ -1139,6 +1168,7 @@ invariant.
 | L41 | #34's journal guarantee is stated as a fault model (E11): in-model P0/P1s and security P2s block; multi-fault, multi-process and tampering findings become issues that must close before M3.3b2 merges; one final Codex round scoped to the model | delegated | 2026-11-27 | two advisors (both: stop open-ended point fixes, state a fault model, gate follow-ups before signing, one final scoped round); Codex P1s r1–r8: 16, 18, –, 15, 7, 8, 8, 7 |
 | L42 | Windows security-descriptor content the JDK does not expose is out of model (E11). Links, junctions and reparse points are refused. #37 (native validation, exercised by the Windows CI job) must close before M3.3b2 merges, or M3.3b2 refuses signing on non-POSIX stores. The signer signs only bodies built in the session, bound to their build hash (E11) | delegated | 2026-11-27 | two advisors (both: option B with a reparse refusal and a gate on signing); CDX-102/103; Windows cannot be tested here |
 | L43 | M3.3b1 blocks only on code production can reach in it (opening, restore, settlement, views, the store). In-model findings on the build, admission and handout paths, which `JoustArchitectureTest` bars and which are `@ApiStatus.Internal`, go to #38. #38 must close before M3.3b2 merges, with a concurrency model, a test for each finding and a dedicated review. Shared-state findings still block | delegated | 2026-11-27 | two advisors (both: option 1 with safeguards); Codex P1s over 22 rounds, the last ~10 all on these paths; Codex r22: "the build and handout findings concern the headless interfaces used by the later signing and panel milestones" |
+| L44 | The journal is simplified for devnets and test networks (E12): a history and restart aid that never blocks; strict only where signing depends on it. Supersedes the fault-model machinery of E10/E11 for M3.3b1 and the three-reviewer process (one Fable review) | maintainer | 2026-11-27 | the maintainer: \"developer's convinience rather than typical security\", \"testnetwork ada or token doesnt have any value\", \"only Fable review is enough\"; the Fable review of #34 (FAB-1..10, S1..S13) |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -1331,3 +1361,4 @@ Security and design approved round 8.
 - **r42** (2026-11-27): E11/L42: M3.3b2's gate is one path, a body built in the session bound to its build hash (M33B1-DES-25).
 - **r43** (2026-11-27): E11 and L43 (delegated): reachability bounds M3.3b1's blocking set; #38 gates M3.3b2.
 - **r44** (2026-11-27): E11/L43: no release before M3.3b2 is a gate; #38's review scope (M33B1-SEC-16).
+- **r45** (2026-11-27): §12 E12 and L44 (the maintainer's decision): the journal simplified for devnets and test networks.
