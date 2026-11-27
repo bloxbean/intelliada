@@ -162,7 +162,7 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
         }
     }
 
-    /** M33B1-FAB-1: a journal store IntelliAda cannot use (here a linked parent) starts the host read-only, never refuses it. */
+    /** M33B1-FAB-1: a journal store IntelliAda cannot use (here a file where its folder must go) starts the host read-only. */
     public void testAnUnusableStoreStartsTheHostReadOnly() throws Exception {
         String fixture = JoustTestTools.env("JOUST_HOST_FIXTURE", "testAnUnusableStoreStartsTheHostReadOnly");
         String store = JoustTestTools.env("JOUST_DEVKIT_STORE", "testAnUnusableStoreStartsTheHostReadOnly");
@@ -177,9 +177,8 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
         node.setProtocolMagic("42");
         var nodes = com.bloxbean.intelliada.idea.configuration.service.RemoteNodeState.getInstance();
         Path module = Path.of(fixture);
-        Path real = Files.createTempDirectory("joust-journal-real");
-        Path link = Files.createSymbolicLink(real.resolveSibling(real.getFileName() + "-link"), real);
-        JournalStore unusable = new JournalStore(link.resolve("joust-journal"));
+        Path blocker = Files.createTempFile("joust-journal-blocker", "");
+        JournalStore unusable = new JournalStore(blocker.resolve("joust-journal"));
         JoustHostService service = JoustHostService.getInstance(getProject());
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
         try {
@@ -196,7 +195,7 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
         } finally {
             nodes.removeRemoteNode(node);
             service.stop(module);
-            Files.deleteIfExists(link);
+            Files.deleteIfExists(blocker);
         }
     }
 

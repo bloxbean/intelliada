@@ -129,7 +129,7 @@ public class SettlementTest {
         ChainJournal seed = new ChainJournal(s, CHAIN, MOD, 60);
         for (Entry e : entries) seed.admit(e, chain.tip.slot(), chain.tip.slot());
         store = s;
-        ChainJournal.Opening o = seed.open(chain.tip.slot());
+        ChainJournal.Opening o = seed.open();
         HostTable t = new HostTable(60, o.restoring());
         Settlement st = settlement(t);
         host.answer(ids);
@@ -283,7 +283,7 @@ public class SettlementTest {
         assertEquals(State.prepared, e.state());
         assertNull(e.inclusion());
         // A restart: the body is restored prepared (its inputs held), its validTo being above the tip.
-        ChainJournal.Opening o = new ChainJournal(new JournalStore(store.root()), CHAIN, MOD, 60).open(2010);
+        ChainJournal.Opening o = new ChainJournal(new JournalStore(store.root()), CHAIN, MOD, 60).open();
         ScriptHost fresh = new ScriptHost().answer(List.of("1"));
         Settlement s2 = new Settlement(new ChainJournal(store, CHAIN, MOD, 60), new HostTable(60, o.restoring()), chain, fresh,
                 lastNow::get, clock::get, ms -> clock.addAndGet(ms * 1_000_000), fence::set);
@@ -291,86 +291,10 @@ public class SettlementTest {
         assertEquals(List.of("restore complete=true n=1"), fresh.calls);
     }
 
-    @Test
-    public void aLaggingTipIsTransientAndAPersistentLowerTipThatTouchesNothingIsTheNewBaseline() throws Exception {
-        String a = tx(List.of(ref(1)), 3000);
-        chain.at(2000);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        chain.at(2100);
-        s.poll();
-        // A lagging provider: one lower reading, then back at the tip, re-read inside the pass (D14).
-        chain.next.addAll(List.of(2050L, 2050L, 2050L, 2100L));
-        assertFalse("transient: the pass is inconclusive", s.poll());
-        assertNull("transient: no rewind", s.rewind());
-        long before = clock.get();
-        chain.at(2050);   // now persistently lower: three reads over at least 10 s, inside one pass
-        assertTrue(s.poll());
-        assertTrue("re-read for at least 10 s", clock.get() - before >= 10_000_000_000L);
-        assertNull("persistent, touching nothing: the journal and the mark are kept", s.rewind());
-        assertNull(fence.get());
-        assertEquals(1, journal.entries().size());
-    }
 
-    @Test
-    public void aPersistentLowerTipBelowAnExpiredBodysValidToIsARewind() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        chain.at(1990);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        chain.at(2086);
-        host.answer("expired");
-        s.poll();
-        chain.at(2000);
-        s.poll();
-        assertNotNull(s.rewind());
-        assertNotNull("persisted before any restart", journal.record().rewind());
-        assertTrue("it says the host must be started again", fence.get().contains("start it again"));
-        assertNotNull(fence.get());
-    }
 
-    @Test
-    public void aTipFarBelowTheLastNowIsARewind() throws Exception {
-        String a = tx(List.of(ref(1)), 9000);
-        chain.at(5000);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        lastNow.set(5000);
-        chain.at(4000);
-        s.poll();
-        assertNotNull(s.rewind());
-    }
 
-    @Test
-    public void aReorgBelowTheDepthMarginLeavesDeeperInclusionsUntouched() throws Exception {
-        String a = tx(List.of(ref(1)), 1100);
-        chain.at(990);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        chain.include(hash(a), 1000);
-        chain.at(1001);
-        host.answer("shallow");
-        s.poll();
-        chain.at(1100);
-        host.answer("confirmed");
-        s.poll();
-        assertEquals("final and still retained", State.confirmed, journal.entries().get(0).state());
-        chain.at(1070);   // a reorg of 30 slots, above the final inclusion's margin (1000 + 60)
-        s.poll();
-        assertNull(s.rewind());
-    }
 
-    @Test
-    public void aForkAtARecordedInclusionIsARewind() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        chain.at(1990);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        chain.include(hash(a), 2005);
-        chain.at(2006);
-        host.answer("shallow");
-        s.poll();
-        chain.include(hash(a), 2007);   // the same body, in another block
-        chain.at(2010);
-        s.poll();
-        assertNotNull(s.rewind());
-        assertEquals("nothing more was told to the fenced host", 2, host.calls.size());
-    }
 
     @Test
     public void aRestoreRebuildsEachEntryFromTheChainAsItIsNow() throws Exception {
@@ -389,7 +313,7 @@ public class SettlementTest {
         chain.at(1990);
         chain.include(hash(kept), 1950);
         chain.include(hash(moved), 1960);
-        ChainJournal.Opening o = seed.open(1990);
+        ChainJournal.Opening o = seed.open();
         Settlement st = settlement(new HostTable(60, o.restoring()));
         host.answer(List.of("1", "2", "3"));
         st.restore(o);
@@ -401,30 +325,6 @@ public class SettlementTest {
         assertEquals(State.prepared, after.get(2).state());
     }
 
-    @Test
-    public void aLostHistoryRestoreCompletesOnlyAboveTheBound() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        JournalStore s = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        new ChainJournal(s, CHAIN, MOD, 60).admit(submitted("1", a), 1990, 1990);
-        java.nio.file.Files.delete(s.recordFile(JournalStore.key(CHAIN)));
-        store = s;
-        chain.at(1995);
-        ChainJournal.Opening o = new ChainJournal(s, CHAIN, MOD, 60).open(1995);
-        long bound = o.completeAbove();
-        Settlement st = settlement(new HostTable(60, true));
-        host.answer(List.of("1"));
-        st.restore(o);
-        assertEquals("restore stays open", List.of("restore complete=false n=1"), host.calls);
-        assertTrue(st.restoring());
-        chain.at(bound);
-        st.poll();
-        assertTrue("not at the bound itself", st.restoring());
-        chain.at(bound + 1);
-        host.answer(List.of());
-        st.poll();
-        assertFalse(st.restoring());
-        assertEquals("restore complete=true n=0", host.calls.get(host.calls.size() - 1));
-    }
 
     // ---- round 1 (M33B1-*) ------------------------------------------------------------------------------------------------
 
@@ -536,7 +436,7 @@ public class SettlementTest {
         seed.admit(submitted("1", tx(List.of(ref(1)), 100)), 0, 0);
         store = st;
         chain.at(5000);   // the body expired long ago: nothing to send, an empty batch completes restore
-        ChainJournal.Opening o = seed.open(5000);
+        ChainJournal.Opening o = seed.open();
         Settlement s = settlement(new HostTable(60, o.restoring()));
         host.answer(HostJson.object().put("reservations", "garbage"));
         try {
@@ -594,26 +494,6 @@ public class SettlementTest {
         }
     }
 
-    /** M33B1-CDX-10: a module whose own journal is unreadable recovers strictly above the mark; the file is kept aside. */
-    @Test
-    public void aModuleRecoversItsOwnUnreadableJournalAboveTheMark() throws Exception {
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        new ChainJournal(st, CHAIN, MOD, 60).admit(submitted("1", tx(List.of(ref(1)), 500)), 0, 0);
-        java.nio.file.Path f = st.journalFile(JournalStore.key(CHAIN), MOD);
-        java.nio.file.Files.writeString(f, "{broken");
-        store = st;
-        ChainJournal.Opening o = new ChainJournal(st, CHAIN, MOD, 60).open(600);
-        assertEquals(ChainJournal.History.LOST_JOURNAL, o.history());
-        assertEquals(560L, (long) o.completeAbove());
-        chain.at(600);
-        Settlement s = settlement(new HostTable(60, true));
-        host.answer(List.of());
-        s.restore(o);   // 600 > 560: restore completes at once, and the unreadable file is moved aside
-        assertFalse(s.restoring());
-        assertFalse(java.nio.file.Files.exists(f));
-        assertTrue(journal.observed(601));
-    }
-
     /** M33B1-DES-11: a journal failure after a successful build discards the body (never handed out) and says so. */
     @Test
     public void aJournalFailureAfterABuildDiscardsTheBody() throws Exception {
@@ -659,30 +539,6 @@ public class SettlementTest {
         assertEquals(State.expired, journal.entries().get(0).state());
     }
 
-    /** M33B1-SEC-6: a restore held open does not complete into a later rewind, nor leave it unreconciled. */
-    @Test
-    public void aRestoreHeldOpenIsFencedByALaterRewind() throws Exception {
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        String modB = JournalStore.key("/work/b"), modC = JournalStore.key("/work/c");
-        new ChainJournal(st, CHAIN, MOD, 60).admit(submitted("1", tx(List.of(ref(1)), 1000)), 0, 0);
-        new ChainJournal(st, CHAIN, modB, 60).admit(submitted("1", tx(List.of(ref(2)), 2000)), 0, 0);
-        new ChainJournal(st, CHAIN, modC, 60).admit(submitted("1", tx(List.of(ref(3)), 1000)), 0, 0);
-        java.nio.file.Files.delete(st.journalFile(JournalStore.key(CHAIN), modB));
-        store = st;
-        chain.at(100);
-        ChainJournal.Opening o = new ChainJournal(st, CHAIN, MOD, 60).open(100);
-        assertEquals(2060L, (long) o.completeAbove());
-        Settlement s = settlement(new HostTable(60, true));
-        host.answer(List.of("1"));
-        s.restore(o);
-        assertTrue("held open", s.restoring());
-        new ChainJournal(st, CHAIN, modC, 60).beginRewind(150, "a rewind found by C");
-        chain.at(2100);
-        assertFalse(s.poll());
-        assertNotNull("fenced by the rewind it never reconciled", fence.get());
-        assertEquals("restore was not completed into the rewind", 1, host.calls.size());
-        assertTrue("still pending", journal.record().rewind().pending().contains(MOD));
-    }
 
     // ---- round 2 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
 
@@ -723,27 +579,6 @@ public class SettlementTest {
         assertTrue(s.pollNeeded());
     }
 
-    /** CDX-26: a rollback the host answers with deepRollback is a chain rewind, persisted, and the host fenced. */
-    @Test
-    public void aDeepRollbackReplyIsAChainRewind() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        chain.at(1990);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        chain.include(hash(a), 2000);
-        chain.at(2001);
-        host.answer("shallow");
-        s.poll();
-        s.beginCall();
-        read(s, "utxos", "value", 2100, true);   // a partial listing: the upper copy holds it final
-        s.endCall("view", null, "bad/readLimit");
-        chain.in.clear();
-        chain.at(2002);
-        host.answer(new HostError("refusal", "deepRollback", "scripted", List.of(), null));
-        s.poll();
-        assertNotNull(fence.get());
-        assertNotNull("persisted before anything is released", journal.record().rewind());
-        assertNotNull("the inclusion evidence is kept", journal.entries().get(0).inclusion());
-    }
 
     /** CDX-27: a restored reservation is never discarded, even with its journal entry gone. */
     @Test
@@ -953,40 +788,7 @@ public class SettlementTest {
         assertEquals(State.prepared, journal.entries().get(0).state());
     }
 
-    /** CDX-47: a tip below an accepted read's is a lower tip (a rewind when it touches the journal). */
-    @Test
-    public void aTipBelowAnAcceptedReadIsLower() throws Exception {
-        String a = tx(List.of(ref(1)), 500);
-        chain.at(100);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        s.beginCall();
-        read(s, "utxos", "value", 600, false);
-        s.complete("view", HostJson.object(), null);
-        assertEquals(State.expired, journal.entries().get(0).state());
-        chain.at(400);   // the chain is back below the expired body's validTo
-        s.poll();
-        assertNotNull(s.rewind());
-    }
 
-    /** CDX-48: a body the host expired that the chain shows included is a reconciliation, with its evidence kept. */
-    @Test
-    public void aLandedBodyTheHostExpiredIsAReconciliation() throws Exception {
-        String a = tx(List.of(ref(1)), 500);
-        chain.at(400);
-        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
-        s.beginCall();
-        read(s, "utxos", "value", 600, false);   // uncertain: the upper copy expires it
-        s.endCall("view", null, "bad/readLimit");
-        chain.include(hash(a), 490);
-        chain.at(495);
-        host.answer(new HostError("bad", "conflict", "scripted", List.of(), null));
-        s.poll();
-        assertNotNull("this host is stopped", fence.get());
-        assertNull("no chain rewind: the chain did not move (DES-16)", journal.record().rewind());
-        Entry e = journal.entries().get(0);
-        assertEquals("the chain's evidence: still reserved", State.shallow, e.state());
-        assertNotNull(e.inclusion());
-    }
 
     /** CDX-49: an approval is never promoted for a body that is no longer prepared. */
     @Test
@@ -1075,42 +877,7 @@ public class SettlementTest {
 
     // ---- round 8 (M33B1-CDX-*) ------------------------------------------------------------------------------------------
 
-    /** CDX-46: admission checks against the lower of the prepare's tip and one read now. */
-    @Test
-    public void admissionReadsAFreshTip() throws Exception {
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        new ChainJournal(st, CHAIN, JournalStore.key("/work/b"), 60).admit(submitted("x", tx(List.of(ref(9)), 500)), 400, 400);
-        java.nio.file.Files.delete(st.journalFile(JournalStore.key(CHAIN), JournalStore.key("/work/b")));
-        store = st;
-        assertTrue(new ChainJournal(st, CHAIN, MOD, 60).observed(0) || true);
-        Settlement s = settlement(new HostTable(60, false));
-        new ChainJournal(st, CHAIN, MOD, 60).open(0);
-        assertTrue(journal.observed(561));
-        chain.at(490);   // rewound below the recovered bound since the prepare at 600
-        String b = tx(List.of(ref(2)), 1200);
-        s.beginCall();
-        s.endCall("prepare", prepared("2", b), null);
-        try {
-            s.admit(submitted("2", b), 600, 600);
-            fail("admitted at the stale prepare tip");
-        } catch (ChainJournal.Fenced expected) {
-            assertTrue(expected.getMessage(), expected.getMessage().contains("recovered"));
-        }
-    }
 
-    /** CDX-64: a retained expired entry with no host row that the chain shows included stops the host. */
-    @Test
-    public void aRetainedExpiredEntryTheChainShowsIncludedStopsTheHost() throws Exception {
-        String a = tx(List.of(ref(1)), 500);
-        chain.at(600);
-        Settlement s = restored(List.of(submitted("1", a)), List.of());   // expired at restore: kept final, no host row
-        assertEquals(State.expired, journal.entries().get(0).state());
-        chain.include(hash(a), 490);
-        chain.at(510);
-        s.poll();
-        assertNotNull(fence.get());
-        assertEquals(State.shallow, journal.entries().get(0).state());
-    }
 
     // ---- round 9 (M33B1-CDX-75, -76) ----------------------------------------------------------------------------------
 
@@ -1135,320 +902,115 @@ public class SettlementTest {
         assertEquals("the journal keeps what it held before the stopped host's reply", State.shallow, journal.entries().get(0).state());
     }
 
-    /** CDX-76: a restore acknowledges its rewind only while the chain still shows what it restored. */
-    @Test
-    public void aRestoreDoesNotAcknowledgeWhenTheChainChangedSince() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
-        seed.admit(submitted("1", a), 1990, 1990);
-        seed.beginRewind(1990, "a rewind");
-        store = st;
-        chain.at(2000);
-        chain.include(hash(a), 1995);
-        ChainJournal.Opening o = seed.open(2000);
-        Settlement s = new Settlement(new ChainJournal(st, CHAIN, MOD, 60), new HostTable(60, true), new Settlement.ChainView() {
-            @Override
-            public Tip tip() {
-                return chain.tip();
-            }
+    // ---- simplified for devnets and test networks (ADR-005 §12 E12, L44) ---------------------------------------------
 
-            @Override
-            public Inclusion inclusion(String txHash) {
-                // gone again once the host was restored from it (another module saw it vanish)
-                return host.calls.stream().anyMatch(c -> c.startsWith("restore")) ? null : chain.inclusion(txHash);
-            }
-        }, host, lastNow::get, clock::get, ms -> { }, fence::set);
-        journal = new ChainJournal(st, CHAIN, MOD, 60);
+    /** On a devnet a lower tip is acted on at once (no re-reads); one that crosses none of the host's rows is the baseline. */
+    @Test
+    public void aDevnetLowerTipTouchingNothingIsTheNewBaselineAtOnce() throws Exception {
+        String a = tx(List.of(ref(1)), 3000);
+        chain.at(2000);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        chain.at(2100);
+        assertTrue(s.poll());
+        long before = clock.get();
+        chain.at(2050);
+        assertTrue(s.poll());
+        assertEquals("no re-reads on a devnet", before, clock.get());
+        assertNull(fence.get());
+        assertEquals(1, journal.entries().size());
+    }
+
+    /** A final inclusion rolled back stops a host holding live reservations; nothing is recorded for other modules. */
+    @Test
+    public void aDeepRollbackStopsTheHost() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        chain.include(hash(a), 2000);
+        chain.at(2001);
+        host.answer("shallow");
+        s.poll();
+        s.beginCall();
+        read(s, "utxos", "value", 2100, true);   // a partial listing: the upper copy holds it final
+        s.endCall("view", null, "bad/readLimit");
+        chain.in.clear();
+        chain.at(2002);
+        host.answer(new HostError("refusal", "deepRollback", "scripted", List.of(), null));
+        s.poll();
+        assertNotNull(fence.get());
+        assertTrue(fence.get(), fence.get().contains("start it again"));
+        assertNotNull("the inclusion evidence is kept", journal.entries().get(0).inclusion());
+    }
+
+    /** The same body in another block than recorded stops a host holding live reservations. */
+    @Test
+    public void aForkAtARecordedInclusionStopsALiveHost() throws Exception {
+        String a = tx(List.of(ref(1)), 2025), b = tx(List.of(ref(2)), 2400);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a), submitted("2", b)), List.of("1", "2"));
+        chain.include(hash(a), 2005);
+        chain.at(2006);
+        host.answer("shallow");
+        s.poll();
+        chain.include(hash(a), 2007);   // the same body, in another block
+        chain.at(2010);
+        assertFalse(s.poll());
+        assertNotNull(fence.get());
+        assertTrue(fence.get(), fence.get().contains("another block"));
+    }
+
+    @Test
+    public void aTipFarBelowTheLastNowStopsALiveHost() throws Exception {
+        String a = tx(List.of(ref(1)), 9000);
+        chain.at(5000);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        lastNow.set(5000);
+        chain.at(4000);
+        assertFalse(s.poll());
+        assertNotNull(fence.get());
+        assertTrue(fence.get(), fence.get().contains("far below"));
+    }
+
+    /** A body the host expired that the chain shows included: the journal keeps the chain's evidence; the host stops. */
+    @Test
+    public void aLandedBodyTheHostExpiredStopsTheHostAndKeepsTheEvidence() throws Exception {
+        String a = tx(List.of(ref(1)), 500);
+        chain.at(400);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        read(s, "utxos", "value", 600, false);   // uncertain: the upper copy expires it
+        s.endCall("view", null, "bad/readLimit");
+        chain.include(hash(a), 490);
+        chain.at(495);
+        host.answer(new HostError("bad", "conflict", "scripted", List.of(), null));
+        s.poll();
+        assertNotNull("this host is stopped", fence.get());
+        Entry e = journal.entries().get(0);
+        assertEquals("the chain's evidence: still reserved", State.shallow, e.state());
+        assertNotNull(e.inclusion());
+    }
+
+    /** On a public network a lagging provider's lower reading is re-read (D14): transient, then a baseline after 10 s. */
+    @Test
+    public void aPublicNetworkLowerTipIsReReadFirst() throws Exception {
+        String a = tx(List.of(ref(1)), 3000);
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("t"));
+        ChainJournal tj = new ChainJournal(st, "preprod-1-" + "cd".repeat(32), MOD, 60);
+        chain.at(2000);
+        tj.admit(submitted("1", a), 2000, 2000);
+        ChainJournal.Opening o = tj.open();
+        Settlement s = new Settlement(tj, new HostTable(60, o.restoring()), chain, host, lastNow::get, clock::get,
+                ms -> clock.addAndGet(ms * 1_000_000), fence::set);
         host.answer(List.of("1"));
         s.restore(o);
-        assertNotNull("the host is stopped", fence.get());
-        assertNotNull("the rewind stands", journal.record().rewind());
-    }
-
-    // ---- round 10 (M33B1-CDX-77) --------------------------------------------------------------------------------------
-
-    /** CDX-77: a restore kept a body final; the chain went back within its margin at the same block before the ack. */
-    @Test
-    public void aRestoreDoesNotAcknowledgeWhenAFinalBodyIsShallowAgain() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
-        seed.admit(submitted("1", a), 1990, 1990);
-        seed.beginRewind(1990, "a rewind");
-        store = st;
         chain.at(2100);
-        chain.include(hash(a), 2000);
-        ChainJournal.Opening o = seed.open(2100);
-        Settlement s = new Settlement(new ChainJournal(st, CHAIN, MOD, 60), new HostTable(60, true), new Settlement.ChainView() {
-            @Override
-            public Tip tip() {
-                // back to 2010 once the host was restored: the same block, now within the margin
-                if (host.calls.stream().anyMatch(c -> c.startsWith("restore"))) chain.at(2010);
-                return chain.tip();
-            }
-
-            @Override
-            public Inclusion inclusion(String txHash) {
-                return chain.inclusion(txHash);
-            }
-        }, host, lastNow::get, clock::get, ms -> { }, fence::set);
-        journal = new ChainJournal(st, CHAIN, MOD, 60);
-        host.answer(List.of());
-        s.restore(o);
-        assertNotNull("the host is stopped", fence.get());
-        assertNotNull("the rewind stands", journal.record().rewind());
-    }
-
-    // ---- round 11 (M33B1-CDX-82, -83) ----------------------------------------------------------------------------------
-
-    private Settlement restoredUnder(String cbor, long admitAt, long openAt, Settlement.ChainView view, List<String> ids) throws Exception {
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
-        seed.admit(submitted("1", cbor), admitAt, admitAt);
-        seed.beginRewind(admitAt, "a rewind");
-        store = st;
-        ChainJournal.Opening o = seed.open(openAt);
-        Settlement s = new Settlement(new ChainJournal(st, CHAIN, MOD, 60), new HostTable(60, true), view, host, lastNow::get, clock::get, ms -> { }, fence::set);
-        journal = new ChainJournal(st, CHAIN, MOD, 60);
-        host.answer(ids);
-        s.restore(o);
-        return s;
-    }
-
-    /** CDX-82: a body kept expired that is valid again at the acknowledgement's chain point stops the host. */
-    @Test
-    public void aRestoreDoesNotAcknowledgeWhenAnExpiredBodyIsValidAgain() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        chain.at(2100);
-        restoredUnder(a, 1990, 2100, new Settlement.ChainView() {
-            @Override
-            public Tip tip() {
-                if (host.calls.stream().anyMatch(c -> c.startsWith("restore"))) chain.at(2010);
-                return chain.tip();
-            }
-
-            @Override
-            public Inclusion inclusion(String txHash) {
-                return chain.inclusion(txHash);
-            }
-        }, List.of());
-        assertNotNull("the host is stopped", fence.get());
-        assertNotNull("the rewind stands", journal.record().rewind());
-    }
-
-    /** CDX-83: the chain goes back between the acknowledgement's tip read and its inclusion read. */
-    @Test
-    public void aRollbackBetweenTheTipAndTheInclusionReadIsSeen() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        chain.at(2100);
-        chain.include(hash(a), 2000);
-        java.util.concurrent.atomic.AtomicInteger tipsAfterRestore = new java.util.concurrent.atomic.AtomicInteger();
-        restoredUnder(a, 1990, 2100, new Settlement.ChainView() {
-            @Override
-            public Tip tip() {
-                return chain.tip();
-            }
-
-            @Override
-            public Inclusion inclusion(String txHash) {
-                // the first inclusion read after the restore: the chain is back at 2010 by the next tip read
-                if (host.calls.stream().anyMatch(c -> c.startsWith("restore")) && tipsAfterRestore.getAndIncrement() == 0) chain.at(2010);
-                return chain.inclusion(txHash);
-            }
-        }, List.of());
-        assertNotNull("the host is stopped", fence.get());
-        assertNotNull("the rewind stands", journal.record().rewind());
-    }
-
-    // ---- round 12 (M33B1-CDX-93) --------------------------------------------------------------------------------------
-
-    /** CDX-93: an empty module still observes the chain while a fence on it waits for a later tip. */
-    @Test
-    public void anEmptyModuleLiftsAFenceWithoutARestart() throws Exception {
-        chain.at(600);
-        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);   // a chain record, then nothing journaled
-        other.remove(Set.of("x"));
-        Settlement s = restored(List.of(), List.of());
-        String k = JournalStore.key(CHAIN);
-        JournalStore.ChainRecord c = store.record(k).value();
-        store.writeRecord(c.withFence(new JournalStore.Fence(700, "a lost journal's bound")));
-        chain.at(701);
         assertTrue(s.poll());
-        assertNull("lifted at 701", store.record(k).value().fence());
-    }
-
-    // ---- round 13 (M33B1-CDX-95) --------------------------------------------------------------------------------------
-
-    /** CDX-95: an idle host stops on a rewind another module began and already cleared. */
-    @Test
-    public void anIdleHostStopsOnARewindAlreadyCleared() throws Exception {
-        chain.at(600);
-        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
-        Settlement s = restored(List.of(), List.of());
+        chain.next.addAll(List.of(2050L, 2050L, 2050L, 2100L));
+        assertFalse("transient: the pass is inconclusive", s.poll());
+        long before = clock.get();
+        chain.at(2050);   // persistently lower: three reads over at least 10 s
+        assertTrue(s.poll());
+        assertTrue("re-read for at least 10 s", clock.get() - before >= 10_000_000_000L);
         assertNull(fence.get());
-        other.beginRewind(500, "a fork B found");
-        other.endRewind(other.record().rewind().id());
-        assertNull("cleared", other.record().rewind());
-        assertTrue(s.rewindMissed());
-        assertNotNull(fence.get());
-        assertFalse(s.poll());
-    }
-
-    // ---- round 14 (M33B1-CDX-101) -------------------------------------------------------------------------------------
-
-    /** CDX-101: a host stops when the chain record it started with is gone. */
-    @Test
-    public void aHostStopsWhenTheChainRecordIsLost() throws Exception {
-        chain.at(600);
-        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
-        Settlement s = restored(List.of(), List.of());
-        java.nio.file.Files.delete(store.recordFile(JournalStore.key(CHAIN)));
-        assertTrue(s.rewindMissed());
-        assertTrue(fence.get(), fence.get().contains("record is missing"));
-    }
-
-    // ---- round 15 (M33B1-CDX-101, -106) -------------------------------------------------------------------------------
-
-    /** CDX-101: a host that never saw the record stops when it is lost while the registry proves history. */
-    @Test
-    public void aHostThatNeverSawTheRecordStopsOnItsLoss() throws Exception {
-        chain.at(600);
-        Settlement s = restored(List.of(), List.of());   // a new chain: no record yet
-        assertFalse(s.rewindMissed());
-        ChainJournal other = new ChainJournal(store, CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
-        java.nio.file.Files.delete(store.recordFile(JournalStore.key(CHAIN)));
-        assertTrue(s.rewindMissed());
-        assertTrue(fence.get(), fence.get().contains("cannot be trusted"));
-    }
-
-    /** CDX-106: a record restored to an older version, proven stale by the registry, stops the host. */
-    @Test
-    public void aStaleRecordStopsTheHost() throws Exception {
-        chain.at(600);
-        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
-        Settlement s = restored(List.of(), List.of());
-        java.nio.file.Path rec = store.recordFile(JournalStore.key(CHAIN));
-        byte[] old = java.nio.file.Files.readAllBytes(rec);
-        other.admit(submitted("y", tx(List.of(ref(8)), 900)), 600, 600);   // the record moves on
-        java.nio.file.Files.write(rec, old);                              // and is restored to the older one
-        assertTrue(s.rewindMissed());
-        assertTrue(fence.get(), fence.get().contains("cannot be trusted"));
-    }
-
-    // ---- round 16 (M33B1-CDX-114) -------------------------------------------------------------------------------------
-
-    /** CDX-114: a session opened read-only on a permanently fenced chain keeps running for views. */
-    @Test
-    public void aReadOnlySessionKeepsItsViews() throws Exception {
-        chain.at(600);
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        ChainJournal other = new ChainJournal(st, CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
-        String k = JournalStore.key(CHAIN);
-        java.nio.file.Files.delete(st.recordFile(k));
-        java.nio.file.Files.delete(st.registryFile(k));
-        Settlement s = restored(List.of(), List.of());
-        assertTrue(store.permanentlyFenced(k));
-        assertFalse(s.rewindMissed());
-        assertNull(fence.get());
-    }
-
-    // ---- round 17 (M33B1-CDX-116) -------------------------------------------------------------------------------------
-
-    /** CDX-116: a fence the rewind check's snapshot shows is what dispatch refuses a build on. */
-    @Test
-    public void theRewindCheckReportsTheChainsFence() throws Exception {
-        chain.at(600);
-        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
-        Settlement s = restored(List.of(), List.of());
-        assertFalse(s.rewindMissed());
-        assertNull(s.lastFence());
-        String k = JournalStore.key(CHAIN);
-        store.writeRecord(store.record(k).value().withFence(new JournalStore.Fence(9000, "a lost journal")));
-        // the registry follows the record's generation, as persist would write it
-        store.writeRegistry(new JournalStore.RegistryEntry(CHAIN, 600, 600, store.record(k).value().generation()));
-        assertFalse("a fence alone does not stop the host", s.rewindMissed());
-        assertEquals(9000, s.lastFence().until());
-    }
-
-    // ---- round 21 (M33B1-CDX-138) -------------------------------------------------------------------------------------
-
-    /** CDX-138: a body built while the host's reads saw the chain below the recovered bound is discarded, never exposed. */
-    @Test
-    public void aBodyBuiltBelowTheRecoveredBoundIsDiscarded() throws Exception {
-        chain.at(1990);
-        Settlement s = restored(List.of(), List.of());
-        String k = JournalStore.key(CHAIN);
-        JournalStore.ChainRecord c = store.record(k) .value();
-        if (c == null) {
-            new ChainJournal(store, CHAIN, JournalStore.key("/work/b"), 60).admit(submitted("x", tx(List.of(ref(9)), 2400)), 1990, 1990);
-            c = store.record(k).value();
-        }
-        store.writeRecord(c.withRecovered(1980L));
-        store.writeRegistry(new JournalStore.RegistryEntry(CHAIN, 1990, 1990, c.generation()));
-        s.beginCall();
-        read(s, "utxos", "value", 1970, false);
-        chain.at(1970);   // the chain as the host's read saw it (the discard's own pass observes it too)
-        host.answer("discarded");
-        try {
-            s.complete("prepare", prepared("2", tx(List.of(ref(2)), 2025)), null);
-            fail("exposed a body built below the recovered bound");
-        } catch (ChainJournal.Fenced expected) {
-            assertTrue(expected.getMessage(), expected.getMessage().contains("recovered lost history"));
-        }
-        assertTrue(host.calls.get(host.calls.size() - 1).startsWith("settled discarded"));
-        assertNotNull("fenced again", store.record(k).value().fence());
-    }
-
-    // ---- round 23 (M33B1-CDX-149, -151) -------------------------------------------------------------------------------
-
-    /** CDX-149: a restore stays open under a fence installed after its opening. */
-    @Test
-    public void aRestoreStaysOpenUnderAFenceInstalledAfterItsOpening() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        chain.at(1990);
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
-        seed.admit(submitted("1", a), 1990, 1990);
-        store = st;
-        ChainJournal.Opening o = seed.open(1990);
-        String k = JournalStore.key(CHAIN);
-        JournalStore.ChainRecord c = st.record(k).value();
-        st.writeRecord(c.withFence(new JournalStore.Fence(2100, "another module's lost journal")));
-        st.writeRegistry(new JournalStore.RegistryEntry(CHAIN, 1990, 1990, c.generation()));
-        Settlement s = settlement(new HostTable(60, o.restoring()));
-        host.answer(List.of("7"));
-        s.restore(o);
-        assertTrue(host.calls.toString(), host.calls.contains("restore complete=false n=1"));
-        assertTrue(s.restoring());
-    }
-
-    // ---- round 25 (M33B1-CDX-161) -------------------------------------------------------------------------------------
-
-    /** CDX-161: a restore never completes while another module's journal is lost and not yet fenced. */
-    @Test
-    public void aRestoreWaitsForAnUnfencedLoss() throws Exception {
-        String a = tx(List.of(ref(1)), 2025);
-        chain.at(1990);
-        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
-        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
-        seed.admit(submitted("1", a), 1990, 1990);
-        ChainJournal other = new ChainJournal(st, CHAIN, JournalStore.key("/work/b"), 60);
-        other.admit(submitted("x", tx(List.of(ref(9)), 2400)), 1990, 1990);
-        store = st;
-        ChainJournal.Opening o = seed.open(1990);
-        java.nio.file.Files.delete(st.journalFile(JournalStore.key(CHAIN), JournalStore.key("/work/b")));   // lost after the open
-        Settlement s = settlement(new HostTable(60, o.restoring()));
-        host.answer(List.of("7"));
-        s.restore(o);
-        assertTrue(host.calls.toString(), host.calls.contains("restore complete=false n=1"));
-        assertNotNull("the loss is fenced", st.record(JournalStore.key(CHAIN)).value().fence());
     }
 }

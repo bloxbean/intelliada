@@ -78,7 +78,7 @@ public class SettlementRealHostTest {
             int n = 1;
             for (String c : cbors) journal.admit(Bodies.submitted("old" + n++, c), 0, 0);
             chain.at(tip);
-            ChainJournal.Opening o = journal.open(tip);
+            ChainJournal.Opening o = journal.open();
             table = new HostTable(60, o.restoring());
             settlement = new Settlement(journal, table, chain, (m, q) -> s.call(m, q, Duration.ofSeconds(60), () -> false),
                     () -> 0, new AtomicLong()::get, ms -> { }, fence::set);

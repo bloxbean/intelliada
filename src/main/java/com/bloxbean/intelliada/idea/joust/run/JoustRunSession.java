@@ -321,7 +321,7 @@ public final class JoustRunSession {
             }
         }
         if (floor >= 0 && floor - tip > ahead) {
-            // A rewind of the chain: recorded for every module on it before this host stops (M33B1-CDX-34).
+            // A chain this host cannot follow: it is stopped; a restart restores its transactions from the chain.
             // Fenced and stopped whatever the write does (M33B1-CDX-79).
             try {
                 if (journal != null) journal.clockRewound(tip, "the chain went back to slot " + tip + ", far below a session's now");

@@ -70,9 +70,9 @@ public final class JoustRunJournal implements AutoCloseable {
     }
 
     /**
-     * Before the host starts: takes the module's host lock on the chain and classifies the chain's history at a tip read
-     * now (D17; one read: the classification needs only a base, and a later tip only raises it; M33B1-DES-1). The store
-     * is this user's ({@link JournalStore#forUser}) unless {@code store} is given (tests).
+     * Before the host starts: takes the module's host lock on the chain and opens the module's journal (D17, simplified by
+     * §12 E12: a damaged journal is moved aside and a new one begun). The store is this user's ({@link JournalStore#forUser})
+     * unless {@code store} is given (tests).
      */
     public static JoustRunJournal open(JoustRunSession.Binding b, Path moduleDir, @Nullable JournalStore store) throws Exception {
         JournalStore s = store != null ? store : JournalStore.forUser();
@@ -82,8 +82,8 @@ public final class JoustRunJournal implements AutoCloseable {
         JournalStore.Held lock = s.ownModule(JournalStore.key(chain), module);
         try {
             ChainJournal j = new ChainJournal(s, chain, module, settlement);
-            ProviderChain provider = new ProviderChain(b.api().copy(), Duration.ofSeconds(10));
-            ChainJournal.Opening o = j.open(() -> provider.tip().slot(), provider::inclusion);
+            ChainJournal.Opening o = j.open();
+            if (o.note() != null) LOG.warn("JOUST: " + o.note());
             return new JoustRunJournal(j, o, lock, b, settlement);
         } catch (Exception | Error e) {
             lock.close();
@@ -97,6 +97,11 @@ public final class JoustRunJournal implements AutoCloseable {
 
     public ChainJournal.History history() {
         return opening.history();
+    }
+
+    /** What opening said once (a damaged journal moved aside), for the run panel's console; or null. */
+    public @Nullable String openingNote() {
+        return opening.note();
     }
 
     /** The margin this journal settles with: it must be the {@code settlementSlots} the host was initialized with. */
@@ -125,13 +130,7 @@ public final class JoustRunJournal implements AutoCloseable {
             synchronized (callLock) {
                 try {
                     if (session.get() == null || session.get().ended() != null) return;
-                    // Idle only with nothing journaled, no restore, and no fence on the chain that a later tip lifts
-                    // (M33B1-CDX-93).
-                    if (!settlement.restoring() && journal.entries().isEmpty() && !fencedChain() && !settlement.ackPending()
-                            && !journal.ownJournalMissing()) {   // M33B1-CDX-157, -158
-                        settlement.rewindMissed();   // an idle host still stops on a rewind (M33B1-CDX-95)
-                        return;
-                    }
+                    if (!settlement.restoring() && journal.entries().isEmpty()) return;   // idle: nothing journaled
                     settlement.poll();   // the chain check runs inside, after the observation
                 } catch (Exception e) {
                     LOG.info("JOUST settlement pass: " + e.getClass().getSimpleName());
@@ -149,46 +148,10 @@ public final class JoustRunJournal implements AutoCloseable {
 
     /** Why building on this session is blocked, or null (views, listings and decoding work either way). */
     public @Nullable String buildingBlocked() {
-        if (opening.permanent() != null) return opening.permanent();
-        if (fenced.get() != null) return "the dev host was stopped: " + fenced.get();
-        if (settlement.rewind() != null) return settlement.rewind();
-        if (settlement.restoring()) {
-            return opening.completeAbove() == null ? "the dev host is being restored"
-                    : "IntelliAda's journal for this chain was incomplete; building waits until the chain passes slot "
-                    + opening.completeAbove() + waitFor(opening.completeAbove());
-        }
-        if (table.deepRollback()) return "a final transaction was rolled back; stop the dev host and start it again";
-        // A query only (M33B1-DES-24): the retry runs in the settlement pass and in open.
-        String unsaved = journal.unsavedReason();   // M33B1-CDX-84
-        if (unsaved != null) return "a rewind on this chain is being recorded (" + unsaved + "); start the dev host again";
-        // The chain's record: a fence or a rewind another host of this chain found (M33B1-DES-3).
-        try {
-            JournalStore.ChainRecord c = journal.record();
-            if (c != null && c.rewind() != null && !c.rewind().pending().isEmpty() && c.rewind().pending().contains(journal.module())) {
-                return "a rewind on this chain is being reconciled (" + c.rewind().reason() + ")";
-            }
-            if (c != null && c.rewind() != null) return "another module on this chain is reconciling a rewind";
-            if (c != null && c.fence() != null) {
-                return fenceMessage(c.fence().until());
-            }
-        } catch (Exception e) {
-            return "IntelliAda's journal for this chain cannot be read (" + e.getClass().getSimpleName() + ")";
-        }
+        if (fenced.get() != null) return "the dev host was stopped: " + fenced.get() + "; start it again from the run panel";
+        if (settlement.restoring()) return "the dev host is being restored; try again in a moment";
+        if (table.deepRollback()) return "a final transaction was rolled back; start the dev host again from the run panel";
         return null;
-    }
-
-    /** One message for a fence, wherever it refuses a build (M33B1-DES-27, -CDX-131). */
-    private String fenceMessage(long until) {
-        if (settlement.highestSlot() > until) return "the chain has passed slot " + until + "; IntelliAda lifts the fence on its next pass. Try again";
-        return "building waits until the chain passes slot " + until + waitFor(until);
-    }
-
-    /** A rough wall time until {@code slot} at the session's slot length (M33B1-DES-4). */
-    private String waitFor(long slot) {
-        long left = slot - settlement.highestSlot();
-        if (left <= 0) return "";
-        long minutes = Math.max(1, left * slotMs / 60_000);
-        return minutes < 120 ? " (about " + minutes + " min)" : " (about " + (minutes / 60) + " h)";
     }
 
     /**
@@ -203,11 +166,9 @@ public final class JoustRunJournal implements AutoCloseable {
         beforeCall(method, now, -1);
     }
 
-    /** As {@link #beforeCall(long)}; a build ({@code prepare}, {@code publish}) also refuses under a chain fence. */
     /** {@code tip}: the chain's tip as read for this call (−1 unknown), apart from the host's monotone {@code now}. */
     void beforeCall(String method, long now, long tip) throws Exception {
         lastNow.accumulateAndGet(now, Math::max);
-        settlement.resetPassTip();
         if (mustSettleFirst(journal.entries(), settlement.pollNeeded())) {
             if (!settlement.poll()) {
                 String why = settlement.fenced() != null ? "the dev host was stopped: " + settlement.fenced()
@@ -216,23 +177,6 @@ public final class JoustRunJournal implements AutoCloseable {
             }
         }
         settlement.beforeCall();
-        // The last step before the host call, after any settlement pass (M33B1-CDX-120): one locked read decides it,
-        // the in-memory rewind included (-121). A rewind since this host started stops it (CDX-95); a fence refuses a
-        // build, while views and listings go on (CDX-116).
-        if (settlement.rewindMissed()) throw new ChainJournal.Fenced("the dev host was stopped: " + settlement.fenced());
-        boolean build = method.equals("prepare") || method.equals("publish");
-        JournalStore.Fence fence = settlement.lastFence();
-        if (fence != null && build) throw new ChainJournal.Fenced(fenceMessage(fence.until()));
-        // A chain back at or below where lost history was recovered, by the tip read for this call, not the host's
-        // clock (M33B1-CDX-126): opening or admission there would refuse too.
-        Long recovered = settlement.lastRecovered();
-        // The lowest tip this call saw: its own read, and any settlement pass it ran (M33B1-CDX-137).
-        long pass = settlement.passTip();
-        if (pass >= 0) tip = tip < 0 ? pass : Math.min(tip, pass);
-        if (build && recovered != null && tip >= 0 && tip <= recovered) {
-            throw new ChainJournal.Fenced("the chain is back at slot " + tip + ", at or below where IntelliAda recovered lost history (slot "
-                    + recovered + "); stop the dev host and start it again");
-        }
     }
 
     /**
@@ -250,11 +194,10 @@ public final class JoustRunJournal implements AutoCloseable {
         settlement.complete(method, result, error, HostSession.callOfThisThread());
     }
 
-    /** D14: a chain far below the session's now is a rewind of the chain, recorded for every module before the stop. */
-    void clockRewound(long tip, String why) throws Exception {
-        fenced.compareAndSet(null, why);   // nothing more is built on this session, before the write (M33B1-CDX-79)
+    /** D14: a chain far below the session's now: this host cannot follow it and is stopped; a restart restores it. */
+    void clockRewound(long tip, String why) {
+        fenced.compareAndSet(null, why);
         settlement.close(why);
-        journal.beginRewind(tip, why);
     }
 
     /**
@@ -277,15 +220,6 @@ public final class JoustRunJournal implements AutoCloseable {
     @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     void handedOut(String reservation, JournalStore.Handout h) throws Exception {
         settlement.handedOut(reservation, h);
-    }
-
-    private boolean fencedChain() {
-        try {
-            JournalStore.ChainRecord c = journal.record();
-            return c != null && c.fence() != null;
-        } catch (Exception e) {
-            return true;   // unreadable: the pass reads it and reports
-        }
     }
 
     /** D17: at least every {@code settlementSlots/2} slots while anything is live. */
