@@ -1032,8 +1032,14 @@ invariant.
     - **Failed writes.** A failed registry write is a known failed write, which its owner finishes.
   - **M3.3b1 round 7 (#34).**
     - **Overlap.** Every journaled body holds its inputs until it leaves the journal, final and expired ones included;
-      only a discarded one releases them. This replaces the per-case reopening rules. The cost is that an expired body's
-      inputs wait out its retention window before another body may spend them (about 17 minutes on a devnet).
+      only a discarded one releases them. This replaces the per-case reopening rules.
+      - **The cost (DES-18).** An expired body's inputs wait out its retention window, `validTo + 2 × settlementSlots +
+        maxNowAheadSlots`, before another body may spend them. That is about 17 minutes on a devnet and 5,220 slots
+        (about 1.45 h) on a public network.
+      - **Refusals.** Each one names the holding transaction's state and the slot its hold ends.
+      - **To revisit in M3.5.** There an unsubmitted export makes expiry the usual case, so a shorter hold for expired
+        bodies should be reconsidered: a detection window past expiry, with the rewind fence covering the rest. This
+        departs from D17's "released by chain evidence or expiry" during that window.
     - **Rewinds.**
       - A rewind carries the evidence that made it. It is renewed only on evidence not yet recorded, or at a lower point.
       - A stale record is never advanced. A lost mark the registry proves is persisted under `open`'s first lock.
@@ -1233,3 +1239,4 @@ Security and design approved round 8.
 - **r31** (2026-11-27): §12 E10 — M3.3b1 round 5.
 - **r32** (2026-11-27): §12 E10 — M3.3b1 round 6 (chain rewinds only from chain evidence).
 - **r33** (2026-11-27): §12 E10 — M3.3b1 round 7 (one overlap rule; rewind evidence).
+- **r34** (2026-11-27): §12 E10 — the overlap rule's cost on public networks, and an M3.5 item (DES-18).
