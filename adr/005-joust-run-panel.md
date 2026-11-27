@@ -1120,6 +1120,11 @@ invariant.
     A finding on those paths that shows a flaw in the journal format, the store, or what restore or settlement
     assume still blocks M3.3b1. Only the commit that wires these paths may relax the architecture test, and it must
     reference #38.
+    **No release from a branch containing M3.3b1 before M3.3b2** (a gate, not an assumption; M33B1-SEC-16): the store is
+    shared across IDEs and versions, so a released M3.3b1 would keep running its older rules beside a fixed M3.3b2.
+    #38's dedicated review covers fence lifting in `observed` (CDX-142, -148) and build completion in `Settlement`
+    (CDX-144). If a release happens anyway, M3.3b2 raises the format `VERSION` and decides how an older copy's permanent
+    fence (an M3.3b1 copy reads a newer store as both lost) is treated.
   - **A gate for M3.3b2 (L42):** the signer signs only a body built in this session, bound to the hash recorded in
     memory at its build (restored bodies are already handed out and never signed again; M33B1-DES-25). A journal
     changed behind IntelliAda's back can then cause a refusal or a failed transaction, never a different spend.
@@ -1325,3 +1330,4 @@ Security and design approved round 8.
 - **r41** (2026-11-27): E11 and L42 (delegated): Windows descriptor completeness out of model, a gate for M3.3b2; E10: links and junctions refused (M33B1-CDX-101..105).
 - **r42** (2026-11-27): E11/L42: M3.3b2's gate is one path, a body built in the session bound to its build hash (M33B1-DES-25).
 - **r43** (2026-11-27): E11 and L43 (delegated): reachability bounds M3.3b1's blocking set; #38 gates M3.3b2.
+- **r44** (2026-11-27): E11/L43: no release before M3.3b2 is a gate; #38's review scope (M33B1-SEC-16).
