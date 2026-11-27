@@ -232,7 +232,9 @@ public final class Settlement {
 
     private void completed(long t) throws Exception {
         restoreOpen = false;
-        journal.endRewind();
+        // This host leaves only the rewind it was restored after (M33B1-SEC-6).
+        JournalStore.ChainRecord rec = journal.record();
+        if (rec != null && same(rec.rewind(), reconciling)) journal.endRewind();
         journal.observed(t);
     }
 
@@ -301,7 +303,9 @@ public final class Settlement {
         // A rewind another host of this chain found stops this one too, unless this host was restored after it (D14:
         // every live host on the chain; M33B1-DES-3, -CDX-5).
         JournalStore.ChainRecord rec = journal.record();
-        if (rec != null && rec.rewind() != null && !restoreOpen && !same(rec.rewind(), reconciling)) {
+        // Checked while a restore is held open too (M33B1-SEC-6): a rewind persisted after this host's restore began was
+        // never reconciled by it.
+        if (rec != null && rec.rewind() != null && !same(rec.rewind(), reconciling)) {
             rewind = rec.rewind().reason();
             fence("a rewind on this chain is being reconciled (" + rec.rewind().reason() + ")");
             return false;
@@ -455,6 +459,10 @@ public final class Settlement {
                     + describe(x.lower()) + (x.certain() ? "" : " or " + describe(x.upper())));
             return false;
         }
+        if (deferJournal) {
+            syncPending = true;   // the model holds the states; the journal takes them at the next successful write
+            return true;
+        }
         String note = status + (slot == null ? "" : "@" + slot) + " tip " + tip;
         // The event's tip applied to every reservation of the host: the journal takes each changed state.
         for (Entry j : journal.entries()) {
@@ -491,7 +499,7 @@ public final class Settlement {
         if (!settle(reservation, lo.txHash(), "discarded", null, tip)) {
             throw new ChainJournal.Fenced("the dev host did not discard the body as expected; it was stopped");
         }
-        if (e != null) journal.remove(Set.of(reservation));
+        if (e != null && !deferJournal) journal.remove(Set.of(reservation));
     }
 
     private static String describe(HostTable.Outcome o) {
@@ -610,6 +618,52 @@ public final class Settlement {
                 else table.committed(id, b.txHash(), b.validFrom(), b.validTo());
             }
         }
+    }
+
+    private boolean syncPending;
+
+    /**
+     * After a forward call (M33B1-DES-11): its tips to the model ({@link #endCall}), then the changed states to the journal.
+     * If that write fails after a successful {@code prepare} or {@code publish}, the body (never handed out) is discarded,
+     * or the host fenced when even that fails; either way the caller learns why. After any other call the result stands
+     * and the write is retried before the next call ({@link #beforeCall}).
+     */
+    public synchronized void complete(String method, @Nullable JsonNode result, @Nullable String error) throws Exception {
+        endCall(method, result, error);
+        try {
+            sync();
+            syncPending = false;
+        } catch (Exception journalFailed) {
+            syncPending = true;
+            String id = error == null && result != null && (method.equals("prepare") || method.equals("publish"))
+                    ? result.path("prepared").path("reservation").textValue() : null;
+            if (id == null || table.lower(id) == null) return;
+            String cause = journalFailed.getMessage();
+            try {
+                // The host's discard is checked against the model; the journal (failing now) takes the states later.
+                deferJournal = true;
+                discard(id);
+            } catch (Exception notDiscarded) {
+                fence("IntelliAda's journal could not be written after it prepared a body, which could not be discarded");
+                throw new ChainJournal.Fenced("IntelliAda's journal could not be written (" + cause + "), and the prepared body could not be "
+                        + "discarded; the dev host was stopped");
+            }
+            finally {
+                deferJournal = false;
+            }
+            throw new ChainJournal.Fenced("IntelliAda's journal could not be written (" + cause + "); the prepared body was discarded");
+        }
+    }
+
+    private boolean deferJournal;
+
+    /** Before a forward call: a journal write that failed after the last call is retried; failing again refuses the call. */
+    public synchronized void beforeCall() throws Exception {
+        if (syncPending) {
+            sync();
+            syncPending = false;
+        }
+        beginCall();
     }
 
     /** Writes the table's changed states to the journal (M33B1-CDX-9): accepted read tips advance reservations too. */

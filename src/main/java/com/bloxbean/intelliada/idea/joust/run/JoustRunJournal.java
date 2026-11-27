@@ -173,21 +173,28 @@ public final class JoustRunJournal implements AutoCloseable {
      */
     void beforeCall(long now) throws Exception {
         lastNow.accumulateAndGet(now, Math::max);
-        boolean live = !journal.entries().isEmpty();
-        if (settlement.pollNeeded() || live) {
-            if (!settlement.poll() && (live || settlement.pollNeeded())) {
+        if (mustSettleFirst(journal.entries(), settlement.pollNeeded())) {
+            if (!settlement.poll()) {
                 String why = settlement.fenced() != null ? "the dev host was stopped: " + settlement.fenced()
                         : "the chain kept moving while IntelliAda settled its transactions; the call was not sent. Try again";
                 throw new ChainJournal.Fenced(why);
             }
         }
-        settlement.beginCall();
+        settlement.beforeCall();
     }
 
-    /** After a forward call (call lock held): its read tips to the model, and the states they changed to the journal. */
+    /**
+     * Whether a forward call waits for a settlement pass (M33B1-DES-10): only while a reservation can still move (a live
+     * entry) or an inclusion is unreported. Final entries kept for their retention never hold a view back; the timer
+     * pass looks after them.
+     */
+    static boolean mustSettleFirst(java.util.List<JournalStore.Entry> entries, boolean pollNeeded) {
+        return pollNeeded || entries.stream().anyMatch(JournalStore.Entry::live);
+    }
+
+    /** After a forward call (call lock held), once, with its outcome (M33B1-DES-11). */
     void afterCall(String method, @Nullable JsonNode result, @Nullable String error) throws Exception {
-        settlement.endCall(method, result, error);
-        settlement.sync();
+        settlement.complete(method, result, error);
     }
 
     /**

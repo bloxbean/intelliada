@@ -306,17 +306,22 @@ public final class JoustRunSession {
             if (journal == null) return running.session().call(method, params, CALL_TIMEOUT, () -> false);
             // D17: settlement before the call when anything is live; the call's read tips go to the host-table model.
             journal.beforeCall(params.path("now").asLong(0));
+            // The host call alone in the try; the journal step once, with the outcome (M33B1-DES-11).
+            JsonNode r = null;
+            String error = null;
+            Exception failure = null;
             try {
-                JsonNode r = running.session().call(method, params, CALL_TIMEOUT, () -> false);
-                journal.afterCall(method, r, null);
-                return r;
+                r = running.session().call(method, params, CALL_TIMEOUT, () -> false);
             } catch (HostError e) {
-                journal.afterCall(method, null, e.kind() + "/" + e.code());
-                throw e;
+                error = e.kind() + "/" + e.code();
+                failure = e;
             } catch (Exception e) {
-                journal.afterCall(method, null, "transport");
-                throw e;
+                error = "transport";
+                failure = e;
             }
+            journal.afterCall(method, r, error);
+            if (failure != null) throw failure;
+            return r;
         }
     }
 

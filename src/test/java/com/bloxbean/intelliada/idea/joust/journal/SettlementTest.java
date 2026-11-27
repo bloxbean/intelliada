@@ -607,4 +607,74 @@ public class SettlementTest {
         assertFalse(java.nio.file.Files.exists(f));
         assertTrue(journal.observed(601));
     }
+
+    /** M33B1-DES-11: a journal failure after a successful build discards the body (never handed out) and says so. */
+    @Test
+    public void aJournalFailureAfterABuildDiscardsTheBody() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beforeCall();
+        read(s, "utxos", "value", 2100, false);   // expires entry 1: the journal must be written after the call
+        store.failWritesForTests = p -> p.getFileName().toString().endsWith(".journal.json");
+        host.answer("discarded");
+        try {
+            s.complete("prepare", prepared("2", tx(List.of(ref(2)), 3000)), null);
+            fail("the journal failure was hidden");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("discarded"));
+        }
+        assertEquals("settled discarded/1990", host.calls.get(host.calls.size() - 1));
+        assertNull(fence.get());
+        // The pending write is retried before the next call: refused while the store fails, then the call proceeds.
+        try {
+            s.beforeCall();
+            fail("a call went ahead of a failed journal write");
+        } catch (JournalStore.StoreFailed expected) {
+            // refused
+        }
+        store.failWritesForTests = p -> false;
+        s.beforeCall();
+        assertEquals(State.expired, journal.entries().get(0).state());
+    }
+
+    /** M33B1-DES-11: after a view, a journal failure keeps the result; the write is retried before the next call. */
+    @Test
+    public void aJournalFailureAfterAViewKeepsTheResult() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beforeCall();
+        read(s, "utxos", "value", 2100, false);
+        store.failWritesForTests = p -> true;
+        s.complete("view", HostJson.object().putObject("value"), null);
+        store.failWritesForTests = p -> false;
+        s.beforeCall();
+        assertEquals(State.expired, journal.entries().get(0).state());
+    }
+
+    /** M33B1-SEC-6: a restore held open does not complete into a later rewind, nor leave it unreconciled. */
+    @Test
+    public void aRestoreHeldOpenIsFencedByALaterRewind() throws Exception {
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        String modB = JournalStore.key("/work/b"), modC = JournalStore.key("/work/c");
+        new ChainJournal(st, CHAIN, MOD, 60).admit(submitted("1", tx(List.of(ref(1)), 1000)), 0, 0);
+        new ChainJournal(st, CHAIN, modB, 60).admit(submitted("1", tx(List.of(ref(2)), 2000)), 0, 0);
+        new ChainJournal(st, CHAIN, modC, 60).admit(submitted("1", tx(List.of(ref(3)), 1000)), 0, 0);
+        java.nio.file.Files.delete(st.journalFile(JournalStore.key(CHAIN), modB));
+        store = st;
+        chain.at(100);
+        ChainJournal.Opening o = new ChainJournal(st, CHAIN, MOD, 60).open(100);
+        assertEquals(2060L, (long) o.completeAbove());
+        Settlement s = settlement(new HostTable(60, true));
+        host.answer(List.of("1"));
+        s.restore(o);
+        assertTrue("held open", s.restoring());
+        new ChainJournal(st, CHAIN, modC, 60).beginRewind(150, "a rewind found by C");
+        chain.at(2100);
+        assertFalse(s.poll());
+        assertNotNull("fenced by the rewind it never reconciled", fence.get());
+        assertEquals("restore was not completed into the rewind", 1, host.calls.size());
+        assertTrue("still pending", journal.record().rewind().pending().contains(MOD));
+    }
 }
