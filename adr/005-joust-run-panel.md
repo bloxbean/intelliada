@@ -997,11 +997,19 @@ invariant.
         (`~/.intelliada`) must be a real directory owned by the user that no other user can write; one the store
         creates is 0700, one of the user's that others can write (a umask of 002, common on Linux) loses its group and
         other write bits, and a link or another user's refuses (r37/r38, M33B1-CDX-80, -SEC-13, -DES-22). On a file
-        system with ACLs instead of POSIX modes, no principal but the user, the system and administrators may change its
-        entries; with neither, the store refuses (M33B1-CDX-85).
-      - A rewind the process detected but could not persist is held in memory for the chain: every host of the chain
-        in the process stops on it, admission refuses, and the next open persists it, after recovering the record when
-        needed (M33B1-CDX-84).
+        system with ACLs instead of POSIX modes, every directory of the store and its parent must belong to this process's
+        user, and no principal but that user and the OS-resolved identities of the local system, the built-in
+        administrators, the creator-owner placeholder and the installer service may change their entries. Principals
+        are compared by identity, never by name. A directory the store creates gets an ACL for this user alone. With
+        neither POSIX nor ACL attributes, the store refuses (M33B1-CDX-85, -91, -92, -SEC-14).
+      - A rewind the process detected, by any path (a clock rewind, a settlement pass or an open), is held in memory
+        for the chain before its write, whole: its tip, reason, pending modules and evidence. It is cleared once
+        persisted. Admission, handout and pruning check it under the chain lock, and every host of the chain in the
+        process stops on it. A retry from a settlement pass or an open persists it without adding the module that
+        retried. The next open persists it, recovering the record first when needed. Status queries only read it
+        (M33B1-CDX-84, -87..90, -94, -DES-24).
+      - A module with nothing journaled still observes the chain while a fence on it waits for a later tip
+        (M33B1-CDX-93).
       - A closing session finishes any pass in progress before it releases its module lock.
   - **M3.3b1 round 5 (#34).**
     - **Rewinds.**
@@ -1284,3 +1292,4 @@ Security and design approved round 8.
 - **r36** (2026-11-27): D17 and §12 E10/E11 — the journal store moves to a per-user directory (M33B1-DES-20, -SEC-12).
 - **r37** (2026-11-27): D15 persistence and §5 Data per user (M33B1-DES-21); E10 Files: the store's parent directory is checked (M33B1-CDX-80, -SEC-13).
 - **r38** (2026-11-27): E10 Files: a loose parent of the user's is tightened; ACL file systems; an unsaved rewind is held in memory (M33B1-DES-22, -CDX-84, -CDX-85).
+- **r39** (2026-11-27): E10 Files: ACL identities; the unsaved rewind as a whole record checked under the lock; empty modules observe fences (M33B1-CDX-87..94, -DES-24, -SEC-14).
