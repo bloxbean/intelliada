@@ -611,7 +611,7 @@ public final class ChainJournal {
     private volatile long lastWritten = -1;
 
     /** Why {@code body} conflicts with a live entry on the chain, or null (I33; protocol D8's reference rule). */
-    private static @Nullable String overlap(TxCbor.Body body, Map<String, Loaded<ModuleJournal>> all, long tip) {
+    private @Nullable String overlap(TxCbor.Body body, Map<String, Loaded<ModuleJournal>> all, long tip) {
         Set<String> spends = new HashSet<>(body.inputs());
         spends.addAll(body.collateral());
         for (var j : all.values()) {
@@ -620,8 +620,10 @@ public final class ChainJournal {
                 // Every journaled body holds its inputs until it leaves the journal, final and expired ones included
                 // (M33B1-CDX-46, -61, -64): any of them a rewind could reopen, at whatever tip the admission saw. Only a
                 // discarded body (never handed out) releases them. The cost: an expired body's inputs wait out its
-                // retention before another body may spend them.
+                // retention before another body may spend them (§12 E10; about 17 minutes on a devnet, 1.45 h on a public
+                // network). The refusal says which transaction holds the input and until when (M33B1-DES-18, -DES-19).
                 if (x.state() == JournalStore.State.discarded) continue;
+                String holder = holder(x);
                 TxCbor.Body b;
                 try {
                     b = x.body();
@@ -631,12 +633,12 @@ public final class ChainJournal {
                 if (b.txHash().equals(body.txHash())) return "the same transaction is already journaled on this chain";
                 Set<String> theirs = new HashSet<>(b.inputs());
                 theirs.addAll(b.collateral());
-                for (String s : spends) if (theirs.contains(s)) return "an input is reserved by another live transaction on this chain";
+                for (String s : spends) if (theirs.contains(s)) return "an input is reserved by " + holder;
                 for (String s : body.referenceInputs()) if (theirs.contains(s)) {
-                    return "a reference input is being spent by another live transaction on this chain";
+                    return "a reference input is being spent by " + holder;
                 }
                 for (String p : body.publishes()) if (b.publishes().contains(p)) {
-                    return "another live transaction on this chain already publishes " + p;
+                    return holder + " already publishes " + p;
                 }
             }
         }
@@ -761,6 +763,23 @@ public final class ChainJournal {
             if (j.lost()) throw new Fenced("this module's journal on the chain is unreadable");
             writeMine(entries, true);
         }
+    }
+
+    /** Which journaled transaction holds an input, and until when (the end of its retention for a final one). */
+    private String holder(Entry x) {
+        String what = switch (x.state()) {
+            case prepared -> "a pending transaction";
+            case shallow -> "a transaction included but not yet final";
+            case confirmed -> "a confirmed transaction";
+            case expired -> "an expired transaction";
+            default -> "a transaction";
+        };
+        String label = x.label().isEmpty() ? "" : " (" + x.label() + ")";
+        if (!x.live()) {
+            long point = x.state() == JournalStore.State.confirmed && x.slot() != null ? Math.max(x.slot(), x.validTo()) : x.validTo();
+            return what + label + " on this chain until slot " + (point + 2 * settlementSlots + TimePolicy.MAX_NOW_AHEAD);
+        }
+        return what + label + " on this chain until it settles";
     }
 
     /**
