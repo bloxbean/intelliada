@@ -423,9 +423,11 @@ public final class Settlement {
             HostTable.Res after = table.lower(e.reservation());
             if (after != null && after.st() != HostTable.St.shallow && after.st() != HostTable.St.confirmed) {
                 long slot = e.inclusion().slot();
+                // The host is fenced first, then the journal written (M33B1-SEC-10): a failed write never leaves a host
+                // with a table known to diverge.
+                fence("it expired " + e.label() + ", which the chain shows included; start it again to restore it from IntelliAda's journal");
                 journal.update(e.reservation(), x -> x.withState(State.shallow, slot).withInclusion(e.inclusion())
                         .withEvent("the host expired it; the chain shows it at " + slot));
-                fence("it expired " + e.label() + ", which the chain shows included; start it again to restore it from IntelliAda's journal");
                 return false;
             }
             publish(e.reservation(), "confirmed@" + e.inclusion().slot() + " tip " + e.inclusion().slot());
