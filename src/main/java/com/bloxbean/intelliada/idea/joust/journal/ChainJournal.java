@@ -977,12 +977,16 @@ public final class ChainJournal {
 
     /** Persists this process's unsaved rewind of the chain, if any; StoreFailed when it still cannot be written. */
     private void persistUnsaved() throws StoreFailed, InterruptedException {
-        Unsaved u = UNSAVED.get(unsavedKey());
-        if (u == null) return;
+        if (UNSAVED.get(unsavedKey()) == null) return;
         try (var held = store.lock(chainKey)) {
+            // Read again under the lock (M33B1-CDX-99): a retry that ran meanwhile consumed it.
+            Unsaved u = UNSAVED.get(unsavedKey());
+            if (u == null) return;
             Files f = load();
             ChainRecord c = existing(f);
             if (c.rewind() != null && c.rewind().id().equals(u.rewind().id())) {
+                // The record holds it; the write that failed may have been the registry's (M33B1-CDX-100): written again.
+                persist(f, c);
                 UNSAVED.remove(unsavedKey(), u);
                 return;
             }

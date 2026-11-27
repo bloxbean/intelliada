@@ -329,6 +329,26 @@ public final class Settlement {
         return out;
     }
 
+    /**
+     * Whether a rewind of this chain began since this host started or was restored, and is not the one it reconciles
+     * (M33B1-CDX-95): even one another module already reconciled and cleared. Fences this host if so. Read with every
+     * forward call and every idle timer pass, so an idle host never serves a prepare after a rewind.
+     */
+    public synchronized boolean rewindMissed() throws Exception {
+        if (fenced != null) return true;
+        String unsaved = journal.unsavedReason();
+        JournalStore.ChainRecord rec = journal.record();
+        String why = unsaved != null ? "a rewind on this chain is being recorded (" + unsaved + ")"
+                : rec == null ? null
+                : rec.rewind() != null && !same(rec.rewind(), reconciling) ? "a rewind on this chain is being reconciled (" + rec.rewind().reason() + ")"
+                : rewindsSeen >= 0 && rec.rewinds() != rewindsSeen ? "a rewind on this chain was reconciled while this host ran"
+                : null;
+        if (why == null) return false;
+        if (rewind == null) rewind = why;
+        fence(why + "; start the dev host again");
+        return true;
+    }
+
     // ---- observation --------------------------------------------------------------------------------------------------
 
     record Observation(ChainView.Tip tip, Map<String, Inclusion> inclusions) {
@@ -382,6 +402,7 @@ public final class Settlement {
         }
         // A rewind another host of this chain found stops this one too, unless this host was restored after it (D14:
         // every live host on the chain; M33B1-DES-3, -CDX-5).
+        if (rewindMissed()) return false;
         JournalStore.ChainRecord rec = journal.record();
         // Checked while a restore is held open too (M33B1-SEC-6): a rewind persisted after this host's restore began was
         // never reconciled by it.

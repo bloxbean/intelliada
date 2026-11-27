@@ -1278,4 +1278,22 @@ public class SettlementTest {
         assertTrue(s.poll());
         assertNull("lifted at 701", store.record(k).value().fence());
     }
+
+    // ---- round 13 (M33B1-CDX-95) --------------------------------------------------------------------------------------
+
+    /** CDX-95: an idle host stops on a rewind another module began and already cleared. */
+    @Test
+    public void anIdleHostStopsOnARewindAlreadyCleared() throws Exception {
+        chain.at(600);
+        ChainJournal other = new ChainJournal(new JournalStore(tmp.getRoot().toPath().resolve("j")), CHAIN, JournalStore.key("/work/b"), 60);
+        other.admit(submitted("x", tx(List.of(ref(9)), 900)), 600, 600);
+        Settlement s = restored(List.of(), List.of());
+        assertNull(fence.get());
+        other.beginRewind(500, "a fork B found");
+        other.endRewind(other.record().rewind().id());
+        assertNull("cleared", other.record().rewind());
+        assertTrue(s.rewindMissed());
+        assertNotNull(fence.get());
+        assertFalse(s.poll());
+    }
 }

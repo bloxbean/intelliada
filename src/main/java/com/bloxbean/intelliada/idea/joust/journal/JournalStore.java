@@ -835,11 +835,35 @@ public final class JournalStore {
     // ---- files --------------------------------------------------------------------------------------------------------
 
     /** The file's JSON, or null when it does not exist; an existing file that cannot be read fails (never empty). */
+    /**
+     * On an ACL file system, before a file's bytes are trusted (M33B1-CDX-97, -98): every directory from the root to the
+     * file, and the file itself, passes {@link #aclPrivate}. Access there is not governed by the path (traversal is not
+     * checked), so a private root does not make what is under it private. On POSIX the 0700 root does.
+     */
+    private void readable(Path f) throws IOException, StoreFailed {
+        Path dir = f.getParent();
+        if (dir == null || posix(dir)) return;
+        guardParent(root.getParent());
+        for (Path p = dir; p != null && p.startsWith(root); p = p.getParent()) {
+            try {
+                aclPrivate(p);
+            } catch (IOException e) {
+                throw new StoreFailed("the journal is not private: " + e.getMessage(), e);
+            }
+        }
+        try {
+            aclPrivate(f);
+        } catch (IOException e) {
+            throw new StoreFailed("the journal is not private: " + e.getMessage(), e);
+        }
+    }
+
     private @Nullable JsonNode read(Path f) throws StoreFailed {
         byte[] b;
         try {
             if (Files.isSymbolicLink(f)) throw new StoreFailed("a journal file is a symbolic link: " + f.getFileName());
             if (!Files.exists(f, LinkOption.NOFOLLOW_LINKS)) return null;
+            readable(f);
             if (Files.size(f) > MAX_FILE) return HostJson.object().put("$tooLarge", true);
             b = Files.readAllBytes(f);
         } catch (NoSuchFileException e) {
@@ -1001,6 +1025,8 @@ public final class JournalStore {
     static void aclCheck(Path dir, java.nio.file.attribute.UserPrincipal owner, java.nio.file.attribute.UserPrincipal me,
                          List<java.nio.file.attribute.AclEntry> acl, Set<java.nio.file.attribute.UserPrincipal> trusted) throws IOException {
         if (!owner.equals(me)) throw new IOException("the journal directory " + dir + " belongs to another user");
+        // An empty list is how the JDK reports a null DACL too, which grants everyone everything (M33B1-CDX-96).
+        if (acl.isEmpty()) throw new IOException("the access list of " + dir + " cannot be verified (empty or null)");
         for (var e : acl) {
             if (e.type() != java.nio.file.attribute.AclEntryType.ALLOW || java.util.Collections.disjoint(e.permissions(), ACL_WRITES)) continue;
             if (e.principal().equals(me) || trusted.contains(e.principal())) continue;

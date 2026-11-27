@@ -1430,4 +1430,56 @@ public class ChainJournalTest {
         assertFalse("B has no journal and did not detect it", r.pending().contains(MOD_B));
         assertNull(j(s, MOD_B).unsavedReason());
     }
+
+    // ---- round 13 (M33B1-CDX-96, -99, -100) ----------------------------------------------------------------------------
+
+    /** CDX-96: an empty access list (how the JDK shows a null DACL too) is never private. */
+    @Test
+    public void anEmptyAccessListIsRefused() {
+        P me = new P("HOST\\me", "S-1-5-21-1-1001");
+        try {
+            JournalStore.aclCheck(Path.of("C:/x"), me, me, List.of(), Set.of());
+            fail("an empty ACL");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("empty or null"));
+        }
+    }
+
+    /** CDX-99: two retries of one unsaved rewind record it once. */
+    @Test
+    public void twoRetriesRecordOneRewind() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        long before = s.record(JournalStore.key(CHAIN)).value().rewinds();
+        failRecordWrites(s, true);
+        try {
+            j(s, MOD_A).beginRewind(100, "the clock went back");
+            fail("the write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        failRecordWrites(s, false);
+        j(s, MOD_A).unsavedRewind();
+        j(s, MOD_B).unsavedRewind();
+        assertEquals(before + 1, s.record(JournalStore.key(CHAIN)).value().rewinds());
+    }
+
+    /** CDX-100: a rewind whose record was written but not its registry entry is completed by the retry. */
+    @Test
+    public void aRetryCompletesTheRegistryWrite() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 900)), 400, 400);
+        j(s, MOD_A).remove(Set.of("1"));
+        Path reg = s.registryFile(k).getFileName();
+        s.failWritesForTests = p -> p.getFileName().equals(reg);
+        try {
+            j(s, MOD_A).beginRewind(100, "the clock went back");
+            fail("the registry write was to fail");
+        } catch (JournalStore.StoreFailed expected) {
+        }
+        s.failWritesForTests = p -> false;
+        j(s, MOD_B).unsavedRewind();
+        assertNull(j(s, MOD_B).unsavedReason());
+        assertFalse("no loss of the mark", j(s, MOD_B).open(500).history() == ChainJournal.History.LOST_MARK);
+    }
 }

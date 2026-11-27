@@ -126,7 +126,10 @@ public final class JoustRunJournal implements AutoCloseable {
                     if (session.get() == null || session.get().ended() != null) return;
                     // Idle only with nothing journaled, no restore, and no fence on the chain that a later tip lifts
                     // (M33B1-CDX-93).
-                    if (!settlement.restoring() && journal.entries().isEmpty() && !fencedChain()) return;
+                    if (!settlement.restoring() && journal.entries().isEmpty() && !fencedChain()) {
+                        settlement.rewindMissed();   // an idle host still stops on a rewind (M33B1-CDX-95)
+                        return;
+                    }
                     settlement.poll();   // the chain check runs inside, after the observation
                 } catch (Exception e) {
                     LOG.info("JOUST settlement pass: " + e.getClass().getSimpleName());
@@ -179,6 +182,8 @@ public final class JoustRunJournal implements AutoCloseable {
      */
     void beforeCall(long now) throws Exception {
         lastNow.accumulateAndGet(now, Math::max);
+        // Every forward call, idle or not (M33B1-CDX-95): a rewind since this host started stops it first.
+        if (settlement.rewindMissed()) throw new ChainJournal.Fenced("the dev host was stopped: " + settlement.fenced());
         if (mustSettleFirst(journal.entries(), settlement.pollNeeded())) {
             if (!settlement.poll()) {
                 String why = settlement.fenced() != null ? "the dev host was stopped: " + settlement.fenced()
