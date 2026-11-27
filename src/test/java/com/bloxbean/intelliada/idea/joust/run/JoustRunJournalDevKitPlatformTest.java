@@ -76,6 +76,13 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
             assertTrue("the Counter's reference script is outstanding on this DevKit: " + pre, pre.isArray() && pre.size() > 0);
             String id = pre.get(0).path("id").textValue();
             var publish = HostJson.object().put("ttlSlots", 120).put("contract", contract).put("prerequisite", id).put("address", payer);
+            // An unsigned body never handed out is discarded through the model; the publication can then be prepared again
+            // (D17, M33B1-DES-2).
+            JsonNode declined = off(() -> s1.build("publish", publish.deepCopy())).path("prepared");
+            off(() -> {
+                s1.discard(declined.path("reservation").textValue());
+                return null;
+            });
             JsonNode prepared = off(() -> s1.build("publish", publish.deepCopy())).path("prepared");
             String cbor = prepared.path("cbor").textValue().toLowerCase(java.util.Locale.ROOT);
             TxCbor.Body body = TxCbor.body(TxCbor.transaction(cbor));
@@ -88,7 +95,7 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
                     JournalStore.Handout.exported, node.getId(), JournalStore.State.prepared, null, null, List.of(), "publish " + id);
             long now = off(s1::now);
             off(() -> {
-                s1.journalForTests().journal().admit(entry, now, now);
+                s1.journalForTests().admit(entry, now, now);
                 return null;
             });
             service.stop(module);
@@ -111,13 +118,32 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
                 assertNotNull(String.valueOf(expected), he);
                 assertEquals("refusal/pending", he.kind() + "/" + he.code());
             }
-            // Discarded (a test's release: the body was never on chain), the publication can be prepared again.
-            JsonNode settled = off(() -> s2.running().session().call("settled", HostJson.object()
-                    .put("reservation", restored.get(0).reservation()).put("txHash", body.txHash()).put("status", "discarded")
-                    .put("tip", now), java.time.Duration.ofSeconds(60), () -> false));
-            assertEquals("discarded", settled.path("state").textValue());
-            JsonNode again = off(() -> s2.build("publish", publish.deepCopy()));
-            assertTrue(again.toString(), again.path("prepared").has("txHash"));
+            // A handed-out body is never discarded (I30): only chain evidence or expiry releases it.
+            try {
+                off(() -> {
+                    s2.discard(restored.get(0).reservation());
+                    return null;
+                });
+                fail("a handed-out body was discarded");
+            } catch (Throwable expected) {
+                assertTrue(String.valueOf(expected), String.valueOf(expected).contains("I30"));
+            }
+            // I33: the same module through another configuration (an alias) of this chain is refused while it runs.
+            RemoteNode alias = new RemoteNode();
+            alias.setId("devkit-journal-alias");
+            alias.setName("DevKit alias");
+            alias.setNodeType(NodeType.LocalYaciDevKit);
+            alias.setApiEndpoint(store);
+            alias.setProtocolMagic("42");
+            nodes.addRemoteNode(alias);
+            try {
+                off(() -> JoustRunSession.start(service, module, JoustRunSession.bind(alias), journalStore, launcher, r -> { }));
+                fail("a second host of the module on one chain");
+            } catch (Throwable expected) {
+                assertTrue(String.valueOf(expected), s2.running().process().isAlive());
+            } finally {
+                nodes.removeRemoteNode(alias);
+            }
             service.stop(module);
             assertTrue(s2.running().process().waitFor(20, TimeUnit.SECONDS));
         } finally {

@@ -211,4 +211,31 @@ public class TxCborTest {
         String hash = HexFormat.of().formatHex(com.bloxbean.cardano.client.crypto.Blake2bUtil.blake2bHash224(HexFormat.of().parseHex("03abcd")));
         assertEquals(Set.of("referenceScript:" + hash, "stakeRegistration:" + cred), b.publishes());
     }
+
+    /** M33B1-CDX-14: a key is matched in full (never narrowed), and is_valid is exactly f4 or f5. */
+    @Test
+    public void keysAreNotNarrowedAndBooleansAreExact() throws Exception {
+        // Key 0x8000000000000003 (an 8-byte head) is not key 3: the body has no upper bound.
+        String body = "a2" + "00" + "81" + "82" + "5820" + TXID + "00" + "1b8000000000000003" + "1864";
+        assertNull(TxCbor.body(TxCbor.transaction(tx(body))).validTo());
+        for (String b : new String[]{"f814", "f815"}) {
+            try {
+                TxCbor.transaction("84" + body() + "a0" + b + "f6");
+                fail("is_valid " + b);
+            } catch (TxCbor.Malformed expected) {
+                // malformed CBOR boolean
+            }
+        }
+    }
+
+    /** M33B1-SEC-3: duplicate checks are linear: 20,000 required signers read quickly. */
+    @Test
+    public void manySignersReadInLinearTime() throws Exception {
+        StringBuilder signers = new StringBuilder("0e" + "99" + String.format("%04x", 20_000));
+        for (int i = 0; i < 20_000; i++) signers.append("581c").append(String.format("%056x", i));
+        String body = "a3" + "00" + "81" + "82" + "5820" + TXID + "00" + "03" + "1864" + signers;
+        long t0 = System.nanoTime();
+        assertEquals(20_000, TxCbor.body(TxCbor.transaction(tx(body))).requiredSigners().size());
+        assertTrue("linear", System.nanoTime() - t0 < 2_000_000_000L);
+    }
 }

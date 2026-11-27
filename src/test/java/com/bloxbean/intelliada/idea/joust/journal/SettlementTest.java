@@ -40,6 +40,9 @@ public class SettlementTest {
     static final class FakeChain implements Settlement.ChainView {
         Tip tip = new Tip(0, 0, "00".repeat(32));
         final Map<String, Inclusion> in = new HashMap<>();
+        /** Tips answered first, one per read, before {@link #tip}; {@code moving} advances the tip by one on every read. */
+        final Deque<Long> next = new ArrayDeque<>();
+        boolean moving;
         int tipReads;
 
         void at(long slot) {
@@ -53,6 +56,8 @@ public class SettlementTest {
         @Override
         public Tip tip() {
             tipReads++;
+            if (!next.isEmpty()) at(next.poll());
+            else if (moving) at(tip.slot() + 1);
             return tip;
         }
 
@@ -82,6 +87,7 @@ public class SettlementTest {
             if (a == null) throw new AssertionError("no answer scripted for " + line);
             if (a instanceof HostError e) throw e;
             if (a instanceof String s && method.equals("settled")) return HostJson.object().put("state", s);
+            if (a instanceof ObjectNode raw) return raw;
             if (a instanceof List<?> ids) {
                 ObjectNode r = HostJson.object();
                 var arr = r.putArray("reservations");
@@ -103,7 +109,7 @@ public class SettlementTest {
     private Settlement settlement(HostTable t) {
         store = store == null ? new JournalStore(tmp.getRoot().toPath().resolve("j")) : store;
         journal = new ChainJournal(store, CHAIN, MOD, 60);
-        return new Settlement(journal, t, chain, host, lastNow::get, clock::get, fence::set);
+        return new Settlement(journal, t, chain, host, lastNow::get, clock::get, ms -> clock.addAndGet(ms * 1_000_000), fence::set);
     }
 
     private static String ref(int n) {
@@ -267,7 +273,7 @@ public class SettlementTest {
         chain.at(2010);
         host.answer("prepared");
         s.poll();
-        assertEquals("settled rolledBack/2010", host.calls.get(2));
+        assertEquals("rolled back at its own inclusion slot (M33B1-CDX-6)", "settled rolledBack/2005", host.calls.get(2));
         Entry e = journal.entries().get(0);
         assertEquals(State.prepared, e.state());
         assertNull(e.inclusion());
@@ -275,7 +281,7 @@ public class SettlementTest {
         ChainJournal.Opening o = new ChainJournal(new JournalStore(store.root()), CHAIN, MOD, 60).open(2010);
         ScriptHost fresh = new ScriptHost().answer(List.of("1"));
         Settlement s2 = new Settlement(new ChainJournal(store, CHAIN, MOD, 60), new HostTable(60, o.restoring()), chain, fresh,
-                lastNow::get, clock::get, fence::set);
+                lastNow::get, clock::get, ms -> clock.addAndGet(ms * 1_000_000), fence::set);
         s2.restore(o);
         assertEquals(List.of("restore complete=true n=1"), fresh.calls);
     }
@@ -287,12 +293,14 @@ public class SettlementTest {
         Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
         chain.at(2100);
         s.poll();
-        chain.at(2050);   // a lagging provider
-        s.poll();
-        s.poll();
+        // A lagging provider: one lower reading, then back at the tip, re-read inside the pass (D14).
+        chain.next.addAll(List.of(2050L, 2050L, 2050L, 2100L));
+        assertFalse("transient: the pass is inconclusive", s.poll());
         assertNull("transient: no rewind", s.rewind());
-        clock.addAndGet(11_000_000_000L);
-        s.poll();
+        long before = clock.get();
+        chain.at(2050);   // now persistently lower: three reads over at least 10 s, inside one pass
+        assertTrue(s.poll());
+        assertTrue("re-read for at least 10 s", clock.get() - before >= 10_000_000_000L);
         assertNull("persistent, touching nothing: the journal and the mark are kept", s.rewind());
         assertNull(fence.get());
         assertEquals(1, journal.entries().size());
@@ -308,11 +316,9 @@ public class SettlementTest {
         s.poll();
         chain.at(2000);
         s.poll();
-        s.poll();
-        clock.addAndGet(11_000_000_000L);
-        s.poll();
         assertNotNull(s.rewind());
         assertNotNull("persisted before any restart", journal.record().rewind());
+        assertTrue("it says the host must be started again", fence.get().contains("start it again"));
         assertNotNull(fence.get());
     }
 
@@ -323,9 +329,6 @@ public class SettlementTest {
         Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
         lastNow.set(5000);
         chain.at(4000);
-        s.poll();
-        s.poll();
-        clock.addAndGet(11_000_000_000L);
         s.poll();
         assertNotNull(s.rewind());
     }
@@ -344,9 +347,6 @@ public class SettlementTest {
         s.poll();
         assertEquals("final and still retained", State.confirmed, journal.entries().get(0).state());
         chain.at(1070);   // a reorg of 30 slots, above the final inclusion's margin (1000 + 60)
-        s.poll();
-        s.poll();
-        clock.addAndGet(11_000_000_000L);
         s.poll();
         assertNull(s.rewind());
     }
@@ -419,5 +419,192 @@ public class SettlementTest {
         st.poll();
         assertFalse(st.restoring());
         assertEquals("restore complete=true n=0", host.calls.get(host.calls.size() - 1));
+    }
+
+    // ---- round 1 (M33B1-*) ------------------------------------------------------------------------------------------------
+
+    private static ObjectNode prepared(String id, String cbor) {
+        try {
+            var b = com.bloxbean.intelliada.idea.joust.tx.TxCbor.body(com.bloxbean.intelliada.idea.joust.tx.TxCbor.transaction(cbor));
+            ObjectNode r = HostJson.object();
+            ObjectNode p = r.putObject("prepared").put("reservation", id).put("cbor", cbor).put("txHash", b.txHash()).put("validTo", b.validTo());
+            if (b.validFrom() == null) p.putNull("validFrom");
+            else p.put("validFrom", b.validFrom());
+            p.putArray("signers");
+            p.putObject("plan");
+            return r;
+        } catch (com.bloxbean.intelliada.idea.joust.tx.TxCbor.Malformed m) {
+            throw new AssertionError(m);
+        }
+    }
+
+    /** M33B1-DES-1: on a provider whose tip moves on every read, restore and settlement still observe the chain. */
+    @Test
+    public void aTipThatMovesOnEveryReadStillHoldsIdenticalAnswers() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        chain.moving = true;
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        chain.include(hash(a), 1991);   // at or below every tip the pass can hold
+        host.answer("shallow");
+        assertTrue("a pass completes on a moving tip", s.poll());
+        assertNull(fence.get());
+        assertEquals(State.shallow, journal.entries().get(0).state());
+    }
+
+    /** M33B1-CDX-16: when no chain point holds, the pass is inconclusive (the caller withholds the next call). */
+    @Test
+    public void aPassWithoutAChainPointIsInconclusive() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s0 = restored(List.of(submitted("1", a)), List.of("1"));
+        java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+        Settlement.ChainView flapping = new Settlement.ChainView() {
+            @Override
+            public Tip tip() {
+                long t = 2000 + n.incrementAndGet();
+                return new Tip(t, t, String.format("%064x", t));
+            }
+
+            @Override
+            public Inclusion inclusion(String txHash) {
+                return n.get() % 2 == 0 ? null : new Inclusion(1999, 1999, "11".repeat(32));
+            }
+        };
+        Settlement s = new Settlement(journal, new HostTable(60, false), flapping, host, lastNow::get, clock::get, ms -> { }, fence::set);
+        assertFalse(s.poll());
+        assertNull(fence.get());
+    }
+
+    /** M33B1-CDX-6: two shallow inclusions vanish together; each is rolled back at its own slot, neither finalized. */
+    @Test
+    public void twoVanishedShallowInclusionsAreBothRolledBack() throws Exception {
+        String a = tx(List.of(ref(1)), 1000), b = tx(List.of(ref(2)), 1000);
+        chain.at(90);
+        Settlement s = restored(List.of(submitted("1", a), submitted("2", b)), List.of("1", "2"));
+        chain.include(hash(a), 100);
+        chain.include(hash(b), 105);
+        chain.at(106);
+        host.answer("shallow", "shallow");
+        s.poll();
+        chain.in.clear();
+        chain.at(175);
+        host.answer("prepared", "prepared");
+        s.poll();
+        assertNull(fence.get());
+        assertEquals(List.of("settled rolledBack/100", "settled rolledBack/105"), host.calls.subList(3, 5));
+        assertEquals(List.of(State.prepared, State.prepared), journal.entries().stream().map(Entry::state).toList());
+    }
+
+    /** M33B1-CDX-8: a call that failed in a kind's own checks (internal/evaluator) leaves its tips uncertain. */
+    @Test
+    public void aFailedCallsTipsAreUncertain() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        t.committed("1", "aa".repeat(32), 0L, 2025);
+        s.beginCall();
+        read(s, "protocolParams", "value", 2100, false);
+        s.endCall("prepare", null, "internal/evaluator");
+        assertEquals(HostTable.St.prepared, t.lower("1").st());
+        assertEquals(HostTable.St.expired, t.upper("1").st());
+    }
+
+    /** M33B1-CDX-9: an accepted read tip that expires a reservation reaches the journal. */
+    @Test
+    public void acceptedReadTipsReachTheJournal() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        s.beginCall();
+        read(s, "utxos", "value", 2100, false);
+        s.endCall("view", null, null);
+        s.sync();
+        assertEquals(State.expired, journal.entries().get(0).state());
+    }
+
+    /** M33B1-CDX-19: a restore reply of another shape fences, even for an empty batch. */
+    @Test
+    public void aMalformedRestoreReplyFences() throws Exception {
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        ChainJournal seed = new ChainJournal(st, CHAIN, MOD, 60);
+        seed.admit(submitted("1", tx(List.of(ref(1)), 100)), 0, 0);
+        store = st;
+        chain.at(5000);   // the body expired long ago: nothing to send, an empty batch completes restore
+        ChainJournal.Opening o = seed.open(5000);
+        Settlement s = settlement(new HostTable(60, o.restoring()));
+        host.answer(HostJson.object().put("reservations", "garbage"));
+        try {
+            s.restore(o);
+            fail("refused");
+        } catch (ChainJournal.Fenced expected) {
+            assertNotNull(fence.get());
+        }
+        assertTrue(s.restoring());
+    }
+
+    /** M33B1-SEC-4: the model takes a body's facts from its bytes; a host stating others is fenced. */
+    @Test
+    public void aHostStatingOtherFactsThanItsBodyIsFenced() throws Exception {
+        HostTable t = new HostTable(60, false);
+        Settlement s = settlement(t);
+        ObjectNode r = prepared("1", tx(List.of(ref(1)), 2025));
+        ((ObjectNode) r.get("prepared")).put("validTo", 9999);
+        s.beginCall();
+        s.endCall("prepare", r, null);
+        assertNotNull(fence.get());
+        assertNull("not committed", t.lower("1"));
+        fence.set(null);
+        HostTable t2 = new HostTable(60, false);
+        Settlement ok = settlement(t2);
+        ok.beginCall();
+        ok.endCall("prepare", prepared("2", tx(List.of(ref(2)), 2025)), null);
+        assertNull(fence.get());
+        assertEquals(2025, t2.lower("2").to());
+    }
+
+    /** M33B1-DES-2: a body never handed out is discarded through the model; a handed-out one is refused (I30). */
+    @Test
+    public void onlyABodyNeverHandedOutIsDiscarded() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        try {
+            s.discard("1");
+            fail("a submitted body was discarded");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("I30"));
+        }
+        s.beginCall();
+        s.endCall("prepare", prepared("2", tx(List.of(ref(2)), 2025)), null);
+        host.answer("discarded");
+        s.discard("2");
+        assertEquals("settled discarded/1990", host.calls.get(host.calls.size() - 1));
+        assertNull(fence.get());
+        try {
+            s.discard("2");
+            fail("discarded twice");
+        } catch (ChainJournal.Fenced expected) {
+            // only a prepared body
+        }
+    }
+
+    /** M33B1-CDX-10: a module whose own journal is unreadable recovers strictly above the mark; the file is kept aside. */
+    @Test
+    public void aModuleRecoversItsOwnUnreadableJournalAboveTheMark() throws Exception {
+        JournalStore st = new JournalStore(tmp.getRoot().toPath().resolve("j"));
+        new ChainJournal(st, CHAIN, MOD, 60).admit(submitted("1", tx(List.of(ref(1)), 500)), 0, 0);
+        java.nio.file.Path f = st.journalFile(JournalStore.key(CHAIN), MOD);
+        java.nio.file.Files.writeString(f, "{broken");
+        store = st;
+        ChainJournal.Opening o = new ChainJournal(st, CHAIN, MOD, 60).open(600);
+        assertEquals(ChainJournal.History.LOST_JOURNAL, o.history());
+        assertEquals(560L, (long) o.completeAbove());
+        chain.at(600);
+        Settlement s = settlement(new HostTable(60, true));
+        host.answer(List.of());
+        s.restore(o);   // 600 > 560: restore completes at once, and the unreadable file is moved aside
+        assertFalse(s.restoring());
+        assertFalse(java.nio.file.Files.exists(f));
+        assertTrue(journal.observed(601));
     }
 }

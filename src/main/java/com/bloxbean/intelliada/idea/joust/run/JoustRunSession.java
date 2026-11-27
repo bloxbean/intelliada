@@ -101,28 +101,47 @@ public final class JoustRunSession {
                                         @Nullable com.bloxbean.intelliada.idea.joust.journal.JournalStore store, Launcher launcher,
                                         java.util.function.Consumer<JoustHostService.Running> adopted) throws Exception {
         JoustRunJournal fresh = service.running(moduleDir) == null ? JoustRunJournal.open(b, moduleDir, store) : null;
-        boolean owned = false;
+        JoustHostService.Running r = null;
+        boolean owned = false, done = false;
         try {
             ObjectNode init = fresh != null ? JoustRunJournal.initParams(b.identity(), fresh.restoring()) : initParams(b.identity());
             HostSession.Reads reads = fresh != null ? fresh.reads(reads(b)) : reads(b);
-            JoustHostService.Running r = launcher.launch(init, b.key(), reads);
+            r = launcher.launch(init, b.key(), reads);
             adopted.accept(r);
             owned = fresh != null && JOURNALS.putIfAbsent(r.session(), fresh) == null;
             JoustRunSession made = new JoustRunSession(b, r);
             made.verifyCatalog();   // the host's catalog is the build's, or the host is stopped (M33A-CDX-2)
             if (owned) {
-                try {
-                    synchronized (made.clock) {
-                        fresh.started(r.session(), made.clock);
-                    }
-                } catch (Exception e) {
-                    made.stopHost();
-                    throw e;
+                // The model's margin is the one the host was initialized with (M33B1-DES-7).
+                if (r.requested().path("time").path("settlementSlots").asLong(-1) != fresh.settlementSlots()) {
+                    throw new NetworkIdentity.Refused("the dev host was initialized with another settlement margin than IntelliAda's journal");
+                }
+                synchronized (made.clock) {
+                    fresh.started(r.session(), made.clock, made::checkBinding);
                 }
             }
+            done = true;
             return made;
         } finally {
-            if (fresh != null && !owned) fresh.close();
+            if (!done) {
+                // Every startup failure releases the module's lock and its journal (M33B1-CDX-17).
+                if (owned) {
+                    JOURNALS.remove(r.session());
+                    service.stop(moduleDir);
+                }
+            }
+            if (fresh != null && (!owned || !done)) fresh.close();
+        }
+    }
+
+    /**
+     * Discards a body the host prepared that was never handed out (D17): checked against the host-table model, its
+     * journal entry removed. A handed-out body is refused: chain evidence or expiry releases it (I30).
+     */
+    void discard(String reservation) throws Exception {
+        if (journal == null) throw new NetworkIdentity.Refused(journalBlocks());
+        synchronized (clock) {
+            journal.discard(reservation);
         }
     }
 
@@ -231,9 +250,10 @@ public final class JoustRunSession {
         n.putArray("protocol").add(1);
         n.putObject("network").put("networkId", id.networkId()).put("protocolMagic", id.magic()).put("mainnet", false);
         n.putObject("clock").put("zeroSlot", id.zeroSlot()).put("zeroTimeMs", id.zeroTimeMs()).put("slotLengthMs", id.slotLengthMs());
-        boolean devnet = id.networkClass() == NetworkIdentity.NetworkClass.DEVNET;
-        int ttl = devnet ? Math.min(900, id.horizonSlots()) : 7200;
-        n.putObject("time").put("maxTtlSlots", ttl).put("settlementSlots", devnet ? 60 : 2160).put("maxNowAheadSlots", 900);
+        // D14b, from the one policy the journal also uses (M33B1-DES-7).
+        n.putObject("time").put("maxTtlSlots", com.bloxbean.intelliada.idea.joust.journal.TimePolicy.maxTtlSlots(id))
+                .put("settlementSlots", com.bloxbean.intelliada.idea.joust.journal.TimePolicy.settlementSlots(id.networkClass()))
+                .put("maxNowAheadSlots", com.bloxbean.intelliada.idea.joust.journal.TimePolicy.MAX_NOW_AHEAD);
         n.putObject("limits").put("callDeadlineMs", 60000).put("readsPerCall", 256).put("readBytesPerCall", BYTES_PER_CALL);
         n.put("restoring", false);
         return n;

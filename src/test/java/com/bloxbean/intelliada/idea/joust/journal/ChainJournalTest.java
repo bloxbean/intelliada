@@ -47,11 +47,11 @@ public class ChainJournalTest {
     public void anAdmissionWritesTheEntryTheMarkAndTheRegistry() throws Exception {
         JournalStore s = store();
         ChainJournal a = j(s, MOD_A);
-        assertEquals("new chain", a.open(100).history());
+        assertEquals(ChainJournal.History.NEW_CHAIN, a.open(100).history());
         a.admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 120, 130);
         String k = JournalStore.key(CHAIN);
         assertEquals(1060L, (long) s.record(k).value().mark());
-        assertEquals(Set.of(MOD_A), s.record(k).value().modules());
+        assertEquals(Set.of(MOD_A), s.record(k).value().modules().keySet());
         assertEquals(120, s.registry(k).value().highestTip());
         assertEquals(130, s.registry(k).value().highestNow());
         assertEquals(1, a.entries().size());
@@ -82,7 +82,7 @@ public class ChainJournalTest {
         j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
         // A new IDE process: the entry survives and the host starts restoring, with complete history.
         ChainJournal.Opening o = j(new JournalStore(s.root()), MOD_A).open(10);
-        assertEquals("complete", o.history());
+        assertEquals(ChainJournal.History.COMPLETE, o.history());
         assertTrue(o.restoring());
         assertNull(o.completeAbove());
         assertEquals(1, o.survivors().size());
@@ -171,7 +171,7 @@ public class ChainJournalTest {
         Files.delete(s.journalFile(JournalStore.key(CHAIN), MOD_B));
         ChainJournal a = j(new JournalStore(s.root()), MOD_A);
         ChainJournal.Opening o = a.open(500);
-        assertEquals("lost journal", o.history());
+        assertEquals(ChainJournal.History.LOST_JOURNAL, o.history());
         assertEquals(2060L, (long) o.completeAbove());
         assertEquals(1, o.survivors().size());
         // Persisted: building waits for a tip strictly above the mark.
@@ -184,7 +184,7 @@ public class ChainJournalTest {
         }
         assertTrue(a.observed(2061));
         assertEquals("the lost module leaves the record once its history settled", Set.of(MOD_A),
-                s.record(JournalStore.key(CHAIN)).value().modules());
+                s.record(JournalStore.key(CHAIN)).value().modules().keySet());
         a.admit(submitted("9", tx(List.of(ref(9, 0)), 3000)), 2061, 2061);
     }
 
@@ -196,7 +196,7 @@ public class ChainJournalTest {
         Files.writeString(f, "{not json");
         ChainJournal a = j(s, MOD_A);
         ChainJournal.Opening o = a.open(10);
-        assertEquals("lost journal", o.history());
+        assertEquals(ChainJournal.History.LOST_JOURNAL, o.history());
         assertTrue(o.survivors().isEmpty());
         assertTrue(a.observed(1061));
         assertFalse("moved aside", Files.exists(f));
@@ -211,7 +211,7 @@ public class ChainJournalTest {
         j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 300, 310);
         Files.delete(s.recordFile(JournalStore.key(CHAIN)));
         ChainJournal.Opening o = j(s, MOD_A).open(200);
-        assertEquals("lost mark", o.history());
+        assertEquals(ChainJournal.History.LOST_MARK, o.history());
         // base: the highest of the registry's tip and now (310), the journal's validTo (1000) and the tip now (200).
         assertEquals(1000 + 900 + 7200 + 60, (long) o.completeAbove());
         assertEquals(o.completeAbove(), s.record(JournalStore.key(CHAIN)).value().mark());
@@ -227,7 +227,7 @@ public class ChainJournalTest {
         Files.delete(s.recordFile(k));
         Files.delete(s.journalFile(k, MOD_A));
         ChainJournal.Opening o = new ChainJournal(s, pub, MOD_A, 2160).open(70_000);
-        assertEquals("lost mark", o.history());
+        assertEquals(ChainJournal.History.LOST_MARK, o.history());
         assertEquals(80_100 + 900 + 7200 + 2160, (long) o.completeAbove());
     }
 
@@ -248,7 +248,7 @@ public class ChainJournalTest {
         long bound = j(s, MOD_A).open(0).completeAbove();
         // Right after writing the replacement: the next open is not complete history.
         ChainJournal.Opening again = j(new JournalStore(s.root()), MOD_A).open(0);
-        assertEquals("fenced", again.history());
+        assertEquals(ChainJournal.History.FENCED, again.history());
         assertEquals(bound, (long) again.completeAbove());
     }
 
@@ -284,7 +284,7 @@ public class ChainJournalTest {
         j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 5000)), 0, 0);
         Files.write(s.recordFile(k), old);   // a backup of the record from before the second admission
         ChainJournal.Opening o = j(s, MOD_A).open(0);
-        assertEquals("lost mark", o.history());
+        assertEquals(ChainJournal.History.LOST_MARK, o.history());
         assertEquals(5000 + 900 + 7200 + 60, (long) o.completeAbove());
     }
 
@@ -346,6 +346,209 @@ public class ChainJournalTest {
                 String text = Files.readString(p);
                 assertFalse(p.toString(), text.contains("mnemonic") || text.contains("signingKey") || text.contains("xprv"));
             }
+        }
+    }
+
+    // ---- round 1 (M33B1-*) ------------------------------------------------------------------------------------------------
+
+    private static void backup(Path dir, Path to) throws Exception {
+        try (var w = Files.walk(dir)) {
+            for (Path p : (Iterable<Path>) w::iterator) {
+                Path t = to.resolve(dir.relativize(p).toString());
+                if (Files.isDirectory(p)) Files.createDirectories(t);
+                else if (!p.getFileName().toString().equals("lock") && !p.getFileName().toString().endsWith(".host")) {
+                    Files.copy(p, t, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    /** M33B1-SEC-1: a restored stale chain directory beside an unreadable (or missing) registry entry is a lost mark. */
+    @Test
+    public void aStaleChainDirectoryBesideABrokenRegistryEntryIsALostMark() throws Exception {
+        for (boolean delete : List.of(false, true)) {
+            JournalStore s = new JournalStore(tmp.newFolder().toPath());
+            String k = JournalStore.key(CHAIN);
+            j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+            Path dir = s.recordFile(k).getParent(), saved = tmp.newFolder().toPath();
+            backup(dir, saved);
+            j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 5000)), 0, 0);
+            backup(saved, dir);
+            if (delete) Files.delete(s.registryFile(k));
+            else Files.writeString(s.registryFile(k), "{trunc");
+            ChainJournal.Opening o = j(s, MOD_A).open(0);
+            assertEquals(String.valueOf(delete), ChainJournal.History.LOST_MARK, o.history());
+            try {
+                j(s, MOD_A).admit(submitted("3", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+                fail("the stale history was taken as complete");
+            } catch (ChainJournal.Fenced expected) {
+                // fenced until the derived bound
+            }
+        }
+    }
+
+    /** M33B1-SEC-2: admission classifies as open does (record missing, registry unreadable, no journal: refused). */
+    @Test
+    public void admissionRefusesWhatOpenWouldFence() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).open(0);
+        Files.createDirectories(s.registryFile(k).getParent());
+        Files.writeString(s.registryFile(k), "not json");
+        try {
+            j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+            fail("admitted beside an unreadable registry entry");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+    }
+
+    /** M33B1-CDX-1: a listed module's journal that disappeared blocks admission on the chain, as open would. */
+    @Test
+    public void aMissingListedJournalBlocksAdmission() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        j(s, MOD_B).open(0);
+        Files.delete(s.journalFile(JournalStore.key(CHAIN), MOD_A));
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+            fail("B spent A's reserved input");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("journal"));
+        }
+    }
+
+    /** M33B1-CDX-2, -DES-8: a module journal restored from before its last admission is lost history. */
+    @Test
+    public void anOlderModuleJournalIsLostHistory() throws Exception {
+        JournalStore s = store();
+        Path f = s.journalFile(JournalStore.key(CHAIN), MOD_A);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        byte[] old = Files.readAllBytes(f);
+        j(s, MOD_A).admit(submitted("2", tx(List.of(ref(2, 0)), 2000)), 0, 0);
+        Files.write(f, old);
+        ChainJournal.Opening o = j(s, MOD_A).open(0);
+        assertEquals(ChainJournal.History.LOST_JOURNAL, o.history());
+        assertEquals(2060L, (long) o.completeAbove());
+        try {
+            j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+            fail("B spent the input of A's lost entry");
+        } catch (ChainJournal.Fenced expected) {
+            // fenced
+        }
+    }
+
+    /** M33B1-CDX-3: recovery never lowers a bound: the registry is rebuilt only from the derived base. */
+    @Test
+    public void aRebuiltRegistryKeepsTheBoundConservative() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 100_000)), 90_000, 90_000);
+        Files.delete(s.registryFile(k));
+        long first = j(s, MOD_A).open(100).completeAbove();
+        assertTrue("covers the handed-out body: " + first, first > 100_060);
+        Files.delete(s.recordFile(k));
+        Files.delete(s.journalFile(k, MOD_A));
+        long second = j(s, MOD_A).open(100).completeAbove();
+        assertTrue("a later loss derives no lower bound: " + second + " < " + first, second >= first);
+    }
+
+    /** M33B1-CDX-18: a record that lists handouts without a mark is unreadable, never a fence at slot 0. */
+    @Test
+    public void aRecordWithModulesAndNoMarkIsNotAZeroFence() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 500)), 0, 0);
+        Path r = s.recordFile(k);
+        Files.writeString(r, Files.readString(r).replace("\"mark\" : 560", "\"mark\" : null"));
+        assertTrue(s.record(k).lost());
+        ChainJournal.Opening o = j(s, MOD_A).open(0);
+        assertEquals(ChainJournal.History.LOST_MARK, o.history());
+        assertTrue(o.completeAbove() > 500);
+    }
+
+    /** M33B1-CDX-11: restoring nothing for a module without a journal writes no file. */
+    @Test
+    public void anEmptyRestoreMakesNoJournalFile() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        j(s, MOD_B).replace(List.of());
+        assertFalse(Files.exists(s.journalFile(JournalStore.key(CHAIN), MOD_B)));
+        assertEquals(ChainJournal.History.COMPLETE, j(s, MOD_A).open(0).history());
+    }
+
+    /** M33B1-CDX-13: an entry that would not read back is refused before anything is written. */
+    @Test
+    public void anEntryThatWouldNotReadBackIsRefused() throws Exception {
+        JournalStore s = store();
+        Entry good = submitted("1", tx(List.of(ref(1, 0)), 1000));
+        Entry bad = new Entry(good.reservation(), good.txHash(), good.cbor(), 3L, good.validTo(), good.handout(), good.node(), good.state(),
+                null, null, List.of(), good.label());
+        try {
+            j(s, MOD_A).admit(bad, 0, 0);
+            fail("admitted");
+        } catch (ChainJournal.Fenced expected) {
+            // refused
+        }
+        assertFalse(Files.exists(s.recordFile(JournalStore.key(CHAIN))));
+        String big = tx(List.of(ref(1, 0)), 1000);
+        assertTrue(big.length() < 2 * JournalStore.MAX_BODY_BYTES);
+    }
+
+    /** M33B1-CDX-5: one module's restore does not clear a rewind another module must still reconcile. */
+    @Test
+    public void aRewindClearsOnlyOnceEveryModuleReconciled() throws Exception {
+        JournalStore s = store();
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+        j(s, MOD_A).beginRewind(500, "test");
+        j(s, MOD_B).endRewind();
+        assertNotNull("A still pending", j(s, MOD_A).record().rewind());
+        try {
+            j(s, MOD_B).admit(submitted("2", tx(List.of(ref(3, 0)), 1000)), 0, 0);
+            fail("admitted while A reconciles");
+        } catch (ChainJournal.Fenced expected) {
+            // closed
+        }
+        j(s, MOD_A).endRewind();
+        assertNull(j(s, MOD_A).record().rewind());
+    }
+
+    /** M33B1-DES-6 (I33): a module's host lock admits one owner, in this IDE and across store spellings. */
+    @Test
+    public void aModulesHostLockAdmitsOneOwner() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        JournalStore.Held first = s.ownModule(k, MOD_A);
+        try {
+            new JournalStore(s.root()).ownModule(k, MOD_A);
+            fail("a second owner");
+        } catch (JournalStore.StoreFailed expected) {
+            // refused, without touching the first owner's descriptor
+        }
+        JournalStore.Held other = s.ownModule(k, MOD_B);   // another module of the chain runs beside it
+        other.close();
+        first.close();
+        s.ownModule(k, MOD_A).close();   // released
+    }
+
+    /** M33B1-DES-6 (I33): restarting one module's host leaves another module's reservations untouched. */
+    @Test
+    public void restartingOneHostLeavesAnothersReservationUntouched() throws Exception {
+        JournalStore s = store();
+        String k = JournalStore.key(CHAIN);
+        j(s, MOD_A).admit(submitted("1", tx(List.of(ref(1, 0)), 1000)), 0, 0);
+        j(s, MOD_B).admit(submitted("1", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+        byte[] before = Files.readAllBytes(s.journalFile(k, MOD_B));
+        ChainJournal a = j(s, MOD_A);
+        ChainJournal.Opening o = a.open(10);
+        a.replace(List.of(o.survivors().get(0).withReservation("7")));
+        assertArrayEquals(before, Files.readAllBytes(s.journalFile(k, MOD_B)));
+        try {
+            j(s, MOD_A).admit(submitted("8", tx(List.of(ref(2, 0)), 1000)), 0, 0);
+            fail("B's reservation was released");
+        } catch (ChainJournal.Fenced expected) {
+            // still reserved
         }
     }
 }

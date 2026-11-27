@@ -53,7 +53,10 @@ public final class Settlement {
     /** D14: a lower tip counts as persistent after this many consecutive readings over at least {@link #PERSIST_NANOS}. */
     static final int PERSIST_READS = 3;
     static final long PERSIST_NANOS = 10_000_000_000L;
-    static final int OBSERVE_ATTEMPTS = 5;
+    static final int OBSERVE_ATTEMPTS = 8;
+    /** Between re-reads of a lower tip inside one pass (D14: three reads over at least 10 s). */
+    static final long PERSIST_GAP_MS = 2_000;
+    static final int PERSIST_MAX_READS = 12;
     /** Restore batches stay well inside the protocol's 4 MiB frame. */
     static final int BATCH_BYTES = 1024 * 1024;
 
@@ -61,10 +64,6 @@ public final class Settlement {
     static final String FINAL = "~";
 
     static final Set<String> BASE_KINDS = Set.of("utxos", "output", "tip", "protocolParams", "script", "stakeRegistration");
-    /** Host error codes whose call's read tips are uncertain (D17, ADR5-CDX-23). */
-    static final Set<String> READ_ERRORS = Set.of("bad/readLimit", "bad/nowImplausible", "internal/chainMoved",
-            "internal/inconsistentRead", "internal/readFailed", "internal/cancelled", "internal/deadline", "internal/transport",
-            "internal/need");
 
     private final ChainJournal journal;
     private final HostTable table;
@@ -73,14 +72,18 @@ public final class Settlement {
     private final long margin;
     private final LongSupplier lastNow;
     private final LongSupplier nanos;
+    private final Sleeper sleeper;
     private final Consumer<String> onFence;
+
+    /** Waits between the re-reads of a lower tip (tests advance a fake clock instead). */
+    @FunctionalInterface
+    public interface Sleeper {
+        void sleep(long millis) throws InterruptedException;
+    }
 
     private volatile @Nullable String fenced;
     private volatile @Nullable String rewind;
-    private ChainView.Tip highest;
-    private ChainView.Tip lowerFirst;
-    private long lowerSince;
-    private int lowerCount;
+    private volatile ChainView.Tip highest;
     /** Inclusions recorded in the journal that the host has not acknowledged yet. */
     private final Set<String> unreported = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile boolean needPoll;
@@ -99,7 +102,7 @@ public final class Settlement {
      * @param onFence stops the host with the reason (its reservations stay journaled; a new host is restored)
      */
     public Settlement(ChainJournal journal, HostTable table, ChainView chain, Host host, LongSupplier lastNow, LongSupplier nanos,
-                      Consumer<String> onFence) {
+                      Sleeper sleeper, Consumer<String> onFence) {
         this.journal = journal;
         this.table = table;
         this.chain = chain;
@@ -107,6 +110,7 @@ public final class Settlement {
         this.margin = journal.settlementSlots();
         this.lastNow = lastNow;
         this.nanos = nanos;
+        this.sleeper = sleeper;
         this.onFence = onFence;
     }
 
@@ -118,6 +122,12 @@ public final class Settlement {
     /** A rewind found on this chain: the outstanding reconciliation is persisted; hosts must restart restored. */
     public @Nullable String rewind() {
         return rewind;
+    }
+
+    /** The highest tip this session observed (0 before any). */
+    public long highestSlot() {
+        ChainView.Tip h = highest;
+        return h == null ? 0 : h.slot();
     }
 
     /** Whether restore is still open on the host (building refused until it completes). */
@@ -146,6 +156,8 @@ public final class Settlement {
      * last batch completes restore unless {@code completeAbove} holds it open until a tip strictly passes it.
      */
     public synchronized void restore(ChainJournal.Opening opening) throws Exception {
+        JournalStore.ChainRecord atStart = journal.record();
+        reconciling = atStart == null ? null : atStart.rewind();
         if (!opening.restoring()) return;
         completeAbove = opening.completeAbove();
         restoreOpen = true;
@@ -199,14 +211,23 @@ public final class Settlement {
         JsonNode r = host.call("restore", p);
         List<String> ids = new ArrayList<>();
         JsonNode rs = r == null ? null : r.get("reservations");
-        if (rs != null && rs.isArray()) for (JsonNode x : rs) ids.add(x.isTextual() ? x.textValue() : null);
-        if (rs == null || !table.restored(model, ids, complete)) {
+        // The protocol's shape exactly (M33B1-CDX-19): one object holding an array of strings, one per transaction.
+        boolean shaped = r != null && r.isObject() && r.size() == 1 && rs != null && rs.isArray() && rs.size() == batch.size();
+        if (shaped) for (JsonNode x : rs) ids.add(x.isTextual() ? x.textValue() : null);
+        if (!shaped || !table.restored(model, ids, complete)) {
             fence("its restore did not give one consistent reservation per transaction");
             throw new ChainJournal.Fenced("the dev host's restore was not consistent; the journal is kept");
         }
         List<Entry> out = new ArrayList<>();
         for (int i = 0; i < batch.size(); i++) out.add(batch.get(i).withReservation(ids.get(i)));
         return out;
+    }
+
+    /** The rewind outstanding when this host was restored: it reconciled that one (and keeps running while others do). */
+    private @Nullable JournalStore.Rewind reconciling;
+
+    private static boolean same(@Nullable JournalStore.Rewind a, @Nullable JournalStore.Rewind b) {
+        return a != null && b != null && a.tip() == b.tip() && a.reason().equals(b.reason());
     }
 
     private void completed(long t) throws Exception {
@@ -238,20 +259,31 @@ public final class Settlement {
     record Observation(ChainView.Tip tip, Map<String, Inclusion> inclusions) {
     }
 
-    /** Every listed body's inclusion, read between two equal chain points; null when the chain kept moving. */
+    /**
+     * Every listed body's inclusion at one chain point (ADR-005 §12 E1, M33B1-DES-1): tip, inclusions, tip; equal tips
+     * hold the answers; otherwise the inclusions are read again, and answers identical before and after the later tip
+     * hold at that tip (a busy provider rarely answers two equal tips in a row). Null when no point held.
+     */
     private @Nullable Observation observe(List<Entry> entries) throws Exception {
+        ChainView.Tip a = chain.tip();
+        Map<String, Inclusion> seen = inclusions(entries);
         for (int attempt = 0; attempt < OBSERVE_ATTEMPTS; attempt++) {
-            ChainView.Tip a = chain.tip();
-            Map<String, Inclusion> seen = new HashMap<>();
-            for (Entry e : entries) {
-                if (seen.containsKey(e.txHash())) continue;
-                Inclusion in = chain.inclusion(e.txHash());
-                seen.put(e.txHash(), in);
-            }
             ChainView.Tip b = chain.tip();
-            if (a.equals(b)) return new Observation(a, seen);
+            if (a.equals(b)) return new Observation(b, seen);
+            Map<String, Inclusion> again = inclusions(entries);
+            if (again.equals(seen)) return new Observation(b, again);
+            a = b;
+            seen = again;
         }
         return null;
+    }
+
+    private Map<String, Inclusion> inclusions(List<Entry> entries) throws Exception {
+        Map<String, Inclusion> seen = new HashMap<>();
+        for (Entry e : entries) {
+            if (!seen.containsKey(e.txHash())) seen.put(e.txHash(), chain.inclusion(e.txHash()));
+        }
+        return seen;
     }
 
     // ---- polling ------------------------------------------------------------------------------------------------------
@@ -260,27 +292,50 @@ public final class Settlement {
      * One settlement pass (D17): before any forward call while entries are live or an inclusion is unreported, and at
      * least every {@code settlementSlots/2} slots. A fenced host or one with a rewind pending does nothing.
      */
-    public synchronized void poll() throws Exception {
-        if (fenced != null || rewind != null) return;
+    /**
+     * @return whether the pass completed against a chain point; false when no point held or a lower tip is still being
+     * resolved (the caller withholds the next forward call while anything is live; M33B1-CDX-16)
+     */
+    public synchronized boolean poll() throws Exception {
+        if (fenced != null || rewind != null) return false;
+        // A rewind another host of this chain found stops this one too, unless this host was restored after it (D14:
+        // every live host on the chain; M33B1-DES-3, -CDX-5).
+        JournalStore.ChainRecord rec = journal.record();
+        if (rec != null && rec.rewind() != null && !restoreOpen && !same(rec.rewind(), reconciling)) {
+            rewind = rec.rewind().reason();
+            fence("a rewind on this chain is being reconciled (" + rec.rewind().reason() + ")");
+            return false;
+        }
         List<Entry> entries = journal.entries();
         if (entries.isEmpty() && !restoreOpen) {
             needPoll = false;
-            return;
+            return true;
         }
         Observation o = observe(entries);
-        if (o == null) return;   // the chain kept moving: next pass
+        if (o == null) return false;   // no chain point held: the next pass reads again
         String trigger = rewindTrigger(o, entries);
-        if (trigger == TRANSIENT) return;
+        if (trigger == TRANSIENT) return false;   // the lower tip recovered while it was re-read: read again
         if (trigger != null) {
-            // Persisted before anything else (D17 "Rewind"): the hosts are restarted restored from the re-read chain.
+            // Persisted before anything else (D17 "Rewind"); every host on the chain stops, and a new one is restored
+            // from the re-read chain when the user starts it again (M33B1-DES-4).
             journal.beginRewind(o.tip.slot(), trigger);
             rewind = trigger;
-            fence(trigger + "; the dev host is restarted and restored");
-            return;
+            fence(trigger + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
+            return false;
         }
         if (highest == null || o.tip.slot() >= highest.slot()) highest = o.tip;
         long t = o.tip.slot();
-        // 1. Newly seen inclusions first, in slot order, each with its own slot as tip (ADR5-CDX-25).
+        // 1. A shallow inclusion the chain no longer shows: rolled back (its inputs stay reserved). Reported at its own
+        //    inclusion slot, a tip the host already holds, so the event finalizes no other body (M33B1-CDX-6).
+        for (Entry e : journal.entries()) {
+            HostTable.Res r = table.lower(e.reservation());
+            if (r != null && r.st() == HostTable.St.shallow && o.inclusions.containsKey(e.txHash()) && o.inclusions.get(e.txHash()) == null) {
+                journal.update(e.reservation(), x -> x.withInclusion(null).withEvent("rolledBack@" + t));
+                settle(e, "rolledBack", null, r.slot());
+                if (fenced != null) return false;
+            }
+        }
+        // 2. Newly seen inclusions, in slot order, each with its own slot as tip (ADR5-CDX-25).
         List<Entry> landed = new ArrayList<>();
         for (Entry e : entries) {
             HostTable.Res r = table.lower(e.reservation());
@@ -295,16 +350,7 @@ public final class Settlement {
             unreported.add(e.reservation());
             settle(e, "confirmed", e.inclusion().slot(), e.inclusion().slot());
             unreported.remove(e.reservation());
-            if (fenced != null) return;
-        }
-        // 2. A shallow inclusion the chain no longer shows: rolled back (its inputs stay reserved).
-        for (Entry e : journal.entries()) {
-            HostTable.Res r = table.lower(e.reservation());
-            if (r != null && r.st() == HostTable.St.shallow && o.inclusions.containsKey(e.txHash()) && o.inclusions.get(e.txHash()) == null) {
-                journal.update(e.reservation(), x -> x.withInclusion(null).withEvent("rolledBack@" + t));
-                settle(e, "rolledBack", null, t);
-                if (fenced != null) return;
-            }
+            if (fenced != null) return false;
         }
         // 3. The thresholds this tip reaches (none while restore is open: the host applies none, and refuses expiry).
         for (Entry e : table.reconciling() ? List.<Entry>of() : journal.entries()) {
@@ -312,7 +358,7 @@ public final class Settlement {
             if (r == null) continue;
             if (r.st() == HostTable.St.shallow && t - r.slot() > margin) settle(e, "confirmed", r.slot(), t);
             else if (r.st() == HostTable.St.prepared && o.inclusions.get(e.txHash()) == null && t - r.to() > margin) settle(e, "expired", null, t);
-            if (fenced != null) return;
+            if (fenced != null) return false;
         }
         // 4. Final entries past their retention leave the journal.
         Set<String> drop = new HashSet<>();
@@ -326,6 +372,7 @@ public final class Settlement {
             journal.observed(t);
         }
         needPoll = false;
+        return true;
     }
 
     private static final String TRANSIENT = new String("transient");
@@ -335,7 +382,7 @@ public final class Settlement {
      * after {@link #PERSIST_READS} consecutive readings over {@link #PERSIST_NANOS}. A fork at a recorded inclusion (the
      * body at another slot or block, or a final inclusion gone) triggers at once.
      */
-    private @Nullable String rewindTrigger(Observation o, List<Entry> entries) {
+    private @Nullable String rewindTrigger(Observation o, List<Entry> entries) throws Exception {
         for (Entry e : entries) {
             Inclusion was = e.inclusion();
             if (was == null || !o.inclusions.containsKey(e.txHash())) continue;
@@ -346,23 +393,19 @@ public final class Settlement {
             if (now == null && finalNow) return "a final inclusion (" + e.label() + ") is no longer on the chain";
         }
         ChainView.Tip t = o.tip;
-        boolean lower = highest != null && (t.slot() < highest.slot() || t.height() < highest.height()
-                || (t.slot() == highest.slot() && !t.hash().equals(highest.hash())));
-        if (!lower) {
-            lowerFirst = null;
-            lowerCount = 0;
-            return null;
+        if (!lower(t)) return null;
+        // D14: first a transient read. Re-read inside this pass (forward calls wait) until three consecutive lower reads
+        // span at least 10 s; a reading back at or above the highest tip resolves it as transient (M33B1-DES-3).
+        long since = nanos.getAsLong();
+        int reads = 1;
+        while (reads < PERSIST_READS || nanos.getAsLong() - since < PERSIST_NANOS) {
+            if (reads >= PERSIST_MAX_READS) return TRANSIENT;
+            sleeper.sleep(PERSIST_GAP_MS);
+            ChainView.Tip again = chain.tip();
+            reads++;
+            if (!lower(again)) return TRANSIENT;
+            t = again;
         }
-        if (lowerFirst == null) {
-            lowerFirst = t;
-            lowerSince = nanos.getAsLong();
-            lowerCount = 1;
-            return TRANSIENT;
-        }
-        lowerCount++;
-        if (lowerCount < PERSIST_READS || nanos.getAsLong() - lowerSince < PERSIST_NANOS) return TRANSIENT;
-        lowerFirst = null;
-        lowerCount = 0;
         long tip = t.slot();
         for (Entry e : entries) {
             if (e.inclusion() != null && (e.inclusion().slot() > tip || tip - e.inclusion().slot() <= margin)) {
@@ -370,15 +413,24 @@ public final class Settlement {
             }
             if (e.state() == State.expired && e.validTo() > tip) return "the chain went back to slot " + tip + ", where an expired body can land again";
         }
-        if (lastNow.getAsLong() - tip > ChainJournal.MAX_NOW_AHEAD) return "the chain went back to slot " + tip + ", far below the session's now";
+        if (lastNow.getAsLong() - tip > TimePolicy.MAX_NOW_AHEAD) return "the chain went back to slot " + tip + ", far below the session's now";
         highest = t;   // a lower tip that touches nothing: the new baseline (I31: the journal and the mark are kept)
         return null;
     }
 
+    private boolean lower(ChainView.Tip t) {
+        return highest != null && (t.slot() < highest.slot() || t.height() < highest.height()
+                || (t.slot() == highest.slot() && !t.hash().equals(highest.hash())));
+    }
+
     /** Sends one {@code settled} event and checks the reply against the model (I32); a disagreement fences the host. */
-    private void settle(Entry e, String status, @Nullable Long slot, long tip) throws Exception {
-        HostTable.Expected x = table.expect(e.reservation(), e.txHash(), status, slot, tip);
-        ObjectNode p = HostJson.object().put("reservation", e.reservation()).put("txHash", e.txHash()).put("status", status);
+    private boolean settle(Entry e, String status, @Nullable Long slot, long tip) throws Exception {
+        return settle(e.reservation(), e.txHash(), status, slot, tip);
+    }
+
+    private boolean settle(String reservation, String txHash, String status, @Nullable Long slot, long tip) throws Exception {
+        HostTable.Expected x = table.expect(reservation, txHash, status, slot, tip);
+        ObjectNode p = HostJson.object().put("reservation", reservation).put("txHash", txHash).put("status", status);
         if (slot != null) p.put("slot", slot);
         p.put("tip", tip);
         boolean ok;
@@ -399,9 +451,9 @@ public final class Settlement {
             ok = table.reply(x, null, got);
         }
         if (!ok) {
-            fence("it answered " + got + " to " + status + " of " + e.txHash().substring(0, 16) + "…, where the chain shows "
+            fence("it answered " + got + " to " + status + " of " + txHash.substring(0, 16) + "…, where the chain shows "
                     + describe(x.lower()) + (x.certain() ? "" : " or " + describe(x.upper())));
-            return;
+            return false;
         }
         String note = status + (slot == null ? "" : "@" + slot) + " tip " + tip;
         // The event's tip applied to every reservation of the host: the journal takes each changed state.
@@ -409,11 +461,37 @@ public final class Settlement {
             HostTable.Res r = table.lower(j.reservation());
             if (r == null) continue;
             State js = State.valueOf(r.st().name());
-            boolean self = j.reservation().equals(e.reservation());
+            boolean self = j.reservation().equals(reservation);
             if (self || js != j.state() || !java.util.Objects.equals(r.slot(), j.slot())) {
                 journal.update(j.reservation(), y -> y.withState(js, r.slot()).withEvent((self ? note : "tip " + tip) + " -> " + js));
             }
         }
+        return true;
+    }
+
+    /**
+     * D17: a body that was never handed out (declined before handout, an approval invalidated, or one whose admission
+     * failed) settles {@code discarded}, checked against the model; its journal entry, if any, is removed. A handed-out
+     * body ({@code submitted} or {@code exported}) is refused: only chain evidence or expiry releases it (I30). The tip
+     * sent is one IntelliAda observed, so applying it to the host's other reservations is evidence, never a guess.
+     */
+    public synchronized void discard(String reservation) throws Exception {
+        if (fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);
+        HostTable.Res lo = table.lower(reservation), up = table.upper(reservation);
+        if (lo == null) throw new ChainJournal.Fenced("the dev host holds no such reservation");
+        Entry e = null;
+        for (Entry x : journal.entries()) if (x.reservation().equals(reservation)) e = x;
+        if (e != null && e.handout() != Handout.none && e.handout() != Handout.approvalPending) {
+            throw new ChainJournal.Fenced("a body that was handed out is released only by chain evidence or expiry (I30)");
+        }
+        if (lo.st() != HostTable.St.prepared || up == null || up.st() != HostTable.St.prepared) {
+            throw new ChainJournal.Fenced("only a prepared body can be discarded");
+        }
+        long tip = highest != null ? highest.slot() : chain.tip().slot();
+        if (!settle(reservation, lo.txHash(), "discarded", null, tip)) {
+            throw new ChainJournal.Fenced("the dev host did not discard the body as expected; it was stopped");
+        }
+        if (e != null) journal.remove(Set.of(reservation));
     }
 
     private static String describe(HostTable.Outcome o) {
@@ -486,7 +564,9 @@ public final class Settlement {
      * @param error the host's {@code kind/code}, or {@code "transport"} for a session that ended or a call abandoned
      */
     public synchronized void endCall(String method, @Nullable JsonNode result, @Nullable String error) {
-        boolean clean = error == null || !(READ_ERRORS.contains(error) || error.startsWith("unsupported/read") || error.equals("transport"));
+        // Only a successful call's read tips are certain (M33B1-CDX-8): an error can come from a kind's own checks after its
+        // answer (internal/evaluator for parameters without a Plutus V3 cost model), before the host accepts the tip.
+        boolean clean = error == null;
         for (int i = 0; i < callTips.size(); i++) {
             ReadTip r = callTips.get(i);
             if (!advancing(r.kind(), r.outcome())) continue;
@@ -507,9 +587,39 @@ public final class Settlement {
         if (error == null && result != null && (method.equals("prepare") || method.equals("publish"))) {
             JsonNode p = result.path("prepared");
             if (p.isObject()) {
-                JsonNode from = p.get("validFrom");
-                table.committed(p.path("reservation").textValue(), p.path("txHash").textValue(),
-                        from == null || from.isNull() ? null : from.longValue(), p.path("validTo").longValue());
+                // The model's facts come from the body itself; the host's stated ones must agree (M33B1-SEC-4).
+                String why = null;
+                com.bloxbean.intelliada.idea.joust.tx.TxCbor.Body b = null;
+                try {
+                    b = com.bloxbean.intelliada.idea.joust.tx.TxCbor.body(com.bloxbean.intelliada.idea.joust.tx.TxCbor.transaction(
+                            p.path("cbor").asText("").toLowerCase(java.util.Locale.ROOT)));
+                } catch (com.bloxbean.intelliada.idea.joust.tx.TxCbor.Malformed m) {
+                    why = "its prepared transaction cannot be read (" + m.getMessage() + ")";
+                }
+                String id = p.path("reservation").textValue();
+                if (why == null && (id == null || !JournalStore.RESERVATION.matcher(id).matches())) why = "it gave a malformed reservation id";
+                if (why == null) {
+                    JsonNode from = p.get("validFrom");
+                    Long stated = from == null || from.isNull() ? null : from.longValue();
+                    if (!b.txHash().equals(p.path("txHash").textValue()) || b.validTo() == null || b.validTo() != p.path("validTo").longValue()
+                            || !java.util.Objects.equals(b.validFrom(), stated)) {
+                        why = "its prepared transaction's hash or validity differs from what it stated";
+                    }
+                }
+                if (why != null) fence(why);
+                else table.committed(id, b.txHash(), b.validFrom(), b.validTo());
+            }
+        }
+    }
+
+    /** Writes the table's changed states to the journal (M33B1-CDX-9): accepted read tips advance reservations too. */
+    public synchronized void sync() throws Exception {
+        for (Entry j : journal.entries()) {
+            HostTable.Res r = table.lower(j.reservation());
+            if (r == null) continue;
+            State js = State.valueOf(r.st().name());
+            if (js != j.state() || !java.util.Objects.equals(r.slot(), j.slot())) {
+                journal.update(j.reservation(), y -> y.withState(js, r.slot()).withEvent("read tip -> " + js));
             }
         }
     }

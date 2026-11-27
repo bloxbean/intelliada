@@ -107,7 +107,8 @@ public final class TxCbor {
         if (b.head().major != 5) throw new Malformed("the witness set is a CBOR map");
         b.pos = parts[2].start;
         Head v = b.head();
-        if (v.major != 7 || (v.value != 20 && v.value != 21)) throw new Malformed("is_valid is a boolean");
+        // Exactly f4 or f5 (M33B1-CDX-14): a one-byte simple value 20 or 21 (f8 14, f8 15) is malformed CBOR.
+        if (v.major != 7 || v.ai != v.value || (v.value != 20 && v.value != 21)) throw new Malformed("is_valid is a boolean");
         return new Tx(bytes, header, parts[0], parts[1], parts[2], parts[3], breakAt);
     }
 
@@ -131,17 +132,17 @@ public final class TxCbor {
             Head k = r.head();
             if (k.major != 0) throw new Malformed("a body key is an unsigned integer");
             if (!seen.add(k.value)) throw new Malformed("a body key repeats");
-            switch ((int) Math.min(k.value, Integer.MAX_VALUE)) {
-                case 0 -> inputs = refs(r);
-                case 1 -> outputs(r, publishes);
-                case 3 -> to = r.unsigned();
-                case 4 -> certificates(r, publishes);
-                case 8 -> from = r.unsigned();
-                case 13 -> collateral = refs(r);
-                case 14 -> signers = hashes(r, 28);
-                case 18 -> references = refs(r);
-                default -> r.skip(1);
-            }
+            // Matched on the full key, never narrowed (M33B1-CDX-14): 0x8000000000000003 is not key 3.
+            long key = k.value;
+            if (key == 0) inputs = refs(r);
+            else if (key == 1) outputs(r, publishes);
+            else if (key == 3) to = r.unsigned();
+            else if (key == 4) certificates(r, publishes);
+            else if (key == 8) from = r.unsigned();
+            else if (key == 13) collateral = refs(r);
+            else if (key == 14) signers = hashes(r, 28);
+            else if (key == 18) references = refs(r);
+            else r.skip(1);
         }
         if (m.indefinite) r.pos++;
         if (r.pos != tx.body().end()) throw new Malformed("the body's extent differs");
@@ -168,11 +169,10 @@ public final class TxCbor {
 
     private static List<String> hashes(Reader r, int size) throws Malformed {
         Head a = r.setHead();
-        List<String> out = new ArrayList<>();
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
         for (long i = 0; a.indefinite ? !r.peekBreak() : i < a.value; i++) {
             String h = HexFormat.of().formatHex(r.bytes(size));
-            if (out.contains(h)) throw new Malformed("a required signer repeats");
-            out.add(h);
+            if (!out.add(h)) throw new Malformed("a required signer repeats");   // linear (M33B1-SEC-3)
         }
         if (a.indefinite) r.pos++;
         return List.copyOf(out);
@@ -258,7 +258,10 @@ public final class TxCbor {
 
     // ---- the reader ---------------------------------------------------------------------------------------------------
 
-    private record Head(int major, long value, boolean indefinite) {
+    private record Head(int major, long value, boolean indefinite, int ai) {
+        Head(int major, long value, boolean indefinite) {
+            this(major, value, indefinite, -1);
+        }
     }
 
     private static final class Reader {
@@ -287,7 +290,7 @@ public final class TxCbor {
         Head head() throws Malformed {
             int ib = u8();
             int major = ib >>> 5, ai = ib & 31;
-            if (ai < 24) return new Head(major, ai, false);
+            if (ai < 24) return new Head(major, ai, false, ai);
             if (ai == 31) {
                 if (major == 0 || major == 1 || major == 6) throw new Malformed("an indefinite length where none is allowed");
                 if (major == 7) throw new Malformed("an unexpected break");
@@ -297,8 +300,8 @@ public final class TxCbor {
             int n = 1 << (ai - 24);
             long v = 0;
             for (int i = 0; i < n; i++) v = (v << 8) | u8();
-            if (major == 7) return new Head(major, ai == 24 ? v : -2 - ai, false);   // floats: an opaque marker
-            return new Head(major, v, false);
+            if (major == 7) return new Head(major, ai == 24 ? v : -2 - ai, false, ai);   // floats: an opaque marker
+            return new Head(major, v, false, ai);
         }
 
         /** A set's array, with or without tag 258. */

@@ -81,7 +81,7 @@ public class SettlementRealHostTest {
             ChainJournal.Opening o = journal.open(tip);
             table = new HostTable(60, o.restoring());
             settlement = new Settlement(journal, table, chain, (m, q) -> s.call(m, q, Duration.ofSeconds(60), () -> false),
-                    () -> 0, new AtomicLong()::get, fence::set);
+                    () -> 0, new AtomicLong()::get, ms -> { }, fence::set);
             HostSession.Reads raw = (id, q) -> {
                 ObjectNode a = script.poll();
                 if (a == null) throw new IllegalStateException("no read scripted for " + q);

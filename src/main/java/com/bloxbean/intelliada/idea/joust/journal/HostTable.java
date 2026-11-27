@@ -165,8 +165,13 @@ public final class HostTable {
         Outcome got = new Outcome(state, error);
         boolean lo = x.lower.equals(got), up = x.upper.equals(got);
         if (!lo && !up) return false;
-        if (lo && !up) upper = new LinkedHashMap<>(lower);
-        else if (up && !lo) lower = new LinkedHashMap<>(upper);
+        // Only the replied reservation is resolved (M33B1-CDX-7): its state says which copy the host holds for it, not
+        // which of several uncertain tips the host accepted for the others.
+        if (lo && !up) {
+            if (lower.containsKey(x.id)) upper.put(x.id, lower.get(x.id));
+        } else if (up && !lo) {
+            if (upper.containsKey(x.id)) lower.put(x.id, upper.get(x.id));
+        }
         if (error != null) {
             if (error.equals("refusal/deepRollback")) deep = true;
             return true;   // the host changed nothing (a deep rollback only fences building)

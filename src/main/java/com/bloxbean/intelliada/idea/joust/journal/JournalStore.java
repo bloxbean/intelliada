@@ -146,7 +146,7 @@ public final class JournalStore {
     }
 
     /** A module's journal on one chain. */
-    public record ModuleJournal(String chain, String module, List<Entry> entries) {
+    public record ModuleJournal(String chain, String module, long generation, List<Entry> entries) {
         public ModuleJournal {
             entries = List.copyOf(entries);
         }
@@ -157,7 +157,10 @@ public final class JournalStore {
     }
 
     /** A rewind's outstanding reconciliation, persisted before any host is restarted (D17 "Rewind"). */
-    public record Rewind(long tip, String reason) {
+    public record Rewind(long tip, String reason, Set<String> pending) {
+        public Rewind {
+            pending = Set.copyOf(pending);
+        }
     }
 
     /**
@@ -169,13 +172,35 @@ public final class JournalStore {
 
     /**
      * The chain record: the high-water mark ({@code max(validTo + settlementSlots)} over handed-out bodies), every module
-     * that ever held a handed-out body here, the admission generation, the recovery fence and the outstanding rewind.
+     * that ever held a handed-out body here with the generation of its journal's last admission (a journal behind it is
+     * lost history; M33B1-CDX-2, -DES-8), the admission generation, the recovery fence and the outstanding rewind.
      */
-    public record ChainRecord(String chain, @Nullable Long mark, Set<String> modules, long generation, @Nullable Fence fence,
+    public record ChainRecord(String chain, @Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence,
                               @Nullable Rewind rewind, List<Registration> registrations) {
         public ChainRecord {
-            modules = Set.copyOf(new LinkedHashSet<>(modules));
+            modules = Map.copyOf(modules);
             registrations = List.copyOf(registrations);
+        }
+
+        ChainRecord with(@Nullable Long mark, Map<String, Long> modules, long generation, @Nullable Fence fence, @Nullable Rewind rewind,
+                         List<Registration> registrations) {
+            return new ChainRecord(chain, mark, modules, generation, fence, rewind, registrations);
+        }
+
+        public ChainRecord withFence(@Nullable Fence f) {
+            return with(mark, modules, generation, f, rewind, registrations);
+        }
+
+        public ChainRecord withRewind(@Nullable Rewind r) {
+            return with(mark, modules, generation, fence, r, registrations);
+        }
+
+        public ChainRecord withModules(Map<String, Long> m) {
+            return with(mark, m, generation, fence, rewind, registrations);
+        }
+
+        public ChainRecord withRegistrations(List<Registration> r) {
+            return with(mark, modules, generation, fence, rewind, r);
         }
     }
 
@@ -238,14 +263,22 @@ public final class JournalStore {
 
     public Held lock(String chainKey) throws StoreFailed, InterruptedException {
         requireKey(chainKey);
-        ReentrantLock in = LOCKS.computeIfAbsent(root + "|" + chainKey, k -> new ReentrantLock());
+        // Keyed by the directory's real path: two spellings of one store share one in-process lock, so this JVM never
+        // opens a second descriptor of a lock file it holds (closing one would drop the OS lock; M33B1-CDX-4).
+        String real;
+        try {
+            privateDir(chainDir(chainKey));
+            real = chainDir(chainKey).toRealPath().toString();
+        } catch (IOException e) {
+            throw new StoreFailed("the chain's journal directory cannot be used (" + e.getClass().getSimpleName() + ")", e);
+        }
+        ReentrantLock in = LOCKS.computeIfAbsent(real, k -> new ReentrantLock());
         if (!in.tryLock(30, TimeUnit.SECONDS)) throw new StoreFailed("the chain's journal is busy");
         if (in.getHoldCount() > 1) {
             return in::unlock;   // re-entered by the same thread: the file lock is already held
         }
         FileChannel ch = null;
         try {
-            privateDir(chainDir(chainKey));
             ch = FileChannel.open(chainDir(chainKey).resolve("lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
             FileLock fl;
@@ -286,29 +319,47 @@ public final class JournalStore {
     public Held ownModule(String chainKey, String moduleKey) throws StoreFailed {
         requireKey(chainKey);
         requireKey(moduleKey);
-        FileChannel ch = null;
+        String real;
         try {
             privateDir(chainDir(chainKey));
-            ch = FileChannel.open(chainDir(chainKey).resolve(moduleKey + ".host"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            real = chainDir(chainKey).toRealPath().resolve(moduleKey + ".host").toString();
+        } catch (IOException e) {
+            throw new StoreFailed("the module's host lock cannot be taken (" + e.getClass().getSimpleName() + ")", e);
+        }
+        // Reserved in this JVM before any descriptor is opened: a refused second owner never opens (and so never closes)
+        // a descriptor of the live owner's lock file, which would release its OS lock (M33B1-CDX-4).
+        if (OWNED.putIfAbsent(real, Boolean.TRUE) != null) {
+            throw new StoreFailed("another dev host of this module is running on this chain (in this IDE)");
+        }
+        FileChannel ch = null;
+        try {
+            ch = FileChannel.open(Path.of(real), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             FileLock fl = tryFileLock(ch);
-            if (fl == null) throw new StoreFailed("another dev host of this module is running on this chain (in this IDE or another)");
+            if (fl == null) throw new StoreFailed("another dev host of this module is running on this chain (in another IDE)");
             FileChannel channel = ch;
+            java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
             return () -> {
+                if (!closed.compareAndSet(false, true)) return;
                 try {
                     fl.release();
                 } catch (IOException ignored) {
                     // closing the channel releases it
                 }
                 closeQuietly(channel);
+                OWNED.remove(real);
             };
         } catch (IOException e) {
             closeQuietly(ch);
+            OWNED.remove(real);
             throw new StoreFailed("the module's host lock cannot be taken (" + e.getClass().getSimpleName() + ")", e);
         } catch (StoreFailed | RuntimeException e) {
             closeQuietly(ch);
+            OWNED.remove(real);
             throw e;
         }
     }
+
+    private static final Map<String, Boolean> OWNED = new ConcurrentHashMap<>();
 
     private static @Nullable FileLock tryFileLock(FileChannel ch) throws IOException {
         try {
@@ -339,7 +390,9 @@ public final class JournalStore {
         try {
             fields(n, "version", "chain", "highestTip", "highestNow", "generation");
             version(n);
-            return new Loaded<>(new RegistryEntry(text(n, "chain"), slot(n, "highestTip"), slot(n, "highestNow"), slot(n, "generation")), true);
+            String chain = text(n, "chain");
+            if (!key(chain).equals(chainKey)) throw new Bad();   // M33B1-SEC-5
+            return new Loaded<>(new RegistryEntry(chain, slot(n, "highestTip"), slot(n, "highestNow"), slot(n, "generation")), true);
         } catch (Bad b) {
             return Loaded.unreadable();
         }
@@ -351,11 +404,14 @@ public final class JournalStore {
         try {
             fields(n, "version", "chain", "mark", "modules", "generation", "fence", "rewind", "registrations");
             version(n);
-            Set<String> modules = new LinkedHashSet<>();
+            Map<String, Long> modules = new java.util.LinkedHashMap<>();
             JsonNode ms = n.get("modules");
-            if (ms == null || !ms.isArray()) throw new Bad();
-            for (JsonNode m : ms) {
-                if (!m.isTextual() || !KEY.matcher(m.textValue()).matches() || !modules.add(m.textValue())) throw new Bad();
+            if (ms == null || !ms.isObject()) throw new Bad();
+            for (var it = ms.fields(); it.hasNext(); ) {
+                var m = it.next();
+                if (!KEY.matcher(m.getKey()).matches() || !m.getValue().isIntegralNumber() || !m.getValue().canConvertToLong()
+                        || m.getValue().longValue() < 1) throw new Bad();
+                modules.put(m.getKey(), m.getValue().longValue());
             }
             Fence fence = null;
             JsonNode f = n.get("fence");
@@ -368,8 +424,14 @@ public final class JournalStore {
             JsonNode r = n.get("rewind");
             if (r == null) throw new Bad();
             if (!r.isNull()) {
-                fields(r, "tip", "reason");
-                rewind = new Rewind(slot(r, "tip"), boundedText(r, "reason"));
+                fields(r, "tip", "reason", "pending");
+                Set<String> pending = new LinkedHashSet<>();
+                JsonNode ps = r.get("pending");
+                if (!ps.isArray()) throw new Bad();
+                for (JsonNode x : ps) {
+                    if (!x.isTextual() || !KEY.matcher(x.textValue()).matches() || !pending.add(x.textValue())) throw new Bad();
+                }
+                rewind = new Rewind(slot(r, "tip"), boundedText(r, "reason"), pending);
             }
             List<Registration> regs = new ArrayList<>();
             JsonNode rs = n.get("registrations");
@@ -380,7 +442,14 @@ public final class JournalStore {
                 if (!creds.add(g.credential())) throw new Bad();
                 regs.add(g);
             }
-            return new Loaded<>(new ChainRecord(text(n, "chain"), nullableSlot(n, "mark"), modules, slot(n, "generation"), fence, rewind, regs), true);
+            String chain = text(n, "chain");
+            if (!key(chain).equals(chainKey)) throw new Bad();   // M33B1-SEC-5
+            Long mark = nullableSlot(n, "mark");
+            long generation = slot(n, "generation");
+            // A record that lists handouts has a mark, and no module is ahead of the record (M33B1-CDX-18).
+            if (!modules.isEmpty() && mark == null) throw new Bad();
+            for (long g : modules.values()) if (g > generation) throw new Bad();
+            return new Loaded<>(new ChainRecord(chain, mark, modules, generation, fence, rewind, regs), true);
         } catch (Bad b) {
             return Loaded.unreadable();
         }
@@ -391,9 +460,10 @@ public final class JournalStore {
         JsonNode n = read(journalFile(chainKey, moduleKey));
         if (n == null) return Loaded.missing();
         try {
-            fields(n, "version", "chain", "module", "entries");
+            fields(n, "version", "chain", "module", "generation", "entries");
             version(n);
-            if (!moduleKey.equals(text(n, "module"))) throw new Bad();
+            if (!moduleKey.equals(text(n, "module")) || !key(text(n, "chain")).equals(chainKey)) throw new Bad();
+            long generation = slot(n, "generation");
             JsonNode es = n.get("entries");
             if (es == null || !es.isArray()) throw new Bad();
             List<Entry> entries = new ArrayList<>();
@@ -403,7 +473,7 @@ public final class JournalStore {
                 if (!ids.add(x.reservation())) throw new Bad();
                 entries.add(x);
             }
-            return new Loaded<>(new ModuleJournal(text(n, "chain"), moduleKey, entries), true);
+            return new Loaded<>(new ModuleJournal(text(n, "chain"), moduleKey, generation, entries), true);
         } catch (Bad b) {
             return Loaded.unreadable();
         }
@@ -447,13 +517,17 @@ public final class JournalStore {
         ObjectNode n = HostJson.object().put("version", VERSION).put("chain", c.chain());
         if (c.mark() == null) n.putNull("mark");
         else n.put("mark", c.mark());
-        ArrayNode ms = n.putArray("modules");
-        c.modules().stream().sorted().forEach(ms::add);
+        ObjectNode ms = n.putObject("modules");
+        c.modules().entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(e -> ms.put(e.getKey(), e.getValue()));
         n.put("generation", c.generation());
         if (c.fence() == null) n.putNull("fence");
         else n.putObject("fence").put("until", c.fence().until()).put("reason", c.fence().reason());
         if (c.rewind() == null) n.putNull("rewind");
-        else n.putObject("rewind").put("tip", c.rewind().tip()).put("reason", c.rewind().reason());
+        else {
+            ObjectNode r = n.putObject("rewind").put("tip", c.rewind().tip()).put("reason", c.rewind().reason());
+            ArrayNode ps = r.putArray("pending");
+            c.rewind().pending().stream().sorted().forEach(ps::add);
+        }
         ArrayNode rs = n.putArray("registrations");
         for (Registration g : c.registrations()) {
             ObjectNode o = rs.addObject().put("credential", g.credential()).put("txHash", g.txHash());
@@ -464,7 +538,8 @@ public final class JournalStore {
     }
 
     public void writeJournal(ModuleJournal j) throws StoreFailed {
-        ObjectNode n = HostJson.object().put("version", VERSION).put("chain", j.chain()).put("module", j.module());
+        ObjectNode n = HostJson.object().put("version", VERSION).put("chain", j.chain()).put("module", j.module())
+                .put("generation", j.generation());
         ArrayNode es = n.putArray("entries");
         for (Entry e : j.entries()) es.add(json(e));
         write(journalFile(key(j.chain()), j.module()), n);
@@ -495,7 +570,9 @@ public final class JournalStore {
             if (Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
                 try (var s = Files.list(dir)) {
                     for (Path p : (Iterable<Path>) s::iterator) {
-                        if (!p.getFileName().toString().equals("lock")) Files.deleteIfExists(p);
+                        String name = p.getFileName().toString();
+                        // Locks stay: a new inode would let a second owner in beside a running host (M33B1-SEC-5).
+                        if (!name.equals("lock") && !name.endsWith(".host")) Files.deleteIfExists(p);
                     }
                 }
             }
@@ -586,7 +663,7 @@ public final class JournalStore {
         String hash = text(e, "txHash");
         if (!HASH32.matcher(hash).matches()) throw new Bad();
         JsonNode cb = e.get("cbor");
-        if (!cb.isTextual() || cb.textValue().isEmpty() || cb.textValue().length() % 2 != 0 || cb.textValue().length() > 2 * TxCborLimit.BYTES
+        if (!cb.isTextual() || cb.textValue().isEmpty() || cb.textValue().length() % 2 != 0 || cb.textValue().length() > 2 * MAX_BODY_BYTES
                 || !cb.textValue().matches("[0-9a-f]+")) throw new Bad();
         Handout handout;
         State state;
@@ -626,9 +703,22 @@ public final class JournalStore {
         return new Entry(id, hash, cb.textValue(), from, to, handout, node, state, slot, inclusion, events, label);
     }
 
-    /** The transaction size bound the store accepts (the protocol's 4 MiB frame bounds a body well below it). */
-    static final class TxCborLimit {
-        static final int BYTES = 4 * 1024 * 1024;
+    /**
+     * The largest body the journal holds (M33B1-SEC-3): four times Conway's 16 KiB maximum transaction size, so a body
+     * a node could accept always fits, and the store's strings stay far inside the JSON reader's limits.
+     */
+    public static final int MAX_BODY_BYTES = 64 * 1024;
+
+    /**
+     * Whether {@code e} reads back exactly as written (M33B1-CDX-13): admission checks a candidate entry with the
+     * loader's own rules before anything is written, so a journal never holds an entry its next load refuses.
+     */
+    public static boolean readsBack(Entry e) {
+        try {
+            return entry(HostJson.MAPPER.readTree(HostJson.MAPPER.writeValueAsBytes(json(e)))).equals(e);
+        } catch (Bad | IOException x) {
+            return false;
+        }
     }
 
     // ---- files --------------------------------------------------------------------------------------------------------
@@ -703,13 +793,27 @@ public final class JournalStore {
         return p.getFileSystem().supportedFileAttributeViews().contains("posix");
     }
 
-    private static void forceDir(Path dir) {
-        if (!posix(dir)) return;   // Windows cannot open a directory for this
+    /** Forces a directory's entries to disk; a failure is a write failure (M33B1-CDX-15). Windows cannot open one. */
+    private static void forceDir(Path dir) throws IOException {
+        if (!posix(dir)) return;
         try (FileChannel ch = FileChannel.open(dir, StandardOpenOption.READ)) {
             ch.force(true);
-        } catch (IOException ignored) {
-            // some file systems refuse a directory sync; the rename itself is durable on them
         }
+    }
+
+    /** This process's own user, as the file system reports it for a file this process creates (M33B1-SEC-5). */
+    private static volatile java.nio.file.attribute.UserPrincipal me;
+
+    private static java.nio.file.attribute.UserPrincipal me() throws IOException {
+        if (me == null) {
+            Path probe = Files.createTempFile("intelliada-owner", ".probe");
+            try {
+                me = Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS);
+            } finally {
+                Files.deleteIfExists(probe);
+            }
+        }
+        return me;
     }
 
     /**
@@ -731,6 +835,7 @@ public final class JournalStore {
                     } else {
                         Files.createDirectory(p);
                     }
+                    forceDir(p.getParent());   // the new directory's entry is durable before anything is written in it
                 } catch (FileAlreadyExistsException raced) {
                     // made meanwhile; checked below
                 }
@@ -739,8 +844,7 @@ public final class JournalStore {
             if (posix(p)) {
                 PosixFileAttributeView v = Files.getFileAttributeView(p, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
                 var owner = v.getOwner();
-                var me = p.getFileSystem().getUserPrincipalLookupService().lookupPrincipalByName(System.getProperty("user.name"));
-                if (!owner.equals(me)) throw new IOException("a journal directory belongs to another user");
+                if (!owner.equals(me())) throw new IOException("a journal directory belongs to another user");
                 v.setPermissions(PosixFilePermissions.fromString("rwx------"));
             }
         }
