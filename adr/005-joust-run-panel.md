@@ -995,7 +995,13 @@ invariant.
     - **Durability.**
       - Each ancestor directory's link is synced once per process, up to the user's home. The root's parent
         (`~/.intelliada`) must be a real directory owned by the user that no other user can write; one the store
-        creates is 0700, and a loose one refuses with a `chmod go-w` hint (r37, M33B1-CDX-80, -SEC-13).
+        creates is 0700, one of the user's that others can write (a umask of 002, common on Linux) loses its group and
+        other write bits, and a link or another user's refuses (r37/r38, M33B1-CDX-80, -SEC-13, -DES-22). On a file
+        system with ACLs instead of POSIX modes, no principal but the user, the system and administrators may change its
+        entries; with neither, the store refuses (M33B1-CDX-85).
+      - A rewind the process detected but could not persist is held in memory for the chain: every host of the chain
+        in the process stops on it, admission refuses, and the next open persists it, after recovering the record when
+        needed (M33B1-CDX-84).
       - A closing session finishes any pass in progress before it releases its module lock.
   - **M3.3b1 round 5 (#34).**
     - **Rewinds.**
@@ -1277,3 +1283,4 @@ Security and design approved round 8.
 - **r35** (2026-11-27): §12 E11 and L41 (delegated): the journal's fault model and the review stopping rule.
 - **r36** (2026-11-27): D17 and §12 E10/E11 — the journal store moves to a per-user directory (M33B1-DES-20, -SEC-12).
 - **r37** (2026-11-27): D15 persistence and §5 Data per user (M33B1-DES-21); E10 Files: the store's parent directory is checked (M33B1-CDX-80, -SEC-13).
+- **r38** (2026-11-27): E10 Files: a loose parent of the user's is tightened; ACL file systems; an unsaved rewind is held in memory (M33B1-DES-22, -CDX-84, -CDX-85).
