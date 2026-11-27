@@ -360,9 +360,10 @@ public final class Settlement {
         if (trigger != null) {
             // Persisted before anything else (D17 "Rewind"); every host on the chain stops, and a new one is restored
             // from the re-read chain when the user starts it again (M33B1-DES-4).
-            journal.beginRewind(o.tip.slot(), trigger);
+            // Fenced first, then persisted (M33B1-SEC-11): a refused write never leaves a host running after a rewind.
             rewind = trigger;
             fence(trigger + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
+            journal.beginRewind(o.tip.slot(), trigger);
             return false;
         }
         if (highest == null || o.tip.slot() >= highest.slot()) highest = o.tip;
@@ -591,7 +592,10 @@ public final class Settlement {
             return false;
         }
         if (status.equals("rolledBack") && table.deepRollback()) {
-            // A final inclusion rolled back is a chain rewind, persisted before any releasing state is (M33B1-CDX-26).
+            // A final inclusion rolled back is a chain rewind, persisted before any releasing state is (M33B1-CDX-26), and
+            // the host fenced before that write (M33B1-SEC-11).
+            rewind = "a final inclusion was rolled back";
+            fence(rewind + "; the dev host was stopped: start it again to restore it from IntelliAda's journal");
             journal.beginRewind(tip, "a final inclusion was rolled back");
         }
         if (deferJournal) syncPending = true;   // the model holds the states; the journal takes them at the next successful write
