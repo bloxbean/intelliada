@@ -1051,6 +1051,29 @@ invariant.
       - An expired body the chain shows included within its margin stops the host; the journal keeps it `shallow`.
       - The host is fenced before the evidence is written (SEC-10).
 
+- **E11. The journal's fault model and the review stopping rule (L41).**
+  - **What #34's review was asked to cover.** After eight Codex rounds, each raising six or more new P1s (design and
+    security approved from round 4), the journal's guarantee is stated as a fault model. The review is scoped to it.
+  - **In scope:**
+    - one IntelliJ process per chain directory;
+    - any number of contract modules in it;
+    - chain events treated as normal, not as faults: rollbacks, forks, rewinds and lagging providers;
+    - at most one independent fault at a time: one crash or kill at any point, one failed or partial write, one
+      provider timeout or error, or one file lost or unreadable.
+  - **Always in scope:** anything that breaks the on-disk format, or an invariant the signing PRs rely on. Those are: no
+    lost record of a handed-out body, no input released while its body can still land, no double hand-out after
+    recovery, and no silent overwrite.
+  - **Out of scope, filed as a follow-up:**
+    - findings that need two or more independent faults together (a restored backup between writes plus a timeout, for
+      example);
+    - concurrent IDE processes on one chain directory beyond what the module lock already refuses;
+    - deliberate tampering with the store;
+    - file-system behaviour beyond atomic rename and fsync.
+  - **The rule.** In-scope P0/P1 findings, and security P2s, are fixed in the PR. Out-of-scope findings, and P2s that
+    cost only availability, become issues that must close before **M3.3b2** (signing) merges. A cheap fix of an
+    out-of-scope finding is still made. One final Codex round runs, scoped to this model.
+  - **Filed so far:** #35 (M33B1-CDX-73, availability).
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
@@ -1058,6 +1081,7 @@ invariant.
 | L38 | I12's legacy-chooser exception until #10; migration is a move; no mainnet accounts until M5 (E8) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 1 |
 | L39 | Migration copies and hides (never writes the legacy store); unconfirmed until a later session; class bound to the secret (E8a) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 2 |
 | L40 | M3.3b in three stacked parts: journal and settlement, signer and Deploy sequence, panel write path; nothing reaches signing before the third (E10) | delegated | 2026-11-27 | two advisors (both asked for a split; one for three parts, one for two with a fallback cut) |
+| L41 | #34's journal guarantee is stated as a fault model (E11): in-model P0/P1s and security P2s block; multi-fault, multi-process and tampering findings become issues that must close before M3.3b2 merges; one final Codex round scoped to the model | delegated | 2026-11-27 | two advisors (both: stop open-ended point fixes, state a fault model, gate follow-ups before signing, one final scoped round); Codex P1s r1–r8: 16, 18, –, 15, 7, 8, 8, 7 |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -1240,3 +1264,4 @@ Security and design approved round 8.
 - **r32** (2026-11-27): §12 E10 — M3.3b1 round 6 (chain rewinds only from chain evidence).
 - **r33** (2026-11-27): §12 E10 — M3.3b1 round 7 (one overlap rule; rewind evidence).
 - **r34** (2026-11-27): §12 E10 — the overlap rule's cost on public networks, and an M3.5 item (DES-18).
+- **r35** (2026-11-27): §12 E11 and L41 (delegated): the journal's fault model and the review stopping rule.
