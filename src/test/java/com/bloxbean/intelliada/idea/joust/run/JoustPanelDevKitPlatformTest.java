@@ -222,15 +222,18 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
     /** DevKit's faucet: 200 ADA to {@code address}, then waits until the store shows it. */
     private static void topUp(String admin, String store, String address) throws Exception {
         HttpClient http = HttpClient.newHttpClient();
+        // Two UTxOs: an init needs a seed input and, separately, collateral the composition does not spend.
         String body = "{\"address\":\"" + address + "\",\"adaAmount\":200}";
-        var r = http.send(HttpRequest.newBuilder(URI.create(admin + "/local-cluster/api/addresses/topup"))
-                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertTrue("top-up: " + r.statusCode() + " " + r.body(), r.statusCode() / 100 == 2);
+        for (int t = 0; t < 2; t++) {
+            var r = http.send(HttpRequest.newBuilder(URI.create(admin + "/local-cluster/api/addresses/topup"))
+                    .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertTrue("top-up: " + r.statusCode() + " " + r.body(), r.statusCode() / 100 == 2);
+        }
         for (int i = 0; i < 60; i++) {
             var u = http.send(HttpRequest.newBuilder(URI.create(store + "/addresses/" + address + "/utxos")).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
-            if (u.statusCode() == 200 && u.body().contains("tx_hash")) return;
+            if (u.statusCode() == 200 && u.body().split("\"tx_hash\"", -1).length - 1 >= 2) return;
             Thread.sleep(1_000);
         }
         fail("the top-up did not appear");

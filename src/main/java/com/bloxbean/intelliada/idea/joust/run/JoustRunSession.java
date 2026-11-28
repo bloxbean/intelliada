@@ -643,6 +643,8 @@ public final class JoustRunSession {
     /** The exact parameters of the last forward call (its {@code now} included), read under the call lock. */
     private @Nullable ObjectNode lastRequest;
 
+    // ---- test hooks (package-private; FAB-34): checkerInputForTests, checkerForTests, unreachableForTests ----------------
+
     /** Tests: sees each checker input as sent to the checker's stdin (I10's canary search; FAB-25). */
     static volatile java.util.function.@Nullable Consumer<String> checkerInputForTests;
 
@@ -800,17 +802,30 @@ public final class JoustRunSession {
                         String outcome = notReleased == null ? "; its inputs are released" : "; " + held + " (" + notReleased + ")";
                         // D15 (M3.3b4): the ledger says a credential this body registers is registered already. That is
                         // registration evidence: the host is told, so the publication is built again without it.
-                        java.util.List<String> known = alreadyRegistered(refused.getMessage());
+                        // Only credentials this body itself registers count (FAB-31): node text never speaks for others.
+                        java.util.List<String> known = new java.util.ArrayList<>();
+                        for (String c : alreadyRegistered(refused.body())) {
+                            if (body.publishes().contains("stakeRegistration:" + c)) known.add(c);
+                        }
                         if (!known.isEmpty()) {
+                            String notTold = null;
                             for (String credential : known) {
                                 ObjectNode evidence = HostJson.object().put("txHash", body.txHash())
                                         .put("message", PlainText.literal(refused.getMessage(), 2_000));
                                 ObjectNode reg = HostJson.object().put("credential", credential);
                                 reg.set("evidence", evidence);
-                                call("registered", reg, false);
+                                try {
+                                    call("registered", reg, false);
+                                } catch (Exception hostRefused) {
+                                    notTold = hostRefused.getMessage() == null ? hostRefused.getClass().getSimpleName() : hostRefused.getMessage();
+                                }
+                            }
+                            if (notTold != null) {   // the node's refusal stays the message (FAB-31)
+                                throw new NetworkIdentity.Refused(refused.getMessage() + outcome + " (the dev host was not told the credential is "
+                                        + "registered: " + notTold + ")");
                             }
                             throw new AlreadyRegistered("the node reports " + String.join(", ", known) + " registered already; the dev host "
-                                    + "was told" + outcome, known);
+                                    + "was told" + outcome + "; try again", known);
                         }
                         throw new NetworkIdentity.Refused(refused.getMessage() + outcome);
                     } catch (com.bloxbean.intelliada.idea.joust.host.chain.BlockfrostApi.Failed unknown) {
@@ -1075,10 +1090,36 @@ public final class JoustRunSession {
         if (journal == null) return java.util.List.of();
         var now = journal.journal().entries();
         synchronized (seen) {
-            for (var e : now) seen.put(e.reservation(), e);
+            return mergeHistory(seen, now);
+        }
+    }
+
+    /** Folds the journal's entries now into History (FAB-24, FAB-32); returns History, oldest first. */
+    static java.util.List<com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry> mergeHistory(
+            java.util.LinkedHashMap<String, com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry> seen,
+            java.util.List<com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry> now) {
+        {
+            java.util.Set<String> present = new java.util.HashSet<>();
+            for (var e : now) {
+                present.add(e.reservation());
+                seen.put(e.reservation(), withoutCbor(e));   // History needs no body (FAB-32)
+            }
+            // A body that left the journal while still prepared was released (refused, declined or discarded), not lost
+            // to pruning, which only drops final ones (FAB-32).
+            for (var k : new java.util.ArrayList<>(seen.keySet())) {
+                var e = seen.get(k);
+                if (!present.contains(k) && e.state() == com.bloxbean.intelliada.idea.joust.journal.JournalStore.State.prepared) {
+                    seen.put(k, e.withState(com.bloxbean.intelliada.idea.joust.journal.JournalStore.State.discarded, null).withEvent("released"));
+                }
+            }
             while (seen.size() > HISTORY) seen.remove(seen.keySet().iterator().next());
             return java.util.List.copyOf(seen.values());
         }
+    }
+
+    private static com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry withoutCbor(com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry e) {
+        return new com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry(e.reservation(), e.txHash(), "", e.validFrom(), e.validTo(),
+                e.handout(), e.node(), e.state(), e.slot(), e.inclusion(), e.events(), e.label());
     }
 
     /** The contract's {@code x-joust}, as IntelliAda read it from the snapshot (I26), for the panel's forms. */

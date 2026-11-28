@@ -32,10 +32,24 @@ public final class BlockfrostApi {
         }
     }
 
-    /** The node answered a submission with a 4xx: it did not take the transaction (a ledger or mempool refusal). */
+    /**
+     * The node answered a submission with a 4xx: it did not take the transaction (a ledger or mempool refusal). The
+     * message is capped for display; {@link #body()} is the whole answer, for reading the ledger's reasons (FAB-34).
+     */
     public static final class NodeRefused extends Failed {
+        private final String body;
+
         public NodeRefused(String why) {
+            this(why, why);
+        }
+
+        public NodeRefused(String why, String body) {
             super(why);
+            this.body = body;
+        }
+
+        public String body() {
+            return body;
         }
     }
 
@@ -184,7 +198,7 @@ public final class BlockfrostApi {
         String body = new String(r.body(), java.nio.charset.StandardCharsets.UTF_8).trim();
         if (r.statusCode() >= 400 && r.statusCode() <= 499) {
             throw new NodeRefused("the node refused the transaction (HTTP " + r.statusCode() + "): "
-                    + (body.length() > 2000 ? body.substring(0, 2000) + "…" : body));
+                    + (body.length() > 2000 ? body.substring(0, 2000) + "…" : body), body);
         }
         if (r.statusCode() < 200 || r.statusCode() > 299) {
             // A 5xx (or a redirect): the node may or may not have taken it.
