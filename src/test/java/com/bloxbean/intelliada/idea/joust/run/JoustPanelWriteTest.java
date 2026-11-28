@@ -58,7 +58,8 @@ public class JoustPanelWriteTest {
         var r = com.bloxbean.intelliada.idea.joust.review.JoustReview.reduced("init init", "ab".repeat(32), null, 900, List.of("genesis-1"), "CBOR x");
         String text = String.join("\n", com.bloxbean.intelliada.idea.joust.review.JoustReview.lines(r));
         assertTrue(text, text.contains("details unavailable: CBOR x") && text.contains("until slot 900") && text.contains("genesis-1"));
-        assertTrue(text, text.contains("Your net outflow: unknown"));
+        assertTrue(text, text.contains("Your net outflow: unavailable") && text.contains("Fee: unavailable"));
+        assertFalse("FAB-33: nothing is said about outputs it did not read", text.contains("Sends nothing") || text.contains("output(s)"));
     }
 
     /** D15 (M3.3b4): the ledger's "registered already" refusal, as DevKit's submit API relays it, names the credential. */
@@ -70,5 +71,30 @@ public class JoustPanelWriteTest {
         assertEquals(List.of("dd15fe5da434a91d00aa7f3a6891b77a59cfd4e442506d47189b703d"), JoustRunSession.alreadyRegistered(node));
         assertEquals(List.of(), JoustRunSession.alreadyRegistered("the node refused the transaction (HTTP 400): ValueNotConservedUTxO"));
         assertEquals(List.of(), JoustRunSession.alreadyRegistered(null));
+    }
+
+    /** FAB-24, FAB-32: History keeps pruned final entries, marks a body that left while prepared as released, holds no CBOR. */
+    @Test
+    public void historyKeepsFinalEntriesMarksReleasedOnesAndHoldsNoBody() {
+        var seen = new java.util.LinkedHashMap<String, JournalStore.Entry>();
+        var done = new JournalStore.Entry("1", "aa".repeat(32), "84aa", null, 900, JournalStore.Handout.submitted, "n",
+                JournalStore.State.confirmed, 880L, new JournalStore.Inclusion(880, 8, "cc".repeat(32)), List.of(), "init init");
+        var pending = new JournalStore.Entry("2", "bb".repeat(32), "84bb", null, 950, JournalStore.Handout.submitted, "n",
+                JournalStore.State.prepared, null, null, List.of(), "action reset");
+        var h = JoustRunSession.mergeHistory(seen, List.of(done, pending));
+        assertEquals(2, h.size());
+        assertTrue("no body kept", h.stream().allMatch(e -> e.cbor().isEmpty()));
+        h = JoustRunSession.mergeHistory(seen, List.of());   // both left the journal
+        assertEquals("the pruned final entry stays", JournalStore.State.confirmed, h.get(0).state());
+        assertEquals("the prepared one was released", JournalStore.State.discarded, h.get(1).state());
+        assertTrue(h.get(1).events().contains("released"));
+    }
+
+    /** FAB-31: evidence comes only from a refusal naming a credential; the body check is the session's. */
+    @Test
+    public void aRefusalNamingTwoCredentialsListsBoth() {
+        String two = "StakeKeyRegisteredDELEG (ScriptHashObj (ScriptHash \"" + "aa".repeat(28) + "\")) and "
+                + "StakeKeyRegisteredDELEG (ScriptHashObj (ScriptHash \"" + "bb".repeat(28) + "\"))";
+        assertEquals(List.of("aa".repeat(28), "bb".repeat(28)), JoustRunSession.alreadyRegistered(two));
     }
 }

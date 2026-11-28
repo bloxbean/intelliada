@@ -38,7 +38,7 @@ public final class JoustReview {
      */
     public record Summary(String label, String txHash, BigInteger fee, @Nullable Long validFrom, long validTo, List<Output> outputs,
                           @Nullable BigInteger callerNetOutflow, List<String> signers, List<String> minted, List<String> callerTokensOut,
-                          @Nullable String note) {
+                          @Nullable String note, boolean reduced) {
 
         /** The outputs to addresses that are neither the deployment's nor the caller's. */
         public List<Output> others() {
@@ -124,7 +124,8 @@ public final class JoustReview {
             if (q.signum() != 0) tokensOut.add(unit + " " + q);
         });
         return new Summary(label, txHashOf(cborHex), fee, from, body.getTtl(), List.copyOf(outs), known ? spent.subtract(back) : null,
-                List.copyOf(signers), assets(body.getMint()), List.copyOf(tokensOut), known ? null : "an input could not be read: token movement unknown");
+                List.copyOf(signers), assets(body.getMint()), List.copyOf(tokensOut), known ? null : "an input could not be read: token movement unknown",
+                false);
     }
 
     /**
@@ -133,7 +134,7 @@ public final class JoustReview {
      */
     public static Summary reduced(String label, String txHash, @Nullable Long validFrom, long validTo, List<String> signers, String why) {
         return new Summary(label, txHash, BigInteger.ZERO, validFrom, validTo, List.of(), null, List.copyOf(signers), List.of(), List.of(),
-                "details unavailable: " + why + ". JOUST's checker accepted it; the outputs, fee and outflow cannot be shown");
+                "details unavailable: " + why + ". JOUST's checker accepted it; the outputs, fee and outflow cannot be shown", true);
     }
 
     /** An asset name as hex (CCL gives a {@code 0x}-prefixed hex or the name's text). */
@@ -194,13 +195,16 @@ public final class JoustReview {
         l.add(s.label());
         if (s.note() != null) l.add("Note: " + s.note());
         l.add("Transaction " + s.txHash());
-        l.add("Fee: " + ada(s.fee()) + " ADA");
-        l.add("Your net outflow: " + (s.callerNetOutflow() == null ? "unknown (an input could not be read)" : ada(s.callerNetOutflow()) + " ADA")
+        // A reduced summary states only what IntelliAda's own reader knows (FAB-33).
+        l.add(s.reduced() ? "Fee: unavailable" : "Fee: " + ada(s.fee()) + " ADA");
+        l.add("Your net outflow: " + (s.reduced() ? "unavailable" : s.callerNetOutflow() == null ? "unknown (an input could not be read)"
+                : ada(s.callerNetOutflow()) + " ADA")
                 + " (fee and deposits included)");
         l.add("Valid " + (s.validFrom() == null ? "" : "from slot " + s.validFrom() + " ") + "until slot " + s.validTo());
         l.add("Signed by: " + (s.signers().isEmpty() ? "no key" : String.join(", ", s.signers())));
         if (!s.minted().isEmpty()) l.add("Mints or burns: " + String.join("; ", s.minted()));
         if (!s.callerTokensOut().isEmpty()) l.add("Your tokens out (negative: in): " + String.join("; ", s.callerTokensOut()));
+        if (s.reduced()) return l;
         List<Output> others = s.others();
         if (others.isEmpty()) {
             l.add("Sends nothing to other addresses.");

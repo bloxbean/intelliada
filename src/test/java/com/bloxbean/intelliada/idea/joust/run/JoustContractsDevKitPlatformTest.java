@@ -238,16 +238,17 @@ public class JoustContractsDevKitPlatformTest extends BasePlatformTestCase {
 
     public void testDexCallsWithSends() throws Exception {
         run("dex", 2, r -> {
-            // A native token for the pool, minted by A with a key policy (test code: IntelliAda's own code never builds).
+            // The pool opens first (it needs no token); the token is minted after Deploy's publications, which may
+            // otherwise spend the token's UTxO into a reference-script output the caller cannot spend again.
             Account a = new Account(Networks.testnet(), r.accounts.get(0).phrase());
             ScriptPubkey policy = ScriptPubkey.create(com.bloxbean.cardano.client.crypto.VerificationKey.create(a.publicKeyBytes()));
             String policyId = policy.getPolicyId();
+            String name = "4d31";
+            var pool = r.deploy(0, "open", args().put("tokenPolicy", policyId).put("tokenName", name), HostJson.object());
             var backend = new BFBackendService(r.store.endsWith("/") ? r.store : r.store + "/", "devkit");
             Tx mint = new Tx().mintAssets(policy, new Asset("M1", BigInteger.valueOf(1_000_000)), a.baseAddress()).from(a.baseAddress());
             var result = new QuickTxBuilder(backend).compose(mint).withSigner(SignerProviders.signerFrom(a)).completeAndWait();
             assertTrue("the token is minted: " + result, result.isSuccessful());
-            String name = "4d31";
-            var pool = r.deploy(0, "open", args().put("tokenPolicy", policyId).put("tokenName", name), HostJson.object());
             ObjectNode add = call("action", "addLiquidity", args().put("tokenIn", "100000")).put("instance", pool.instance());
             ObjectNode pay = add.putObject("pay").put("lovelace", "100000000");
             pay.putArray("assets").addArray().add(policyId).addArray().addArray().add(name).add("100000");
@@ -266,15 +267,18 @@ public class JoustContractsDevKitPlatformTest extends BasePlatformTestCase {
     /** DevKit's faucet: 1000 ADA to {@code address}, then waits until the store shows it. */
     private static void topUp(String admin, String store, String address) throws Exception {
         HttpClient http = HttpClient.newHttpClient();
+        // Two UTxOs: an init needs a seed input and, separately, collateral the composition does not spend.
         String body = "{\"address\":\"" + address + "\",\"adaAmount\":1000}";
-        var r = http.send(HttpRequest.newBuilder(URI.create(admin + "/local-cluster/api/addresses/topup"))
-                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertTrue("top-up: " + r.statusCode() + " " + r.body(), r.statusCode() / 100 == 2);
+        for (int t = 0; t < 2; t++) {
+            var r = http.send(HttpRequest.newBuilder(URI.create(admin + "/local-cluster/api/addresses/topup"))
+                    .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertTrue("top-up: " + r.statusCode() + " " + r.body(), r.statusCode() / 100 == 2);
+        }
         for (int i = 0; i < 60; i++) {
             var u = http.send(HttpRequest.newBuilder(URI.create(store + "/addresses/" + address + "/utxos")).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
-            if (u.statusCode() == 200 && u.body().contains("tx_hash")) return;
+            if (u.statusCode() == 200 && u.body().split("\"tx_hash\"", -1).length - 1 >= 2) return;
             Thread.sleep(1_000);
         }
         fail("the top-up did not appear");

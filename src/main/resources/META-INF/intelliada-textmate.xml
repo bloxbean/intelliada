@@ -2,5 +2,8 @@
     <!-- ADR-004 D2: JOUST's .jsc TextMate grammar, loaded only with IntelliJ's TextMate plugin -->
     <extensions defaultExtensionNs="com.intellij">
         <textmate.bundleProvider implementation="com.bloxbean.intelliada.idea.joust.textmate.JoustTextMateBundleProvider"/>
+        <!-- ADR-005 D15 (M3.4a): gutter icons on a .jsc contract's calls; they only open the JOUST Run panel -->
+        <codeInsight.lineMarkerProvider language="textmate"
+                                        implementationClass="com.bloxbean.intelliada.idea.joust.run.JoustEntryMarkers$Jsc"/>
     </extensions>
 </idea-plugin>

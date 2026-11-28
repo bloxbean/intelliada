@@ -206,17 +206,20 @@ public class JoustSignDevKitPlatformTest extends BasePlatformTestCase {
         var e = com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance()
                 .createFresh(name, com.bloxbean.intelliada.idea.joust.host.chain.NetworkIdentity.NetworkClass.DEVNET);
         var http = java.net.http.HttpClient.newHttpClient();
-        var r = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(admin + "/local-cluster/api/addresses/topup"))
-                .header("Content-Type", "application/json")
-                .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{\"address\":\"" + e.address + "\",\"adaAmount\":1000}")).build(),
-                java.net.http.HttpResponse.BodyHandlers.ofString());
-        assertEquals("top-up: " + r.body(), 2, r.statusCode() / 100);
+        // Two UTxOs: an init needs a seed input and, separately, collateral the composition does not spend.
+        for (int t = 0; t < 2; t++) {
+            var r = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(admin + "/local-cluster/api/addresses/topup"))
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{\"address\":\"" + e.address + "\",\"adaAmount\":500}")).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals("top-up: " + r.body(), 2, r.statusCode() / 100);
+        }
         for (int i = 0; i < 60; i++) {
             var u = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(store + "/addresses/" + e.address + "/utxos")).GET().build(),
                     java.net.http.HttpResponse.BodyHandlers.ofString());
-            if (u.statusCode() == 200 && u.body().contains("tx_hash")) return e;
+            if (u.statusCode() == 200 && u.body().split("\"tx_hash\"", -1).length - 1 >= 2) return e;
             Thread.sleep(1_000);
         }
-        throw new AssertionError("the top-up did not appear");
+        throw new AssertionError("the top-ups did not appear");
     }
 }

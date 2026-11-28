@@ -121,6 +121,9 @@ public final class JoustRunPanel implements Disposable {
         }));
         actions.add(writeButton("Deploy…", true));
         actions.add(writeButton("Call…", false));
+        JButton fund = new JButton("Fund account…");
+        fund.addActionListener(e -> fundAccount());
+        actions.add(fund);
         JButton refresh = new JButton("Refresh modules and networks");
         refresh.addActionListener(e -> refreshChoices());
         actions.add(refresh);
@@ -147,12 +150,111 @@ public final class JoustRunPanel implements Disposable {
         contractList.addListSelectionListener(e -> {
             instances.clear();
             pager = null;
+            if (!e.getValueIsAdjusting()) showRecorded();
         });
         instanceList.addListSelectionListener(e -> {
             if (pager != null && pager.method().equals("objects")) pager = null;
         });
         refreshChoices();
         updateButtons();
+        JoustRunNavigator.getInstance(project).attach(this);   // gutter icons open the panel here (M3.4a)
+    }
+
+    /**
+     * A gutter icon's contract (M3.4a): selected when listed; with no host running, the module that built it is chosen
+     * first. Nothing starts or runs.
+     */
+    void select(String contract) {
+        if (contracts.contains(contract)) {
+            contractList.setSelectedValue(contract, true);
+            return;
+        }
+        if (session == null && !launching) {
+            for (int i = 0; i < modules.getItemCount(); i++) {
+                ModuleItem m = modules.getItemAt(i);
+                if (builtContracts(m.dir()).contains(contract)) {
+                    modules.setSelectedIndex(i);   // lists that module's descriptions
+                    contractList.setSelectedValue(contract, true);
+                    return;
+                }
+            }
+        }
+        details.setText(PlainText.literal(contract + " is not among the built contracts" + (session != null
+                ? " of the running host's module." : ": build its module first."), 2000));
+    }
+
+    /** The selected contract's recorded instances, re-checked against the chain off the EDT (D15 "Persistence", I17). */
+    private void showRecorded() {
+        JoustRunSession s = session;
+        String c = contractList.getSelectedValue();
+        if (s == null || c == null) return;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            List<String> kept;
+            try {
+                kept = s.recheckRecorded(c);
+            } catch (Exception e) {
+                return;   // the listing still works
+            }
+            ui(() -> {
+                if (session != s || !c.equals(contractList.getSelectedValue())) return;
+                for (String i : kept) if (!instances.contains(i)) instances.addElement(i);
+            });
+        });
+    }
+
+    /** DevKit's faucet (D15, L8): an account of this network and an amount, funded off the EDT. */
+    private void fundAccount() {
+        JoustRunSession s = session;
+        if (s == null) {
+            details.setText("Start the host first.");
+            return;
+        }
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            var signers = s.signers();
+            ui(() -> {
+                if (session != s) return;
+                if (signers.isEmpty()) {
+                    details.setText("No account on this network: create one in the Accounts tab.");
+                    return;
+                }
+                JComboBox<JoustCallDialog.AccountItem> who = new JComboBox<>();
+                for (var a : signers) {
+                    var item = new JoustCallDialog.AccountItem(a);
+                    who.addItem(item);
+                    if (a.id.equals(lastCaller)) who.setSelectedItem(item);
+                }
+                com.intellij.ui.components.JBTextField ada = new com.intellij.ui.components.JBTextField("1000", 8);
+                JPanel form = com.intellij.util.ui.FormBuilder.createFormBuilder()
+                        .addLabeledComponent("Account:", who).addLabeledComponent("ADA:", ada)
+                        .addComponent(new JBLabel("DevKit's faucet pays it in two outputs, so the account can create an instance."))
+                        .getPanel();
+                var b = new com.intellij.openapi.ui.DialogBuilder(project).title("JOUST: Fund an Account").centerPanel(form);
+                b.addOkAction().setText("Fund");
+                b.addCancelAction();
+                if (b.show() != com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE) return;
+                var chosen = (JoustCallDialog.AccountItem) who.getSelectedItem();
+                long amount;
+                try {
+                    amount = Long.parseLong(ada.getText().strip());
+                } catch (NumberFormatException e) {
+                    details.setText("A whole number of ADA.");
+                    return;
+                }
+                if (chosen == null) return;
+                details.setText("Funding…");
+                ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                    String text;
+                    try {
+                        s.fund(chosen.e().address, amount);
+                        text = "Funded " + chosen.e().id + " with " + amount + " ADA (it shows once DevKit's store has the block).";
+                    } catch (Exception e) {
+                        text = "Failed: " + e.getMessage();
+                    }
+                    String shown = PlainText.literal(text, 2000);
+                    ui(() -> details.setText(shown));
+                });
+            });
+        });
     }
 
     /** The continuation of the last listing; read and written on the EDT only (M31B-CDX-19). */
@@ -358,6 +460,7 @@ public final class JoustRunPanel implements Disposable {
         status.setText(PlainText.label("Running: JOUST " + (version == null ? "?" : version) + " on magic "
                 + s.binding().identity().magic(), 120));
         details.setText("Host started. Select a contract.");
+        showRecorded();
         updateButtons();
     }
 
