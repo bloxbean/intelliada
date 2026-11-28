@@ -1269,6 +1269,36 @@ invariant.
     message is JOUST's to give.
   - **Still open:** Yano's part (bloxbean/yano#269), and driving the Swing dialogs in an automated UI test.
 
+- **E16. M3.4 split: M3.4a now, M3.4b with Yano (L48).** M3.4's exit (a `@ValidAfter` call made valid by advancing
+  Yano's time, an epoch shift, a snapshot restore with re-check) needs Yano, which waits for bloxbean/yano#269. M3.4a
+  delivers what needs no Yano; M3.4b adds Yano's controls and the exit once #269 is closed.
+  - **#46 (FAB-31..34):** registration evidence only for credentials the refused body itself registers (its
+    `publishes`), a failed `registered` call appended to the node's refusal, "try again" for a Call; History marks a body
+    that left the journal while prepared as released and keeps no CBOR; the reduced review says the fee and outflow are
+    unavailable and nothing about outputs; the refusal's whole body is read for the ledger's reasons.
+  - **DevKit faucet** (D15, L8): **Fund account…** in the panel; `JoustRunSession.fund` tops up through DevKit's admin
+    API (the binding's host, port 10000), in two outputs, so a fresh account has a seed input and separate collateral
+    for an `init` (an `init` from a one-UTxO account is refused by the host's composition). Devnets only.
+  - **Gutter icons** (D15 "Entry points"): Java methods annotated `@Init`, `@Action`, `@View`, `@Destroy`, `@OwnedInit`,
+    `@OwnedAction` or `@OwnedDestroy` in a `@StateContract` class; `.jsc` calls (`init`, `action`, `destroy`, `view`)
+    found lexically with comments and strings blanked, until JOUST's `joust/entryPoints` exists (instead of document
+    symbols: no language server needed). An icon opens the JOUST Run panel at its contract (switching to the module
+    that built it when no host runs); nothing runs.
+  - **Recorded instances** (D15 "Persistence"): each `init` this session submits is recorded in
+    `~/.intelliada/joust-instances/<chain key>/<module key>.json` (no keys; checked as untrusted on load: a file of
+    any other shape, or over 1 MiB, is ignored and replaced by the next record; 1,000 per module). Selecting a contract
+    lists its recorded instances after re-checking each with a state view: one the host refuses to read (closed, or no
+    longer on this chain) is forgotten; any other failure keeps it (I17's re-check; the snapshot-restore case is
+    M3.4b's).
+  - **Tests:** `JoustEntryMarkersTest` (the `.jsc` scan; the store's round trip and untrusted loads),
+    `JoustEntryMarkersPlatformTest` (Java and `.jsc` icons; none without `@StateContract`), `JoustPanelWriteTest`
+    (#46), and on DevKit `JoustPanelDevKitPlatformTest` (the init recorded, the closed instance forgotten on re-check,
+    the faucet's two outputs).
+  - **Observed (not yet verified at the output level):** with the caller holding a native token before Deploy, a later
+    `dex.addLiquidity` found the token only in a UTxO "carrying a reference script or a datum hash", likely because a
+    publication spent the token's UTxO into its reference-script output at the caller's address. The test mints after
+    Deploy; whether the host should keep a caller's tokens out of reference-script outputs is JOUST's to decide.
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
@@ -1283,6 +1313,7 @@ invariant.
 | L45 | M3.3b2 (E13): a body is recorded `submitted` before it is sent and released only on a 4xx from the node; a 5xx, timeout or interrupt keeps it for chain evidence. Registration evidence waits for the first contract that needs it. #38 closes on E13's concurrency model, with CDX-120..145 superseded by E12 | author | 2026-11-28 | E12's rule (strict only where signing depends on it); the restart-between-submit-and-settlement exit on DevKit |
 | L46 | M3.3b3 (E14) delivers the panel's write path with the Counter on DevKit (I10, I15, I21 tested there); the other contracts of the M3.3b exit (Java Counter, `bank`, quorum on `HostCouncil`, `dex`, `token`) follow as M3.3b4 through the same paths. The signed transaction is journaled and sent again while valid (#42) | author | 2026-11-28 | E12's convenience rule; one Fable review per PR (L44); the write path is the same for every contract, the remaining exits exercise call kinds |
 | L47 | M3.3b4 (E15): registration evidence comes from the node's own refusal (`StakeKeyRegisteredDELEG`) and is sent to the host per session, with Deploy retrying the publication once; no record is kept. The rest of the M3.3b exit runs on DevKit fixtures copied from JOUST at `01bad1f7` | author | 2026-11-28 | DevKit cannot report registrations; E12's convenience rule; the protocol's evidence-by-message form |
+| L48 | M3.4 is split (E16): M3.4a (#46, DevKit faucet, gutter icons, recorded instances) now; M3.4b (Yano's time, epoch shift, snapshots and rollback, and M3.4's exit) once bloxbean/yano#269 closes. `.jsc` entry points are found lexically until JOUST's `joust/entryPoints` | author | 2026-11-29 | yano#269 open; the non-Yano parts are independent; E12's convenience rule |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -1479,3 +1510,4 @@ Security and design approved round 8.
 - **r46** (2026-11-28): §12 E13 and L45: M3.3b2 as built (signing, submission, Deploy); #38's concurrency model and its deferred findings.
 - **r47** (2026-11-28): §12 E14 and L46: M3.3b3 as built (resending, the review modal, Deploy and Call, History); M3.3b4 holds the remaining contract exits.
 - **r48** (2026-11-28): §12 E15 and L47: M3.3b4 as built (registration evidence, #44, the rest of the M3.3b exit on DevKit).
+- **r49** (2026-11-29): §12 E16 and L48: M3.4 split; M3.4a as built (#46, faucet, gutter icons, recorded instances).
