@@ -379,6 +379,7 @@ public final class JoustRunSession {
                 p.setAll(params);
                 params = p;
             }
+            lastRequest = params;   // the exact parameters sent: the checker's request (D13, ADR5-CDX-1)
             if (journal == null) return running.session().call(method, params, CALL_TIMEOUT, () -> false);
             // D17: settlement before the call when anything is live; the call's read tips go to the host-table model.
             journal.beforeCall(method, params.path("now").asLong(0), lastTip.get());
@@ -633,6 +634,177 @@ public final class JoustRunSession {
         synchronized (clock) {
             return checked(contract, call("deployment", HostJson.object().put("contract", contract), true));
         }
+    }
+
+    // ---- signing and submission (M3.3b2) -------------------------------------------------------------------------------
+
+    /** The exact parameters of the last forward call (its {@code now} included), read under the call lock. */
+    private @Nullable ObjectNode lastRequest;
+
+    /** Tests: the checker to run instead of the plugin's bundled one (a test JVM is not the IDE's JBR 25). */
+    static volatile com.bloxbean.intelliada.idea.joust.verifier.@Nullable JoustChecker checkerForTests;
+
+    /** The fee IntelliAda signs at most on a devnet or test network (D14b's user maximum; a setting comes with M3.3b3). */
+    public static final long MAX_FEE = 5_000_000;
+
+    /** A submitted transaction: its id, the host's reservation, and the instance it creates or acts on (or null). */
+    public record Submitted(String txHash, String reservation, @Nullable String instance) {
+    }
+
+    /**
+     * Builds, checks, signs and submits one transaction (D13, I11, I25, I30; M3.3b2). In order, under the call lock:
+     * <ol>
+     *   <li>signing must be possible on this session (the signing gate passed, no read-only reason, the journal open);</li>
+     *   <li>the host builds it ({@code prepare} or {@code publish}, after the deployment check);</li>
+     *   <li>JOUST's reference checker accepts it, with inputs IntelliAda reads from the node itself;</li>
+     *   <li>it is signed by splicing, with every key the body requires (the caller's and the chosen co-signers');</li>
+     *   <li>it is journaled (awaiting approval: not yet handed out), submitted through the bound node, and recorded as
+     *   submitted. A node's refusal discards it (it was never handed out); an unknown outcome keeps it submitted, so it
+     *   is settled or expires on the chain's evidence (I30).</li>
+     * </ol>
+     * Returns null when a {@code publish} had nothing to publish. Any refusal before submission discards the body.
+     */
+    @org.jetbrains.annotations.ApiStatus.Internal   // the panel's write path wires it in M3.3b3
+    public @Nullable Submitted submit(String method, ObjectNode params, String callerId, java.util.List<String> coSignerIds) throws Exception {
+        synchronized (clock) {
+            String gate = signingDisabled();
+            if (gate != null) throw new NetworkIdentity.Refused("signing is not possible on this session: " + gate);
+            if (journal == null) throw new NetworkIdentity.Refused(journalBlocks());
+            String contract = method.equals("publish") ? params.path("contract").textValue() : params.path("call").path("contract").textValue();
+            JsonNode result = build(method, params);
+            ObjectNode request = lastRequest;
+            if (method.equals("publish") && (result == null || result.isNull())) return null;   // already published
+            JsonNode prepared = result.path("prepared");
+            String reservation = prepared.path("reservation").textValue();
+            try {
+                var anchors = anchors(contract);
+                var node = new com.bloxbean.intelliada.idea.joust.host.chain.NodeChain(binding.api().copy(), binding.identity().networkId());
+                ObjectNode input = com.bloxbean.intelliada.idea.joust.verifier.JoustCheckInput.assemble(method, request, anchors,
+                        binding.identity().networkId(), MAX_FEE, result, node);
+                var checker = checkerForTests != null ? checkerForTests : com.bloxbean.intelliada.idea.joust.verifier.JoustChecker.bundled();
+                var verdict = checker.check(input);
+                if (verdict instanceof com.bloxbean.intelliada.idea.joust.verifier.JoustChecker.Refused r) {
+                    throw new NetworkIdentity.Refused("JOUST's checker refused the transaction: " + r.why());
+                }
+                String cbor = prepared.path("cbor").asText("").toLowerCase(java.util.Locale.ROOT);
+                var tx = com.bloxbean.intelliada.idea.joust.tx.TxCbor.transaction(cbor);
+                var body = com.bloxbean.intelliada.idea.joust.tx.TxCbor.body(tx);
+                var required = com.bloxbean.intelliada.idea.joust.sign.JoustSigner.requiredKeys(body, node::address);
+                var accounts = com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance();
+                java.util.List<com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.SigningKey> keys = new java.util.ArrayList<>();
+                keys.add(accounts.signingKey(callerId, binding.identity().networkClass()));
+                for (String c : coSignerIds) keys.add(accounts.signingKey(c, binding.identity().networkClass()));
+                String signed = com.bloxbean.intelliada.idea.joust.sign.JoustSigner.sign(cbor, keys, required);
+                var entry = new com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry(reservation, body.txHash(), cbor,
+                        body.validFrom(), body.validTo(), com.bloxbean.intelliada.idea.joust.journal.JournalStore.Handout.approvalPending,
+                        binding.node().getId(), com.bloxbean.intelliada.idea.joust.journal.JournalStore.State.prepared, null, null,
+                        java.util.List.of(), label(method, params));
+                long tip = lastTip.get(), sentNow = request.path("now").asLong(tip);
+                journal.admit(entry, tip, sentNow);   // I25: journaled before it leaves IntelliAda
+                // Recorded as submitted before it is sent: a crash after the send keeps its inputs held (I30).
+                journal.handedOut(reservation, com.bloxbean.intelliada.idea.joust.journal.JournalStore.Handout.submitted);
+                String id;
+                try {
+                    id = binding.api().submit(java.util.HexFormat.of().parseHex(signed));
+                } catch (com.bloxbean.intelliada.idea.joust.host.chain.BlockfrostApi.NodeRefused refused) {
+                    try {
+                        journal.nodeRefused(reservation);   // the node never took it: its inputs are released
+                    } catch (Exception kept) {
+                        // kept until the chain settles it
+                    }
+                    throw new NetworkIdentity.Refused(refused.getMessage());
+                } catch (com.bloxbean.intelliada.idea.joust.host.chain.BlockfrostApi.Failed | InterruptedException unknown) {
+                    if (unknown instanceof InterruptedException) Thread.currentThread().interrupt();
+                    throw new NetworkIdentity.Refused("the submission's outcome is unknown (" + unknown.getMessage()
+                            + "); IntelliAda keeps the transaction and settles it from the chain");
+                }
+                if (!id.equals(body.txHash())) {
+                    throw new NetworkIdentity.Refused("the node answered another transaction id (" + id + ") than the transaction's");
+                }
+                return new Submitted(body.txHash(), reservation, prepared.path("instance").textValue());
+            } catch (Exception refused) {
+                // Anything refused before the node saw it: the body was never handed out, and its inputs are released.
+                discardQuietly(reservation);
+                throw refused;
+            }
+        }
+    }
+
+    private void discardQuietly(@Nullable String reservation) {
+        if (reservation == null || journal == null) return;
+        try {
+            journal.discard(reservation);
+        } catch (Exception alreadyHandedOutOrGone) {
+            // handed out (submitted): settled from the chain; or never committed: nothing to release
+        }
+    }
+
+    private static String label(String method, ObjectNode params) {
+        if (method.equals("publish")) return "publish " + params.path("prerequisite").asText("");
+        JsonNode c = params.path("call");
+        return c.path("kind").asText("") + " " + c.path("method").asText("");
+    }
+
+    /**
+     * Waits until {@code txHash}'s journal entry shows it on chain (included or final), running settlement passes; false
+     * when it expired, or did not land within {@code timeout}.
+     */
+    @org.jetbrains.annotations.ApiStatus.Internal
+    public boolean awaitInclusion(String txHash, java.time.Duration timeout) throws Exception {
+        if (journal == null) return false;
+        long end = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < end) {
+            synchronized (clock) {
+                journal.settlement().poll();
+            }
+            for (var e : journal.journal().entries()) {
+                if (!e.txHash().equals(txHash)) continue;
+                switch (e.state()) {
+                    case shallow, confirmed -> {
+                        return true;
+                    }
+                    case expired, discarded -> {
+                        return false;
+                    }
+                    default -> {
+                    }
+                }
+            }
+            Thread.sleep(1_000);
+        }
+        return false;
+    }
+
+    /**
+     * D15's Deploy (M3.3b2): every outstanding prerequisite published and settled on chain before the next, then the
+     * contract's {@code init} call. Returns what was submitted, in order (the last is {@code init}, with its instance).
+     *
+     * @param init the init call ({@code method} and {@code args}); its {@code contract}, {@code kind} and {@code address}
+     *             are filled in
+     */
+    @org.jetbrains.annotations.ApiStatus.Internal
+    public java.util.List<Submitted> deploy(String contract, String callerId, ObjectNode init, long ttlSlots, java.time.Duration settle)
+            throws Exception {
+        var accounts = com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance();
+        String address = accounts.forSession(binding.identity()).stream().filter(e -> e.id.equals(callerId)).map(e -> e.address)
+                .findFirst().orElseThrow(() -> new NetworkIdentity.Refused("the caller is not an account of this network"));
+        java.util.List<Submitted> ids = new java.util.ArrayList<>();
+        for (int round = 0; round < 32; round++) {
+            JsonNode pre = prerequisites(contract);
+            if (!pre.isArray() || pre.isEmpty()) break;
+            String id = pre.get(0).path("id").textValue();
+            ObjectNode publish = HostJson.object().put("ttlSlots", ttlSlots).put("contract", contract).put("prerequisite", id).put("address", address);
+            Submitted s = submit("publish", publish, callerId, java.util.List.of());
+            if (s == null) continue;
+            ids.add(s);
+            if (!awaitInclusion(s.txHash(), settle)) {
+                throw new NetworkIdentity.Refused("the publication of " + id + " did not land on chain in time; Deploy stopped");
+            }
+        }
+        ObjectNode call = init.deepCopy().put("contract", contract).put("kind", "init").put("address", address);
+        Submitted s = submit("prepare", HostJson.object().put("ttlSlots", ttlSlots).set("call", call), callerId, java.util.List.of());
+        if (s != null) ids.add(s);
+        return ids;
     }
 
     public JsonNode prerequisites(String contract) throws Exception {

@@ -73,22 +73,28 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
             assertNotNull("a journaled session", s1.journalForTests());
             String contract = s1.running().initialize().path("contracts").get(0).path("name").textValue();
             JsonNode pre = off(() -> s1.prerequisites(contract));
-            assertTrue("the Counter's reference script is outstanding on this DevKit: " + pre, pre.isArray() && pre.size() > 0);
-            String id = pre.get(0).path("id").textValue();
-            var publish = HostJson.object().put("ttlSlots", 120).put("contract", contract).put("prerequisite", id).put("address", payer);
+            // The Counter's reference script, while outstanding; on a DevKit where it was published already (by the signing
+            // exit test), the Counter's init instead: either is a body holding inputs.
+            boolean publishing = pre.isArray() && pre.size() > 0;
+            String id = publishing ? pre.get(0).path("id").textValue() : "init";
+            String method = publishing ? "publish" : "prepare";
+            com.fasterxml.jackson.databind.node.ObjectNode publish = publishing
+                    ? HostJson.object().put("ttlSlots", 120).put("contract", contract).put("prerequisite", id).put("address", payer)
+                    : HostJson.object().put("ttlSlots", 120).set("call", HostJson.object().put("contract", contract).put("kind", "init")
+                            .put("method", "init").put("address", payer).set("args", HostJson.object()));
             // An unsigned body never handed out is discarded through the model; the publication can then be prepared again
             // (D17, M33B1-DES-2).
-            JsonNode declined = off(() -> s1.build("publish", publish.deepCopy())).path("prepared");
+            JsonNode declined = off(() -> s1.build(method, publish.deepCopy())).path("prepared");
             off(() -> {
                 s1.discard(declined.path("reservation").textValue());
                 return null;
             });
-            JsonNode prepared = off(() -> s1.build("publish", publish.deepCopy())).path("prepared");
+            JsonNode prepared = off(() -> s1.build(method, publish.deepCopy())).path("prepared");
             String cbor = prepared.path("cbor").textValue().toLowerCase(java.util.Locale.ROOT);
             TxCbor.Body body = TxCbor.body(TxCbor.transaction(cbor));
             assertEquals("IntelliAda's reader agrees with the host's hash", prepared.path("txHash").textValue(), body.txHash());
             assertEquals(prepared.path("validTo").longValue(), (long) body.validTo());
-            assertTrue("the body publishes its prerequisite", body.publishes().contains(id.startsWith("verifier:")
+            assertTrue("the body publishes its prerequisite", !publishing || body.publishes().contains(id.startsWith("verifier:")
                     ? "referenceScript:" + id.substring(9) : id));
             // Journaled as handed out (an export in M3.5's terms), by the test: nothing in production admits in M3.3b1.
             var entry = new JournalStore.Entry(prepared.path("reservation").textValue(), body.txHash(), cbor, body.validFrom(), body.validTo(),
@@ -121,12 +127,16 @@ public class JoustRunJournalDevKitPlatformTest extends BasePlatformTestCase {
             assertNull("restore completed: building is not blocked by the journal", s2.journalBlocks());
             // The fresh host holds the reservation: the same publication is pending.
             try {
-                off(() -> s2.build("publish", publish.deepCopy()));
+                off(() -> s2.build(method, publish.deepCopy()));
                 fail("the restored reservation was not held");
             } catch (Throwable expected) {
                 HostError he = cause(expected);
                 assertNotNull(String.valueOf(expected), he);
-                assertEquals("refusal/pending", he.kind() + "/" + he.code());
+                // A publication is pending; an init finds the payer's inputs held by the restored reservation (the host
+                // reports the failed coin selection as a runtime refusal). Either way the reservation is held.
+                if (publishing) assertEquals("refusal/pending", he.kind() + "/" + he.code());
+                else assertTrue(he + ": " + he.getMessage(), he.is("refusal", "pending") || he.is("refusal", "runtime"));
+                System.out.println("JOUST restored-hold refusal: " + he.kind() + "/" + he.code() + ": " + he.getMessage());
             }
             // A handed-out body is never discarded (I30): only chain evidence or expiry releases it.
             try {

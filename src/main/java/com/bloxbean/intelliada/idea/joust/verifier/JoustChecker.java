@@ -129,6 +129,20 @@ public final class JoustChecker {
     }
 
     /** The checker this plugin was built with, run on the IDE's own runtime. */
+    /**
+     * Tests: the bundle at {@code dir} (the build's {@code joust-verifier/bundle}) run by {@code javaExe} (a JDK 25), with
+     * the plugin's own manifest.
+     */
+    public static JoustChecker forTests(Path dir, Path javaExe) {
+        Manifest m;
+        try (InputStream in = JoustChecker.class.getResourceAsStream(MANIFEST)) {
+            m = Manifest.parse(in == null ? null : new String(in.readNBytes(64 * 1024), StandardCharsets.UTF_8));
+        } catch (IOException | IllegalStateException e) {
+            m = new Manifest(false, null, false, null, null, Map.of());
+        }
+        return new JoustChecker(m, dir, javaExe);
+    }
+
     public static JoustChecker bundled() {
         Manifest m;
         try (InputStream in = JoustChecker.class.getResourceAsStream(MANIFEST)) {

@@ -38,7 +38,16 @@ public final class ProviderChain implements Settlement.ChainView {
         JsonNode t = api.get("/txs/" + txHash, System.nanoTime() + deadline.toNanos(), READ_BYTES);
         if (t == null) return null;
         if (!txHash.equals(t.path("hash").textValue())) throw new BlockfrostApi.Failed("the node answered another transaction");
-        return new Inclusion(nat(t.get("slot")), nat(t.get("block_height")), hash(t.get("block")));
+        long height = nat(t.get("block_height"));
+        JsonNode block = t.get("block");
+        if (block == null || block.isNull()) {
+            // Yaci DevKit's store answers a transaction without its block's hash: it is read from the block itself.
+            JsonNode b = api.get("/blocks/" + height, System.nanoTime() + deadline.toNanos(), READ_BYTES);
+            if (b == null) return null;   // not yet in a block the node serves
+            if (nat(b.get("height")) != height) throw new BlockfrostApi.Failed("the node answered another block");
+            block = b.get("hash");
+        }
+        return new Inclusion(nat(t.get("slot")), height, hash(block));
     }
 
     private static long nat(@Nullable JsonNode n) throws BlockfrostApi.Failed {

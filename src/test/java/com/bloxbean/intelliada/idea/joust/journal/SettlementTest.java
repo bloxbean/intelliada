@@ -810,6 +810,39 @@ public class SettlementTest {
         }
     }
 
+    /**
+     * M3.3b2: a body is recorded as submitted before it is sent; when the node refuses it (4xx), it is released. A body
+     * restored as submitted (not submitted from this session) is never released that way.
+     */
+    @Test
+    public void aSubmissionTheNodeRefusedIsReleasedOnlyWhenThisSessionSubmittedIt() throws Exception {
+        String a = tx(List.of(ref(1)), 2025);
+        chain.at(1990);
+        Settlement s = restored(List.of(submitted("1", a)), List.of("1"));
+        try {
+            s.nodeRefused("1");
+            fail("a restored submission was released");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("submitted from this session"));
+        }
+        String b = tx(List.of(ref(2)), 2025);
+        s.beginCall();
+        s.endCall("prepare", prepared("2", b), null);
+        s.admit(entry("2", b, JournalStore.Handout.approvalPending), 1990, 1990);
+        s.handedOut("2", JournalStore.Handout.submitted);
+        try {
+            s.discard("2");
+            fail("a submitted body was discarded");
+        } catch (ChainJournal.Fenced expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("I30"));
+        }
+        host.answer("discarded");
+        s.nodeRefused("2");
+        assertEquals("settled discarded/1990", host.calls.get(host.calls.size() - 1));
+        assertTrue("the journal no longer holds it", journal.entries().stream().noneMatch(e -> e.reservation().equals("2")));
+        assertNull(fence.get());
+    }
+
     /** CDX-53: a prepared reply stating a fractional validity fences the host. */
     @Test
     public void aFractionalValidityFences() throws Exception {

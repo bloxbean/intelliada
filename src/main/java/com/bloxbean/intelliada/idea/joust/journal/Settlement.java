@@ -601,6 +601,32 @@ public final class Settlement {
         if (cur == null || cur.state() != State.prepared) throw new ChainJournal.Fenced("the journaled body is not prepared");
         journal.handout(reservation, h);
         builtHere.remove(reservation);
+        if (h == Handout.submitted) submittedHere.add(reservation);
+    }
+
+    /**
+     * M3.3b2: the node refused a submission this session sent (a 4xx: it never took the transaction), so the body is
+     * released though it was recorded as submitted. Only a body submitted from this session, still prepared in the host and
+     * in the journal after a pass (not on chain), settles {@code discarded}; anything else stays held for chain evidence.
+     */
+    @org.jetbrains.annotations.ApiStatus.Internal
+    public synchronized void nodeRefused(String reservation) throws Exception {
+        if (fenced != null) throw new ChainJournal.Fenced("the dev host was stopped: " + fenced);
+        if (!submittedHere.contains(reservation)) throw new ChainJournal.Fenced("only a body submitted from this session is released on the node's refusal");
+        if (!deferJournal && !poll()) throw new ChainJournal.Fenced("the chain kept moving; the body is kept until it settles");
+        Entry e = entry(reservation);
+        HostTable.Res lo = table.lower(reservation), up = table.upper(reservation);
+        if (e == null || e.state() != State.prepared || e.handout() != Handout.submitted
+                || lo == null || up == null || lo.st() != HostTable.St.prepared || up.st() != HostTable.St.prepared) {
+            throw new ChainJournal.Fenced("the body is no longer only prepared; it is kept until it settles");
+        }
+        long tip = highest != null ? highest.slot() : chain.tip().slot();
+        if (!settle(reservation, lo.txHash(), "discarded", null, tip) || table.lower(reservation).st() != HostTable.St.discarded) {
+            fence("it did not discard the body as expected");
+            throw new ChainJournal.Fenced("the dev host did not discard the body as expected; it was stopped");
+        }
+        submittedHere.remove(reservation);
+        if (!deferJournal) journal.remove(Set.of(reservation));
     }
 
     /** The session ended: nothing more is committed by this settlement (M33B1-CDX-44). Waits for a pass in progress. */
@@ -613,6 +639,8 @@ public final class Settlement {
 
     /** Reservations this host prepared in this session (never restored): the only ones discard may release. */
     private final Set<String> builtHere = new HashSet<>();
+    /** Bodies this session recorded as submitted, before their submission was sent (M3.3b2). */
+    private final Set<String> submittedHere = new HashSet<>();
 
     private static String describe(HostTable.Outcome o) {
         return o.state() != null ? o.state().name() : o.error();

@@ -222,6 +222,11 @@ public final class JoustRunJournal implements AutoCloseable {
         settlement.handedOut(reservation, h);
     }
 
+    /** The node refused a submission this session sent: its body is released (M3.3b2). */
+    void nodeRefused(String reservation) throws Exception {
+        settlement.nodeRefused(reservation);
+    }
+
     /** D17: at least every {@code settlementSlots/2} slots while anything is live. */
     long tickMillis() {
         return Math.max(5_000, settlementSlots / 2 * slotMs);

@@ -26,9 +26,16 @@ import java.util.concurrent.TimeoutException;
 public final class BlockfrostApi {
 
     /** A provider failure; its message is safe to show and to send to the host as {@code failed.message}. */
-    public static final class Failed extends Exception {
+    public static class Failed extends Exception {
         public Failed(String why) {
             super(why, null, false, false);
+        }
+    }
+
+    /** The node answered a submission with a 4xx: it did not take the transaction (a ledger or mempool refusal). */
+    public static final class NodeRefused extends Failed {
+        public NodeRefused(String why) {
+            super(why);
         }
     }
 
@@ -152,6 +159,36 @@ public final class BlockfrostApi {
         } catch (IOException e) {
             throw new Failed("the provider's answer is not JSON");
         }
+    }
+
+    /**
+     * Submits a signed transaction (Blockfrost's {@code POST /tx/submit}, {@code application/cbor}; DevKit's store serves
+     * the same): the node's transaction id, or a failure with the node's own reason.
+     */
+    public String submit(byte[] signedCbor) throws Failed, InterruptedException {
+        HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(base + "/tx/submit")).timeout(timeout)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(signedCbor))
+                .header("Content-Type", "application/cbor").header("Accept", "application/json");
+        if (projectId != null) rb.header("project_id", projectId);
+        HttpResponse<byte[]> r;
+        try {
+            r = http.send(rb.build(), HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException e) {
+            throw new Failed("the node could not be reached to submit (" + e.getClass().getSimpleName() + ")");
+        }
+        String body = new String(r.body(), java.nio.charset.StandardCharsets.UTF_8).trim();
+        if (r.statusCode() >= 400 && r.statusCode() <= 499) {
+            throw new NodeRefused("the node refused the transaction (HTTP " + r.statusCode() + "): "
+                    + (body.length() > 2000 ? body.substring(0, 2000) + "…" : body));
+        }
+        if (r.statusCode() < 200 || r.statusCode() > 299) {
+            // A 5xx (or a redirect): the node may or may not have taken it.
+            throw new Failed("the node answered the submission with HTTP " + r.statusCode());
+        }
+        // Blockfrost answers the id as a JSON string; some providers as bare text.
+        String id = body.startsWith("\"") && body.endsWith("\"") && body.length() >= 2 ? body.substring(1, body.length() - 1) : body;
+        if (!id.matches("[0-9a-f]{64}")) throw new Failed("the node's answer to a submission is not a transaction id");
+        return id;
     }
 
     private static void closeQuietly(InputStream in) {
