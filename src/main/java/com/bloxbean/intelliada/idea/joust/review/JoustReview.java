@@ -37,7 +37,8 @@ public final class JoustReview {
      * back to the caller, in lovelace; null when an input's value could not be read.
      */
     public record Summary(String label, String txHash, BigInteger fee, @Nullable Long validFrom, long validTo, List<Output> outputs,
-                          @Nullable BigInteger callerNetOutflow, List<String> signers, List<String> minted) {
+                          @Nullable BigInteger callerNetOutflow, List<String> signers, List<String> minted, List<String> callerTokensOut,
+                          @Nullable String note) {
 
         /** The outputs to addresses that are neither the deployment's nor the caller's. */
         public List<Output> others() {
@@ -78,11 +79,19 @@ public final class JoustReview {
         String callerKey = paymentKey(callerAddress);
         List<Output> outs = new ArrayList<>();
         BigInteger back = BigInteger.ZERO;
+        Map<String, BigInteger> tokens = new java.util.TreeMap<>();   // unit (policy + name hex) to the caller's net outflow
         for (TransactionOutput o : body.getOutputs()) {
             String address = o.getAddress();
             BigInteger lovelace = o.getValue() == null || o.getValue().getCoin() == null ? BigInteger.ZERO : o.getValue().getCoin();
             To to = to(address, callerAddress, callerKey, deploymentScripts);
-            if (to == To.CALLER) back = back.add(lovelace);
+            if (to == To.CALLER) {
+                back = back.add(lovelace);
+                if (o.getValue() != null && o.getValue().getMultiAssets() != null) {
+                    for (MultiAsset m : o.getValue().getMultiAssets()) {
+                        for (var a : m.getAssets()) tokens.merge(m.getPolicyId() + hexName(a.getName()), a.getValue().negate(), BigInteger::add);
+                    }
+                }
+            }
             outs.add(new Output(address, lovelace, assets(o.getValue() == null ? null : o.getValue().getMultiAssets()), to));
         }
         BigInteger spent = BigInteger.ZERO;
@@ -97,7 +106,10 @@ public final class JoustReview {
                 String a = u.path("address").textValue();
                 if (a == null || to(a, callerAddress, callerKey, deploymentScripts) != To.CALLER) continue;
                 for (JsonNode amt : u.path("amount")) {
-                    if ("lovelace".equals(amt.path("unit").textValue())) spent = spent.add(new BigInteger(amt.path("quantity").asText("0")));
+                    String unit = amt.path("unit").textValue();
+                    BigInteger q = new BigInteger(amt.path("quantity").asText("0"));
+                    if ("lovelace".equals(unit)) spent = spent.add(q);
+                    else if (unit != null) tokens.merge(unit, q, BigInteger::add);
                 }
             } catch (Exception e) {
                 known = false;
@@ -107,8 +119,28 @@ public final class JoustReview {
         for (String k : requiredKeys) signers.add(signerNames.getOrDefault(k, "key " + k));
         Long from = body.getValidityStartInterval() == 0 ? null : body.getValidityStartInterval();
         BigInteger fee = body.getFee() == null ? BigInteger.ZERO : body.getFee();
+        List<String> tokensOut = new ArrayList<>();
+        if (known) tokens.forEach((unit, q) -> {
+            if (q.signum() != 0) tokensOut.add(unit + " " + q);
+        });
         return new Summary(label, txHashOf(cborHex), fee, from, body.getTtl(), List.copyOf(outs), known ? spent.subtract(back) : null,
-                List.copyOf(signers), assets(body.getMint()));
+                List.copyOf(signers), assets(body.getMint()), List.copyOf(tokensOut), known ? null : "an input could not be read: token movement unknown");
+    }
+
+    /**
+     * FAB-30: a body CCL cannot read is still reviewed, from IntelliAda's own reader's facts (its id, validity and signers),
+     * with the details marked unavailable; the decision stays the user's.
+     */
+    public static Summary reduced(String label, String txHash, @Nullable Long validFrom, long validTo, List<String> signers, String why) {
+        return new Summary(label, txHash, BigInteger.ZERO, validFrom, validTo, List.of(), null, List.copyOf(signers), List.of(), List.of(),
+                "details unavailable: " + why + ". JOUST's checker accepted it; the outputs, fee and outflow cannot be shown");
+    }
+
+    /** An asset name as hex (CCL gives a {@code 0x}-prefixed hex or the name's text). */
+    private static String hexName(@Nullable String name) {
+        if (name == null) return "";
+        if (name.startsWith("0x")) return name.substring(2);
+        return HexFormat.of().formatHex(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private static String txHashOf(String cborHex) {
@@ -160,6 +192,7 @@ public final class JoustReview {
     public static List<String> lines(Summary s) {
         List<String> l = new ArrayList<>();
         l.add(s.label());
+        if (s.note() != null) l.add("Note: " + s.note());
         l.add("Transaction " + s.txHash());
         l.add("Fee: " + ada(s.fee()) + " ADA");
         l.add("Your net outflow: " + (s.callerNetOutflow() == null ? "unknown (an input could not be read)" : ada(s.callerNetOutflow()) + " ADA")
@@ -167,6 +200,7 @@ public final class JoustReview {
         l.add("Valid " + (s.validFrom() == null ? "" : "from slot " + s.validFrom() + " ") + "until slot " + s.validTo());
         l.add("Signed by: " + (s.signers().isEmpty() ? "no key" : String.join(", ", s.signers())));
         if (!s.minted().isEmpty()) l.add("Mints or burns: " + String.join("; ", s.minted()));
+        if (!s.callerTokensOut().isEmpty()) l.add("Your tokens out (negative: in): " + String.join("; ", s.callerTokensOut()));
         List<Output> others = s.others();
         if (others.isEmpty()) {
             l.add("Sends nothing to other addresses.");

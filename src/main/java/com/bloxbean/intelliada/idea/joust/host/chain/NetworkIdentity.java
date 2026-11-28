@@ -38,6 +38,10 @@ public final class NetworkIdentity {
         public Refused(String why) {
             super(why, null, false, false);
         }
+
+        public Refused(String why, @Nullable Throwable cause) {
+            super(why, cause, false, false);
+        }
     }
 
     private NetworkIdentity() {

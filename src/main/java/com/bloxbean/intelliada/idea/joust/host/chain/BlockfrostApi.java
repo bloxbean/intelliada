@@ -89,6 +89,11 @@ public final class BlockfrostApi {
         return new BlockfrostApi(base.toString(), projectId, timeout);
     }
 
+    /** A copy whose requests have {@code t} as their deadline (a short one for background re-sends; FAB-29). */
+    public BlockfrostApi withTimeout(Duration t) {
+        return new BlockfrostApi(base.toString(), projectId, t);
+    }
+
     /** GET {@code path} within this API's default timeout; null on 404. */
     public @Nullable JsonNode get(String path) throws Failed, InterruptedException {
         return get(path, System.nanoTime() + timeout.toNanos());
