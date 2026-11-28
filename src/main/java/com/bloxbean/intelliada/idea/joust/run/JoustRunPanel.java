@@ -11,6 +11,7 @@ import com.bloxbean.intelliada.idea.joust.project.JoustProjectService;
 import com.bloxbean.intelliada.idea.joust.tasks.JoustRunGuard;
 import com.bloxbean.intelliada.idea.joust.trust.JoustTrust;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.progress.ProgressIndicator;
@@ -37,10 +38,11 @@ import java.util.List;
 import java.util.function.Function;
 
 /**
- * ADR-005 M3.1b: the read-only JOUST Run tool window (D15). Contracts are listed from the module's built descriptions
+ * ADR-005 M3.1b, M3.3b3: the JOUST Run tool window (D15). Contracts are listed from the module's built descriptions
  * before any host runs; Start binds the chosen devnet (D14), starts the project's host (D11) and shows each contract's
- * calls, deployment, prerequisites, instances and decoded state. Nothing here signs or submits (M3.3b). Every string
- * from the project, the host or the node is shown as plain text (I15).
+ * calls, deployment, prerequisites, instances and decoded state. Deploy and Call prepare, check, sign and submit through
+ * the session (M3.3b2), with the review modal when the setting asks for it; History shows the session's journal. Every
+ * session call runs off the EDT. Every string from the project, the host or the node is shown as plain text (I15).
  */
 public final class JoustRunPanel implements Disposable {
 
@@ -59,6 +61,18 @@ public final class JoustRunPanel implements Disposable {
     private final JBList<String> instanceList = new JBList<>(instances);
     private final JBTextArea details = new JBTextArea();
     private final JBTextArea console = new JBTextArea();
+    private final JBTextArea history = new JBTextArea();
+    private final javax.swing.Timer historyTimer = new javax.swing.Timer(5_000, e -> refreshHistory());
+    /** The account last used to sign, preselected in the next form (EDT only). */
+    private @Nullable String lastCaller;
+    /** A write (Deploy or Call) in progress: one at a time (EDT only). */
+    private boolean writing;
+    /** TTL of the bodies the panel prepares, in slots, within the network's maximum (D14). */
+    static final long TTL_SLOTS = 300;
+
+    static long ttl(JoustRunSession s) {
+        return Math.max(1, Math.min(TTL_SLOTS, com.bloxbean.intelliada.idea.joust.journal.TimePolicy.maxTtlSlots(s.binding().identity()) - 1));
+    }
     private volatile JoustRunSession session;
     private final com.bloxbean.intelliada.idea.joust.accounts.JoustAccountsPanel accounts;
 
@@ -67,6 +81,8 @@ public final class JoustRunPanel implements Disposable {
         this.accounts = new com.bloxbean.intelliada.idea.joust.accounts.JoustAccountsPanel(project);
         details.setEditable(false);
         console.setEditable(false);
+        history.setEditable(false);
+        history.setFont(JBUI.Fonts.create(java.awt.Font.MONOSPACED, JBUI.Fonts.label().getSize()));
         contractList.setCellRenderer(plainRenderer());
         instanceList.setCellRenderer(plainRenderer());
 
@@ -103,6 +119,8 @@ public final class JoustRunPanel implements Disposable {
             if (!in[0].matches("(?:[0-9a-fA-F]{2}){1,65536}")) throw new IllegalArgumentException("not hex CBOR");
             return s.decode(c, in[0].toLowerCase());
         }));
+        actions.add(writeButton("Deploy…", true));
+        actions.add(writeButton("Call…", false));
         JButton refresh = new JButton("Refresh modules and networks");
         refresh.addActionListener(e -> refreshChoices());
         actions.add(refresh);
@@ -115,6 +133,7 @@ public final class JoustRunPanel implements Disposable {
 
         JBTabbedPane tabs = new JBTabbedPane();
         tabs.addTab("Result", new JBScrollPane(details));
+        tabs.addTab("History", new JBScrollPane(history));
         tabs.addTab("JOUST host", new JBScrollPane(console));
         tabs.addTab("Accounts", accounts.component());
         JBSplitter split = new JBSplitter(false, 0.3f);
@@ -322,6 +341,11 @@ public final class JoustRunPanel implements Disposable {
         launching = false;
         session = s;
         accounts.bindSession(s.binding().identity().networkClass());   // I12: the tab shows this session's class only
+        // D13: the review modal before signing, when the user asked for it (devnets: off by default).
+        s.reviewer(summary -> !com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.getInstance().getState().confirmDevnetTransactions
+                || onEdtAny(() -> new com.bloxbean.intelliada.idea.joust.review.JoustReviewDialog(project, summary).showAndGet()));
+        historyTimer.start();
+        refreshHistory();
         appendConsole(s.running().stderr().text());
         // Registered after the snapshot of the text so far, so early lines are not shown twice (M31B-DES-9).
         s.running().stderr().listen(text -> ui(() -> appendConsole(text)));
@@ -343,6 +367,7 @@ public final class JoustRunPanel implements Disposable {
         if (sessionLaunch != l) return;   // not published yet (the completion sees the mark), or an older host
         sessionLaunch = null;
         session = null;
+        historyTimer.stop();
         accounts.bindSession(null);
         status.setText("Not running");
         details.setText("The host ended: " + PlainText.literal(why, 2000));
@@ -427,6 +452,164 @@ public final class JoustRunPanel implements Disposable {
             });
         });
         return b;
+    }
+
+    // ---- deploy and call (M3.3b3) --------------------------------------------------------------------------------
+
+    /** Deploy… (init after the prerequisites) or Call… (any call the description offers). */
+    private JButton writeButton(String label, boolean deploy) {
+        JButton b = new JButton(label);
+        b.addActionListener(e -> {
+            String c = contractList.getSelectedValue();
+            JoustRunSession s = session;
+            if (c == null || s == null) {
+                details.setText(s == null ? "Start the host first." : "Select a contract.");
+                return;
+            }
+            if (writing) {
+                details.setText("A transaction is in progress; wait for it to finish.");
+                return;
+            }
+            String inst = instanceList.getSelectedValue();
+            details.setText(label);
+            ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                List<JoustCallDialog.Call> calls;
+                List<com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.Entry> signers;
+                try {
+                    calls = JoustCallDialog.calls(s.callsOf(c), deploy);
+                    signers = s.signers();
+                } catch (Exception ex) {
+                    String m = PlainText.literal("Failed: " + ex.getMessage(), 2000);
+                    ui(() -> details.setText(m));
+                    return;
+                }
+                ui(() -> {
+                    if (session != s) return;
+                    if (calls.isEmpty()) {
+                        details.setText(deploy ? "This contract has no init call: Deploy creates instances with init." : "No call to make.");
+                        return;
+                    }
+                    if (signers.isEmpty()) {
+                        details.setText("No account can sign on this network: create or import one in the Accounts tab.");
+                        return;
+                    }
+                    JoustCallDialog d = new JoustCallDialog(project, deploy ? "Deploy " + PlainText.label(c, 80) : "Call "
+                            + PlainText.label(c, 80), calls, signers, inst, lastCaller);
+                    if (!d.showAndGet()) {
+                        details.setText("Cancelled.");
+                        return;
+                    }
+                    JoustCallDialog.Choice choice;
+                    try {
+                        choice = d.choice();
+                    } catch (Exception ex) {
+                        details.setText(PlainText.literal("Failed: " + ex.getMessage(), 2000));
+                        return;
+                    }
+                    lastCaller = choice.callerId();
+                    write(s, c, deploy, choice);
+                });
+            });
+        });
+        return b;
+    }
+
+    /** Runs one Deploy or Call in a background task, reporting each step, and waits for it to land. */
+    private void write(JoustRunSession s, String contract, boolean deploy, JoustCallDialog.Choice choice) {
+        writing = true;
+        details.setText("");
+        new Task.Backgroundable(project, (deploy ? "JOUST: deploying " : "JOUST: calling ") + PlainText.label(contract, 60), false) {
+            @Override
+            public void run(@NotNull ProgressIndicator indicator) {
+                StringBuilder out = new StringBuilder();
+                java.util.function.Consumer<String> step = line -> {
+                    out.append(line).append('\n');
+                    String shown = PlainText.literal(out.toString(), 200_000);
+                    indicator.setText(PlainText.title(line, 120));
+                    ui(() -> details.setText(shown));
+                };
+                try {
+                    String address = s.signers().stream().filter(a -> a.id.equals(choice.callerId())).map(a -> a.address)
+                            .findFirst().orElseThrow(() -> new IllegalStateException("the caller is no longer an account of this network"));
+                    JoustRunSession.Submitted last;
+                    if (deploy) {
+                        ObjectNode init = HostJson.object().put("method", choice.call().path("method").asText());
+                        init.set("args", choice.call().path("args"));
+                        if (choice.call().has("pay")) init.set("pay", choice.call().get("pay"));
+                        List<JoustRunSession.Submitted> done;
+                        try {
+                            done = s.deploy(contract, choice.callerId(), init, ttl(s), java.time.Duration.ofMinutes(5), step::accept);
+                        } catch (JoustRunSession.DeployStopped stopped) {
+                            for (var x : stopped.submitted()) step.accept("Submitted " + x.txHash());
+                            throw stopped;
+                        }
+                        for (var x : done) step.accept("Submitted " + x.txHash());
+                        last = done.isEmpty() ? null : done.get(done.size() - 1);
+                    } else {
+                        ObjectNode call = choice.call().deepCopy().put("contract", contract).put("address", address);
+                        step.accept("Preparing " + call.path("method").asText() + "…");
+                        last = s.submit("prepare", HostJson.object().put("ttlSlots", ttl(s)).set("call", call), choice.callerId(),
+                                choice.coSignerIds());
+                        if (last != null) step.accept("Submitted " + last.txHash());
+                    }
+                    if (last != null) {
+                        if (last.instance() != null) step.accept("Instance " + last.instance());
+                        step.accept("Waiting for it to land…");
+                        boolean landed = s.awaitInclusion(last.txHash(), java.time.Duration.ofMinutes(3));
+                        step.accept(landed ? "Landed on chain." : "Not on chain yet: History shows when it settles.");
+                    }
+                } catch (HostError he) {
+                    step.accept(describe(he));
+                } catch (Exception ex) {
+                    step.accept("Failed: " + ex.getMessage());
+                } finally {
+                    ui(() -> {
+                        writing = false;
+                        refreshHistory();
+                    });
+                }
+            }
+        }.queue();
+    }
+
+    /** History (L7): read off the EDT, shown as plain text. */
+    private void refreshHistory() {
+        JoustRunSession s = session;
+        if (s == null) return;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            String text;
+            try {
+                text = historyText(s.history());
+            } catch (Exception e) {
+                text = "History is unavailable: " + e.getMessage();
+            }
+            String shown = PlainText.literal(text, 200_000);
+            ui(() -> {
+                if (session == s && !shown.equals(history.getText())) history.setText(shown);
+            });
+        });
+    }
+
+    static String historyText(List<com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry> entries) {
+        if (entries.isEmpty()) return "No transactions in this session's journal yet.";
+        StringBuilder sb = new StringBuilder();
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            var e = entries.get(i);
+            sb.append(String.format("%-10s %-28s %s", e.state(), PlainText.label(e.label(), 28), e.txHash()));
+            if (e.inclusion() != null) sb.append("  slot ").append(e.inclusion().slot());
+            else sb.append("  valid until ").append(e.validTo());
+            if (!e.events().isEmpty()) sb.append("  ").append(PlainText.label(e.events().get(e.events().size() - 1), 60));
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** Runs {@code f} on the EDT in any modality (a background task may wait on it); returns its value. */
+    private static <T> T onEdtAny(java.util.function.Supplier<T> f) {
+        Object[] out = {null};
+        ApplicationManager.getApplication().invokeAndWait(() -> out[0] = f.get(), com.intellij.openapi.application.ModalityState.any());
+        @SuppressWarnings("unchecked") T t = (T) out[0];
+        return t;
     }
 
     /** Whether action {@code seq} still owns the result pane: the latest action, on the same session and contract. */
@@ -528,6 +711,7 @@ public final class JoustRunPanel implements Disposable {
 
     @Override
     public void dispose() {
+        historyTimer.stop();
         session = null;
     }
 

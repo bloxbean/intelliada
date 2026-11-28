@@ -64,7 +64,7 @@ public final class JoustSigner {
     }
 
     /** The payment key hash of a key address, or null for a script address. */
-    static @Nullable String paymentKey(String bech32) throws Refused {
+    public static @Nullable String paymentKey(String bech32) throws Refused {
         try {
             var cred = new Address(bech32).getPaymentCredential();
             if (cred.isEmpty() || cred.get().getType() != CredentialType.Key) return null;
