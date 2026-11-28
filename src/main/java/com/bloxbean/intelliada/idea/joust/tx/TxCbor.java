@@ -120,6 +120,27 @@ public final class TxCbor {
         }
     }
 
+    /** One witness-set entry: its key and the exact bytes of key and value as received (D13's splice). */
+    public record WitnessEntry(long key, Span span) {
+    }
+
+    /** The witness set's entries in received order, each as its exact key-and-value bytes. */
+    public static List<WitnessEntry> witnessEntries(Tx tx) throws Malformed {
+        Reader r = new Reader(tx.bytes());
+        r.pos = tx.witnesses().start();
+        Head h = r.head();
+        if (h.major != 5) throw new Malformed("the witness set is a CBOR map");
+        List<WitnessEntry> out = new java.util.ArrayList<>();
+        for (long i = 0; h.indefinite ? !r.peekBreak() : i < h.value; i++) {
+            int start = r.pos;
+            Head k = r.head();
+            if (k.major != 0) throw new Malformed("a witness set key is an unsigned integer");
+            r.skip(1);
+            out.add(new WitnessEntry(k.value, new Span(start, r.pos)));
+        }
+        return out;
+    }
+
     public static Body body(Tx tx) throws Malformed {
         Reader r = new Reader(tx.bytes());
         r.pos = tx.body().start();

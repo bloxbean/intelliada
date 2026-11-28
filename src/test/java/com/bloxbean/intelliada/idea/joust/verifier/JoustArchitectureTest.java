@@ -116,20 +116,31 @@ public class JoustArchitectureTest {
                     boolean admitOutsideTheSession = m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.admit")
                             && !rel.equals("joust/journal/Settlement.class") && !rel.equals("joust/journal/ChainJournal.class");
                     boolean settlementAdmit = (m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.admit")
-                            || m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.handedOut"))
+                            || m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.handedOut")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.nodeRefused"))
                             && !rel.equals("joust/run/JoustRunJournal.class");
                     if (settlementAdmit) bad.add(rel + " calls " + m);
                     // The whole deferred surface of ADR-005 L43 (#38; M33B1-DES-29): discard and the journal's handout too.
-                    boolean deferred = m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.discard")
-                            || (m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.discard") && !rel.equals("joust/run/JoustRunSession.class"))
+                    boolean deferred = (m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.discard") && !own(rel, "joust/run/JoustRunSession"))
+                            || (m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.discard") && !own(rel, "joust/run/JoustRunSession"))
                             || (m.equals("com/bloxbean/intelliada/idea/joust/journal/Settlement.discard")
                                 && !rel.equals("joust/run/JoustRunJournal.class") && !own(rel, "joust/journal/Settlement"))
                             || (m.equals("com/bloxbean/intelliada/idea/joust/journal/ChainJournal.handout")
                                 && !own(rel, "joust/journal/Settlement") && !own(rel, "joust/journal/ChainJournal"));
                     if (deferred) bad.add(rel + " calls " + m);
-                    if (admitOutsideTheSession || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.admit")
+                    // M3.3b2: the session's own signing flow (submit, deploy) admits, hands out and builds; nothing else in
+                    // production does, and nothing reaches submit or deploy until M3.3b3 wires the panel's write path.
+                    boolean session = own(rel, "joust/run/JoustRunSession");
+                    boolean sessionOnly = m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.admit")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.handedOut")
-                            || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.build")) bad.add(rel + " calls " + m);
+                            || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.nodeRefused")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.build");
+                    boolean signing = m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.submit")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.deploy")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/sign/JoustSigner.sign")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/host/chain/BlockfrostApi.submit")
+                            || m.equals("com/bloxbean/intelliada/idea/joust/accounts/JoustAccounts.signingKey");
+                    if (admitOutsideTheSession || (sessionOnly && !session) || (signing && !session)) bad.add(rel + " calls " + m);
                 }
             }
         }

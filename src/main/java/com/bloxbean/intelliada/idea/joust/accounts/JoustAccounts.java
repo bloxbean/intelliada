@@ -544,6 +544,44 @@ public final class JoustAccounts implements PersistentStateComponent<JoustAccoun
         return phrase;
     }
 
+    /**
+     * A payment signing key, held in this IDE process only (I10): never logged, passed to a child, or written anywhere.
+     * {@code fingerprint} is the payment key hash; {@code publicKey} the 32-byte verification key; {@code privateKey} the
+     * 64-byte extended Ed25519 key.
+     */
+    public record SigningKey(String fingerprint, byte[] publicKey, byte[] privateKey) {
+        @Override
+        public String toString() {
+            return "SigningKey[" + fingerprint + "]";   // never the key bytes
+        }
+    }
+
+    /**
+     * The payment signing key of account {@code id} for a session of class {@code cls} (D13, I12): refused for an account
+     * of another class. The genesis accounts are the devnet's public constants.
+     */
+    public synchronized SigningKey signingKey(String id, NetworkClass cls) throws Refused {
+        Account a;
+        if (id.startsWith("genesis-")) {
+            if (cls != NetworkClass.DEVNET) throw new Refused("the genesis accounts are a devnet's only");
+            int i;
+            try {
+                i = Integer.parseInt(id.substring("genesis-".length()));
+            } catch (NumberFormatException e) {
+                throw new Refused("no such account");
+            }
+            if (i < 0 || i >= GENESIS_ACCOUNTS) throw new Refused("no such account");
+            a = new Account(Networks.testnet(), DEVNET_GENESIS_MNEMONIC, DerivationPath.createExternalAddressDerivationPathForAccount(i));
+        } else {
+            Entry e = state.accounts.stream().filter(x -> x.id.equals(id)).findFirst().orElse(null);
+            if (e == null) throw new Refused("no such account");
+            if (e.cls() != cls) throw new Refused("the account is of another network class");
+            a = account(e.cls(), revealMnemonic(id));
+        }
+        var kp = a.hdKeyPair();
+        return new SigningKey(fingerprint(a), kp.getPublicKey().getKeyData(), kp.getPrivateKey().getKeyData());
+    }
+
     /** Removes an account and its secret. */
     public synchronized boolean remove(String id) {
         boolean removed = state.accounts.removeIf(e -> e.id.equals(id));
