@@ -132,6 +132,10 @@ public final class JoustRunJournal implements AutoCloseable {
                     if (session.get() == null || session.get().ended() != null) return;
                     if (!settlement.restoring() && journal.entries().isEmpty()) return;   // idle: nothing journaled
                     settlement.poll();   // the chain check runs inside, after the observation
+                    var resend = resender;
+                    if (resend != null) {
+                        for (JournalStore.Entry e : settlement.unlanded()) resend.send(e);   // #42: never reached the node?
+                    }
                 } catch (Exception e) {
                     LOG.info("JOUST settlement pass: " + e.getClass().getSimpleName());
                 }
@@ -220,6 +224,18 @@ public final class JoustRunJournal implements AutoCloseable {
     @org.jetbrains.annotations.ApiStatus.Internal   // unreachable from production in M3.3b1; reviewed in M3.3b2 (ADR-005 L43, #38)
     void handedOut(String reservation, JournalStore.Handout h) throws Exception {
         settlement.handedOut(reservation, h);
+    }
+
+    /** Sends a journaled, signed transaction again (#42); outcomes are only logged: the chain settles it. */
+    @FunctionalInterface
+    interface Resender {
+        void send(JournalStore.Entry e);
+    }
+
+    private volatile @Nullable Resender resender;
+
+    void resender(@Nullable Resender r) {
+        resender = r;
     }
 
     /** The node refused a submission this session sent: its body is released (M3.3b2). */

@@ -629,6 +629,22 @@ public final class Settlement {
         if (!deferJournal) journal.remove(Set.of(reservation));
     }
 
+    /**
+     * #42 (FAB-17): journaled bodies handed out as submitted that the host still holds prepared, the chain does not show,
+     * and that are still valid at the highest tip seen: a submission that may never have reached the node, to send again.
+     * Sending the same signed transaction again is harmless (the ledger takes it once).
+     */
+    public synchronized List<Entry> unlanded() throws Exception {
+        if (fenced != null || highest == null) return List.of();
+        List<Entry> out = new ArrayList<>();
+        for (Entry e : journal.entries()) {
+            HostTable.Res r = table.lower(e.reservation());
+            if (e.handout() == Handout.submitted && e.state() == State.prepared && e.inclusion() == null
+                    && r != null && r.st() == HostTable.St.prepared && e.validTo() > highest.slot()) out.add(e);
+        }
+        return out;
+    }
+
     /** The session ended: nothing more is committed by this settlement (M33B1-CDX-44). Waits for a pass in progress. */
     public synchronized void close(String why) {
         if (fenced == null) fenced = why;

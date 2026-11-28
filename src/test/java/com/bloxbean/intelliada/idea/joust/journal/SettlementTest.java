@@ -843,6 +843,35 @@ public class SettlementTest {
         assertNull(fence.get());
     }
 
+    /**
+     * #42: a body handed out as submitted that the chain does not show is listed to be sent again while it is valid; one
+     * that landed, or an approval never handed out, is not.
+     */
+    @Test
+    public void aSubmissionTheChainDoesNotShowIsSentAgainWhileValid() throws Exception {
+        chain.at(1990);
+        Settlement s = settlement(new HostTable(60, false));
+        String a = tx(List.of(ref(1)), 2025), b = tx(List.of(ref(2)), 2025), c = tx(List.of(ref(3)), 2025);
+        for (var p : List.of(List.of("1", a), List.of("2", b), List.of("3", c))) {
+            s.beginCall();
+            s.endCall("prepare", prepared(p.get(0), p.get(1)), null);
+            s.admit(entry(p.get(0), p.get(1), JournalStore.Handout.approvalPending), 1990, 1990);
+        }
+        s.handedOut("1", JournalStore.Handout.submitted);
+        s.handedOut("2", JournalStore.Handout.submitted);
+        assertTrue(s.poll());
+        assertEquals(List.of("1", "2"), s.unlanded().stream().map(JournalStore.Entry::reservation).sorted().toList());
+        chain.include(hash(b), 1995);
+        chain.at(1996);
+        host.answer("shallow");
+        assertTrue(s.poll());
+        assertNull(fence.get());
+        assertEquals("only the one the chain does not show", List.of("1"), s.unlanded().stream().map(JournalStore.Entry::reservation).toList());
+        chain.at(2026);
+        assertTrue(s.poll());
+        assertTrue("past its validity: not sent again", s.unlanded().isEmpty());
+    }
+
     /** CDX-53: a prepared reply stating a fractional validity fences the host. */
     @Test
     public void aFractionalValidityFences() throws Exception {
