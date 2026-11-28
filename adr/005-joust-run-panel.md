@@ -1239,6 +1239,36 @@ invariant.
     call with two IntelliAda keys on the repackaged `HostCouncil`, `dex` (sends) and `token` (a map call), each through
     the same paths. Yano's part still waits for bloxbean/yano#269 (E2, L36).
 
+- **E15. M3.3b4 as built: registration evidence, #44, and the rest of the M3.3b exit (L47).**
+  - **Registration evidence (D15).** Yaci DevKit's `/accounts/{stake address}` answers every credential with neither
+    `active` nor `registered`, so IntelliAda's `stakeRegistration` read is `unsupported` and the host falls back to
+    evidence. When a publication is refused with Conway's `StakeKeyRegisteredDELEG` for a script credential, IntelliAda
+    sends the host `registered {credential, evidence: {txHash, message}}` with the node's refusal as the message (the
+    protocol's evidence by node message), and Deploy builds that prerequisite again, once per credential. The evidence
+    lives in the host for its session; a new host learns it the same way on its first Deploy. No record is kept
+    (E12: convenience over bookkeeping).
+  - **#44 (FAB-24..30).** History keeps every entry the session has seen (500); private keys are read only after the
+    review and cleared after signing, and a key the body needs but IntelliAda lacks refuses before the review; the
+    catch-all keeps its cause and the interrupt; waiting retries any failed pass but a stop or a block, and Deploy
+    re-reads a listed prerequisite for up to 10 s; one write at a time after the form too; addresses keep their
+    ellipsis; a background re-send times out in 3 s; the review shows the caller's token movement and reviews an
+    unreadable body from IntelliAda's own reader's facts. The I10 canary test now checks each capture is real (the
+    host's command line and environment, `/proc` on Linux), has positive controls for the log and the matcher, searches
+    the checker's stdin input, and matches the phrase and key in several encodings.
+  - **The exits** (`JoustContractsDevKitPlatformTest`, DevKit, tool-gated), each with fresh funded accounts through the
+    session's signing path: the **Counter in Java** (deploy, increment, view, close); **`bank`** (owned: the bank by A,
+    an account opened with a payment, a deposit, a withdrawal and the close by B); **`token`** (map calls: create, mint
+    to B, B's transfer, `balanceOf`, with the registration evidence above); a **quorum** call signed by two IntelliAda
+    keys on `HostCouncil` repackaged as `com.bloxbean.intelliada.fixture.HostCouncil` (and the same call without the
+    co-signer refused before any signing); **`dex`** (a pool on a token minted by A, liquidity added, and a swap whose
+    send reaches B's key's enterprise address). Fixtures: standalone Gradle projects with JOUST's plugin, holding the
+    contract classes copied from JOUST at `01bad1f7` (`examples/{bank,dex,token}`, `julc-state-host`'s test fixture
+    `HostCouncil`), built with `build joustHostSpec` on JDK 25; `JOUST_FIXTURES` names their directory.
+  - **Observed:** `HostCouncil`'s `open` fails in script evaluation when `members` are not in ascending order (as in
+    the kit's vector). The form passes arguments as typed (I16), so a developer sees the script's error; a clearer
+    message is JOUST's to give.
+  - **Still open:** Yano's part (bloxbean/yano#269), and driving the Swing dialogs in an automated UI test.
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
@@ -1252,6 +1282,7 @@ invariant.
 | L44 | The journal is simplified for devnets and test networks (E12): a history and restart aid that never blocks; strict only where signing depends on it. Supersedes the fault-model machinery of E10/E11 for M3.3b1 and the three-reviewer process (one Fable review) | maintainer | 2026-11-27 | the maintainer: "developer's convinience rather than typical security", "testnetwork ada or token doesnt have any value", "only Fable review is enough"; the Fable review of #34 (FAB-1..10, S1..S13) |
 | L45 | M3.3b2 (E13): a body is recorded `submitted` before it is sent and released only on a 4xx from the node; a 5xx, timeout or interrupt keeps it for chain evidence. Registration evidence waits for the first contract that needs it. #38 closes on E13's concurrency model, with CDX-120..145 superseded by E12 | author | 2026-11-28 | E12's rule (strict only where signing depends on it); the restart-between-submit-and-settlement exit on DevKit |
 | L46 | M3.3b3 (E14) delivers the panel's write path with the Counter on DevKit (I10, I15, I21 tested there); the other contracts of the M3.3b exit (Java Counter, `bank`, quorum on `HostCouncil`, `dex`, `token`) follow as M3.3b4 through the same paths. The signed transaction is journaled and sent again while valid (#42) | author | 2026-11-28 | E12's convenience rule; one Fable review per PR (L44); the write path is the same for every contract, the remaining exits exercise call kinds |
+| L47 | M3.3b4 (E15): registration evidence comes from the node's own refusal (`StakeKeyRegisteredDELEG`) and is sent to the host per session, with Deploy retrying the publication once; no record is kept. The rest of the M3.3b exit runs on DevKit fixtures copied from JOUST at `01bad1f7` | author | 2026-11-28 | DevKit cannot report registrations; E12's convenience rule; the protocol's evidence-by-message form |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -1447,3 +1478,4 @@ Security and design approved round 8.
 - **r45** (2026-11-27): §12 E12 and L44 (the maintainer's decision): the journal simplified for devnets and test networks.
 - **r46** (2026-11-28): §12 E13 and L45: M3.3b2 as built (signing, submission, Deploy); #38's concurrency model and its deferred findings.
 - **r47** (2026-11-28): §12 E14 and L46: M3.3b3 as built (resending, the review modal, Deploy and Call, History); M3.3b4 holds the remaining contract exits.
+- **r48** (2026-11-28): §12 E15 and L47: M3.3b4 as built (registration evidence, #44, the rest of the M3.3b exit on DevKit).
