@@ -1204,6 +1204,41 @@ invariant.
   - **Found on DevKit:** Yaci DevKit's `/txs/{hash}` has no `block` field; `ProviderChain` reads the block hash from
     `/blocks/{height}` when it is absent.
 
+- **E14. M3.3b3 as built: the panel's write path (L46).**
+  - **Resending (#42, FAB-17..19).** The journal entry holds the **signed** transaction (D17: "as handed out"; the
+    host's `restore` hashes only the body, so the id is unchanged). The POST is tried three times on an unknown outcome
+    (an I/O error, a 5xx); a 4xx after the first attempt is unknown, not a refusal, because the first may have reached the
+    node. Each settlement tick sends again every journaled `submitted` body that the host holds prepared, the chain does
+    not show, and is still valid; a restored host does the same. `awaitInclusion` retries a failed read and stops at once
+    when the host stops or the journal blocks; Deploy refuses an outstanding prerequisite instead of falling through,
+    reports its steps, and carries what it submitted (`DeployStopped`). Every refusal says whether the inputs were
+    released, or until about which slot they stay reserved.
+  - **The review modal** (D13), in `joust/review` (I16: CCL decoding there only): from the body with CCL's reader, the
+    outputs that go neither to the deployment (a script address whose hash is one of the anchors') nor to the caller,
+    the caller's net outflow (its inputs read from the node, minus the outputs back to it), the fee, the signers by
+    account, the validity window and any mint. It runs after the checker accepts the body and before signing; a decline
+    discards the body. Setting **Confirm every devnet transaction** (off by default); D14b's largest fee is a setting
+    too (5 ADA by default), passed to the checker as `maxFee`.
+  - **Deploy and Call** in the run panel: a form built from the description as IntelliAda read it from the snapshot
+    (I26): the call, the caller, the instance (unless `init`), the object (owned actions and destroys), each argument as
+    text (a JSON object or array passes as JSON; I16), the payment for payable calls, and co-signers (sent as
+    `cosigners` key hashes, signed by IntelliAda's keys; I11). Keyed calls wait for M3c. Every session call runs off the
+    EDT (the call lock is held across `PasswordSafe`); one write runs at a time; the TTL is 300 slots within the
+    network's maximum. After submitting, the panel waits for the transaction to land and says so.
+  - **History** (L7): the session's journal entries, newest first, refreshed every 5 s off the EDT, as plain text.
+  - **Gate relaxed (L43):** `JoustArchitectureTest` lets the run panel, and only it, reach `submit` and `deploy`; the
+    signer, node submission and signing keys stay the session's.
+  - **Exit tests (DevKit, tool-gated):** `JoustPanelDevKitPlatformTest`: a fresh account (the canary) is funded; the
+    Counter is deployed, incremented (the state shows it), a reset declined in the review (nothing journaled, inputs
+    released) and the instance closed; the review summary is checked against the real bodies; **I10**: the canary
+    mnemonic and its private key appear in neither the host's command line nor its environment, its stderr, `idea.log`,
+    the journal, nor any temp file written meanwhile; **I21**: the module's files are unchanged apart from `build/` and
+    `.gradle/`. `JoustSignDevKitPlatformTest`: a submission that never reached the node lands, sent again by the timer
+    and by a restored host. **I15**: call names and history labels render literally (`JoustPanelWriteTest`).
+  - **Deferred to M3.3b4 (L46):** the rest of the M3.3b row's exit: the Java Counter, JOUST's `bank` (owned), the quorum
+    call with two IntelliAda keys on the repackaged `HostCouncil`, `dex` (sends) and `token` (a map call), each through
+    the same paths. Yano's part still waits for bloxbean/yano#269 (E2, L36).
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
@@ -1216,6 +1251,7 @@ invariant.
 | L43 | M3.3b1 blocks only on code production can reach in it (opening, restore, settlement, views, the store). In-model findings on the build, admission and handout paths, which `JoustArchitectureTest` bars and which are `@ApiStatus.Internal`, go to #38. #38 must close before M3.3b2 merges, with a concurrency model, a test for each finding and a dedicated review. Shared-state findings still block | delegated | 2026-11-27 | two advisors (both: option 1 with safeguards); Codex P1s over 22 rounds, the last ~10 all on these paths; Codex r22: "the build and handout findings concern the headless interfaces used by the later signing and panel milestones" |
 | L44 | The journal is simplified for devnets and test networks (E12): a history and restart aid that never blocks; strict only where signing depends on it. Supersedes the fault-model machinery of E10/E11 for M3.3b1 and the three-reviewer process (one Fable review) | maintainer | 2026-11-27 | the maintainer: "developer's convinience rather than typical security", "testnetwork ada or token doesnt have any value", "only Fable review is enough"; the Fable review of #34 (FAB-1..10, S1..S13) |
 | L45 | M3.3b2 (E13): a body is recorded `submitted` before it is sent and released only on a 4xx from the node; a 5xx, timeout or interrupt keeps it for chain evidence. Registration evidence waits for the first contract that needs it. #38 closes on E13's concurrency model, with CDX-120..145 superseded by E12 | author | 2026-11-28 | E12's rule (strict only where signing depends on it); the restart-between-submit-and-settlement exit on DevKit |
+| L46 | M3.3b3 (E14) delivers the panel's write path with the Counter on DevKit (I10, I15, I21 tested there); the other contracts of the M3.3b exit (Java Counter, `bank`, quorum on `HostCouncil`, `dex`, `token`) follow as M3.3b4 through the same paths. The signed transaction is journaled and sent again while valid (#42) | author | 2026-11-28 | E12's convenience rule; one Fable review per PR (L44); the write path is the same for every contract, the remaining exits exercise call kinds |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -1410,3 +1446,4 @@ Security and design approved round 8.
 - **r44** (2026-11-27): E11/L43: no release before M3.3b2 is a gate; #38's review scope (M33B1-SEC-16).
 - **r45** (2026-11-27): §12 E12 and L44 (the maintainer's decision): the journal simplified for devnets and test networks.
 - **r46** (2026-11-28): §12 E13 and L45: M3.3b2 as built (signing, submission, Deploy); #38's concurrency model and its deferred findings.
+- **r47** (2026-11-28): §12 E14 and L46: M3.3b3 as built (resending, the review modal, Deploy and Call, History); M3.3b4 holds the remaining contract exits.
