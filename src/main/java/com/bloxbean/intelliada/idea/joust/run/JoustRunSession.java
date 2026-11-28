@@ -848,7 +848,11 @@ public final class JoustRunSession {
                 if (!id.equals(body.txHash())) {
                     throw new NetworkIdentity.Refused("the node answered another transaction id (" + id + ") than the transaction's");
                 }
-                return new Submitted(body.txHash(), reservation, prepared.path("instance").textValue(), prepared.path("object").textValue());
+                String createdInstance = prepared.path("instance").textValue();
+                if (method.equals("prepare") && "init".equals(params.path("call").path("kind").textValue()) && createdInstance != null) {
+                    recordInstance(contract, createdInstance, body.txHash(), label(method, params));
+                }
+                return new Submitted(body.txHash(), reservation, createdInstance, prepared.path("object").textValue());
             } catch (Exception refused) {
                 boolean interrupted = refused instanceof InterruptedException || Thread.interrupted();
                 try {
@@ -1121,6 +1125,80 @@ public final class JoustRunSession {
         return new com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry(e.reservation(), e.txHash(), "", e.validFrom(), e.validTo(),
                 e.handout(), e.node(), e.state(), e.slot(), e.inclusion(), e.events(), e.label());
     }
+
+    // ---- recorded instances and the faucet (M3.4a) ---------------------------------------------------------------------
+
+    /** Tests: the recorded-instance store to use instead of the user's. */
+    static volatile com.bloxbean.intelliada.idea.joust.journal.@Nullable InstanceStore instancesForTests;
+
+    private static com.bloxbean.intelliada.idea.joust.journal.InstanceStore instances() {
+        var t = instancesForTests;
+        return t != null ? t : com.bloxbean.intelliada.idea.joust.journal.InstanceStore.forUser();
+    }
+
+    private void recordInstance(String contract, String instance, String txHash, String label) {
+        try {
+            instances().record(binding.identity().chainKey(), running.moduleDir(),
+                    new com.bloxbean.intelliada.idea.joust.journal.InstanceStore.Recorded(contract, instance, txHash, label));
+        } catch (Exception e) {
+            LOG.info("JOUST: the instance could not be recorded: " + e.getClass().getSimpleName());   // convenience only
+        }
+    }
+
+    /** The instances this module recorded for {@code contract} on this chain, oldest first (D15 "Persistence"). */
+    public java.util.List<String> recorded(String contract) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (var r : instances().list(binding.identity().chainKey(), running.moduleDir())) if (r.contract().equals(contract)) out.add(r.instance());
+        return out;
+    }
+
+    /**
+     * Re-checks the recorded instances of {@code contract} against the chain (I17's re-check, M3.4a): one the host can
+     * read is kept; one the host refuses to read (closed, or no longer on this chain) is forgotten; any other failure
+     * keeps it. Returns the instances kept.
+     */
+    public java.util.List<String> recheckRecorded(String contract) throws Exception {
+        java.util.List<String> kept = new java.util.ArrayList<>();
+        for (String instance : recorded(contract)) {
+            try {
+                view(contract, instance, null, null);
+                kept.add(instance);
+            } catch (HostError e) {
+                if (e.kind().equals("refusal")) instances().forget(binding.identity().chainKey(), running.moduleDir(), contract, instance);
+                else kept.add(instance);
+            }
+        }
+        return kept;
+    }
+
+    /**
+     * DevKit's faucet (D15, L8): {@code ada} to {@code address}, in two outputs, so a fresh account has a seed input and
+     * separate collateral for an {@code init}. Devnets only.
+     */
+    public void fund(String address, long ada) throws Exception {
+        if (binding.identity().networkClass() != NetworkIdentity.NetworkClass.DEVNET) {
+            throw new NetworkIdentity.Refused("the faucet is a devnet's");
+        }
+        if (ada < 2 || ada > 1_000_000) throw new IllegalArgumentException("fund between 2 and 1,000,000 ADA");
+        if (!address.matches("addr_test1[0-9a-z]{20,200}")) throw new IllegalArgumentException("not a test address");
+        URI u = URI.create(binding.node().getApiEndpoint());
+        String admin = (faucetForTests != null ? faucetForTests : u.getScheme() + "://" + u.getHost() + ":10000") + "/local-cluster/api/addresses/topup";
+        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
+        long[] parts = {ada / 2, ada - ada / 2};
+        for (long part : parts) {
+            String body = HostJson.MAPPER.writeValueAsString(HostJson.object().put("address", address).put("adaAmount", part));
+            HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(admin)).timeout(Duration.ofSeconds(30))
+                    .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (r.statusCode() / 100 != 2) {
+                throw new NetworkIdentity.Refused("DevKit's faucet answered HTTP " + r.statusCode() + ": "
+                        + PlainText.literal(r.body().length() > 500 ? r.body().substring(0, 500) : r.body(), 500));
+            }
+        }
+    }
+
+    /** Tests: DevKit's admin base for the faucet. */
+    static volatile @Nullable String faucetForTests;
 
     /** The contract's {@code x-joust}, as IntelliAda read it from the snapshot (I26), for the panel's forms. */
     public JsonNode callsOf(String contract) throws Exception {

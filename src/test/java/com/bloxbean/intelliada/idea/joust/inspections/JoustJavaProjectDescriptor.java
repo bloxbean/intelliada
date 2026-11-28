@@ -24,9 +24,9 @@ import java.util.List;
  * indexing short) and the real JOUST and JuLC API jars ({@code julc-state-api 0.1.0-pre2} and JuLC's stdlib, core and
  * ledger API) from the build's {@code joustLint} configuration, passed in {@code joust.lint.classpath}.
  */
-final class JoustJavaProjectDescriptor extends LightProjectDescriptor {
+public final class JoustJavaProjectDescriptor extends LightProjectDescriptor {
 
-    static final JoustJavaProjectDescriptor INSTANCE = new JoustJavaProjectDescriptor();
+    public static final JoustJavaProjectDescriptor INSTANCE = new JoustJavaProjectDescriptor();
 
     /** The API jars a contract compiles against: everything on the lint classpath except the processor itself. */
     static List<String> apiJars() {

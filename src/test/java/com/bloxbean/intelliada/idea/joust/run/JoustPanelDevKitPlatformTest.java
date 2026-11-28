@@ -86,6 +86,8 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
         String privateHex = HexFormat.of().formatHex(accounts.signingKey(caller.id,
                 com.bloxbean.intelliada.idea.joust.host.chain.NetworkIdentity.NetworkClass.DEVNET).privateKey());
         JoustRunSession s = null;
+        JoustRunSession.instancesForTests = new com.bloxbean.intelliada.idea.joust.journal.InstanceStore(Files.createTempDirectory("joust-instances"));
+        JoustRunSession.faucetForTests = admin;
         List<String> checkerInputs = new CopyOnWriteArrayList<>();
         JoustRunSession.checkerInputForTests = checkerInputs::add;
         // The test's idea.log (what the platform's file log receives), from its length now.
@@ -122,6 +124,7 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
             assertTrue(steps.toString(), steps.contains("Creating the instance (init)"));
             JoustRunSession.Submitted init = deployed.get(deployed.size() - 1);
             assertNotNull(init.instance());
+            assertTrue("the init's instance is recorded (D15 Persistence)", s1.recorded(contract).contains(init.instance()));
             assertTrue(off(() -> s1.awaitInclusion(init.txHash(), Duration.ofMinutes(3))));
             JoustReview.Summary initReview = reviewed.get(reviewed.size() - 1);
             assertEquals(init.txHash(), initReview.txHash());
@@ -160,6 +163,22 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
             var closed = off(() -> s1.submit("prepare", HostJson.object().put("ttlSlots", JoustRunPanel.ttl(s1))
                     .set("call", call(contract, caller.address, "destroy", "close", init.instance())), caller.id, List.of()));
             assertTrue(off(() -> s1.awaitInclusion(closed.txHash(), Duration.ofMinutes(3))));
+            List<String> kept = off(() -> s1.recheckRecorded(contract));
+            assertFalse("a closed instance is forgotten on re-check: " + kept, kept.contains(init.instance()));
+            assertFalse(s1.recorded(contract).contains(init.instance()));
+
+            // DevKit's faucet: two outputs.
+            int before = utxos(store, caller.address);
+            off(() -> {
+                s1.fund(caller.address, 20);
+                return null;
+            });
+            boolean paid = false;
+            for (int i = 0; i < 60 && !paid; i++) {
+                paid = utxos(store, caller.address) >= before + 2;
+                if (!paid) Thread.sleep(1_000);
+            }
+            assertTrue("the faucet paid two outputs", paid);
             String history = JoustRunPanel.historyText(s1.history());
             assertTrue(history, history.contains(closed.txHash()) && history.contains(incremented.txHash()));
 
@@ -202,6 +221,8 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
                 assertFalse("the canary or its key in " + place.substring(0, Math.min(120, place.length())), leaks(place, words, keyForms));
             }
         } finally {
+            JoustRunSession.instancesForTests = null;
+            JoustRunSession.faucetForTests = null;
             JoustRunSession.checkerInputForTests = null;
             JoustRunSession.checkerForTests = null;
             nodes.removeRemoteNode(node);
@@ -210,6 +231,12 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
         }
         // I21: the project is unchanged apart from the build's own outputs.
         assertEquals("the project's files changed", treeBefore, tree(module));
+    }
+
+    private static int utxos(String store, String address) throws Exception {
+        var u = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(store + "/addresses/" + address + "/utxos")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        return u.statusCode() == 200 ? u.body().split("\"tx_hash\"", -1).length - 1 : 0;
     }
 
     private static ObjectNode call(String contract, String address, String kind, String method, String instance) {

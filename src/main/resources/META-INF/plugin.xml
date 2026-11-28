@@ -22,6 +22,9 @@
     <depends optional="true" config-file="intelliada-gradle.xml">com.intellij.gradle</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <!-- ADR-005 D15 (M3.4a): gutter icons on a Java JOUST contract's calls; they only open the JOUST Run panel -->
+        <codeInsight.lineMarkerProvider language="JAVA"
+                                        implementationClass="com.bloxbean.intelliada.idea.joust.run.JoustEntryMarkers$Java"/>
 
         <toolWindow id="Cardano"
                     anchor="right"

@@ -238,16 +238,17 @@ public class JoustContractsDevKitPlatformTest extends BasePlatformTestCase {
 
     public void testDexCallsWithSends() throws Exception {
         run("dex", 2, r -> {
-            // A native token for the pool, minted by A with a key policy (test code: IntelliAda's own code never builds).
+            // The pool opens first (it needs no token); the token is minted after Deploy's publications, which may
+            // otherwise spend the token's UTxO into a reference-script output the caller cannot spend again.
             Account a = new Account(Networks.testnet(), r.accounts.get(0).phrase());
             ScriptPubkey policy = ScriptPubkey.create(com.bloxbean.cardano.client.crypto.VerificationKey.create(a.publicKeyBytes()));
             String policyId = policy.getPolicyId();
+            String name = "4d31";
+            var pool = r.deploy(0, "open", args().put("tokenPolicy", policyId).put("tokenName", name), HostJson.object());
             var backend = new BFBackendService(r.store.endsWith("/") ? r.store : r.store + "/", "devkit");
             Tx mint = new Tx().mintAssets(policy, new Asset("M1", BigInteger.valueOf(1_000_000)), a.baseAddress()).from(a.baseAddress());
             var result = new QuickTxBuilder(backend).compose(mint).withSigner(SignerProviders.signerFrom(a)).completeAndWait();
             assertTrue("the token is minted: " + result, result.isSuccessful());
-            String name = "4d31";
-            var pool = r.deploy(0, "open", args().put("tokenPolicy", policyId).put("tokenName", name), HostJson.object());
             ObjectNode add = call("action", "addLiquidity", args().put("tokenIn", "100000")).put("instance", pool.instance());
             ObjectNode pay = add.putObject("pay").put("lovelace", "100000000");
             pay.putArray("assets").addArray().add(policyId).addArray().addArray().add(name).add("100000");
