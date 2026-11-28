@@ -51,4 +51,13 @@ public class JoustPanelWriteTest {
         assertFalse("I15: no escape sequence", shown.contains("\u001b"));
         assertEquals("No transactions in this session's journal yet.", JoustRunPanel.historyText(List.of()));
     }
+
+    /** FAB-30: a body CCL cannot read is still reviewed, with its details marked unavailable. */
+    @Test
+    public void anUnreadableBodyGetsAReducedReview() {
+        var r = com.bloxbean.intelliada.idea.joust.review.JoustReview.reduced("init init", "ab".repeat(32), null, 900, List.of("genesis-1"), "CBOR x");
+        String text = String.join("\n", com.bloxbean.intelliada.idea.joust.review.JoustReview.lines(r));
+        assertTrue(text, text.contains("details unavailable: CBOR x") && text.contains("until slot 900") && text.contains("genesis-1"));
+        assertTrue(text, text.contains("Your net outflow: unknown"));
+    }
 }

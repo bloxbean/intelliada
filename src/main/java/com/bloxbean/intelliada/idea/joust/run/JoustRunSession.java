@@ -642,6 +642,9 @@ public final class JoustRunSession {
     /** The exact parameters of the last forward call (its {@code now} included), read under the call lock. */
     private @Nullable ObjectNode lastRequest;
 
+    /** Tests: sees each checker input as sent to the checker's stdin (I10's canary search; FAB-25). */
+    static volatile java.util.function.@Nullable Consumer<String> checkerInputForTests;
+
     /** Tests: the checker to run instead of the plugin's bundled one (a test JVM is not the IDE's JBR 25). */
     static volatile com.bloxbean.intelliada.idea.joust.verifier.@Nullable JoustChecker checkerForTests;
 
@@ -707,6 +710,8 @@ public final class JoustRunSession {
                 ObjectNode input = com.bloxbean.intelliada.idea.joust.verifier.JoustCheckInput.assemble(method, request, anchors,
                         binding.identity().networkId(), maxFee(), result, node);
                 var checker = checkerForTests != null ? checkerForTests : com.bloxbean.intelliada.idea.joust.verifier.JoustChecker.bundled();
+                var seeInput = checkerInputForTests;
+                if (seeInput != null) seeInput.accept(HostJson.MAPPER.writeValueAsString(input));
                 var verdict = checker.check(input);
                 if (verdict instanceof com.bloxbean.intelliada.idea.joust.verifier.JoustChecker.Refused r) {
                     throw new NetworkIdentity.Refused("JOUST's checker refused the transaction: " + r.why());
@@ -715,24 +720,51 @@ public final class JoustRunSession {
                 var tx = com.bloxbean.intelliada.idea.joust.tx.TxCbor.transaction(cbor);
                 var body = com.bloxbean.intelliada.idea.joust.tx.TxCbor.body(tx);
                 var required = com.bloxbean.intelliada.idea.joust.sign.JoustSigner.requiredKeys(body, node::address);
+                // FAB-26: the signers' key hashes from their addresses first; a key the body needs and IntelliAda does not
+                // hold refuses before any review, and private keys are read only after approval.
+                java.util.Map<String, String> names = new java.util.LinkedHashMap<>();
+                java.util.List<String> ids = new java.util.ArrayList<>(java.util.List.of(callerId));
+                ids.addAll(coSignerIds);
                 var accounts = com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance();
-                java.util.List<com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.SigningKey> keys = new java.util.ArrayList<>();
-                keys.add(accounts.signingKey(callerId, binding.identity().networkClass()));
-                for (String c : coSignerIds) keys.add(accounts.signingKey(c, binding.identity().networkClass()));
+                var mine = signers();
+                for (String id : ids) {
+                    var e = mine.stream().filter(a -> a.id.equals(id)).findFirst()
+                            .orElseThrow(() -> new NetworkIdentity.Refused(id + " is not an account of this network"));
+                    String key = com.bloxbean.intelliada.idea.joust.sign.JoustSigner.paymentKey(e.address);
+                    if (key != null) names.putIfAbsent(key, id);
+                }
+                java.util.Set<String> missing = new java.util.LinkedHashSet<>(required);
+                missing.removeAll(names.keySet());
+                if (!missing.isEmpty()) {
+                    throw new NetworkIdentity.Refused("the transaction needs a signature from a key IntelliAda does not hold ("
+                            + String.join(", ", missing) + "); choose that account as a co-signer");
+                }
                 Reviewer review = reviewer;
                 if (review != null) {
                     java.util.Set<String> scripts = new java.util.HashSet<>(java.util.List.of(anchors.contract().hash(), anchors.outputVerifier().hash()));
                     if (anchors.mapVerifier() != null) scripts.add(anchors.mapVerifier().hash());
-                    java.util.Map<String, String> names = new java.util.HashMap<>();
-                    names.put(keys.get(0).fingerprint(), callerId);
-                    for (int i = 0; i < coSignerIds.size(); i++) names.putIfAbsent(keys.get(i + 1).fingerprint(), coSignerIds.get(i));
                     String callerAddress = method.equals("publish") ? params.path("address").asText("")
                             : params.path("call").path("address").asText("");
-                    var summary = com.bloxbean.intelliada.idea.joust.review.JoustReview.of(label(method, params), cbor, callerAddress,
-                            scripts, names, required, node::output);
+                    com.bloxbean.intelliada.idea.joust.review.JoustReview.Summary summary;
+                    try {
+                        summary = com.bloxbean.intelliada.idea.joust.review.JoustReview.of(label(method, params), cbor, callerAddress,
+                                scripts, names, required, node::output);
+                    } catch (com.bloxbean.intelliada.idea.joust.review.JoustReview.Unreadable u) {
+                        java.util.List<String> who = new java.util.ArrayList<>();
+                        for (String k : required) who.add(names.getOrDefault(k, "key " + k));
+                        summary = com.bloxbean.intelliada.idea.joust.review.JoustReview.reduced(label(method, params), body.txHash(),
+                                body.validFrom(), body.validTo(), who, u.getMessage());
+                    }
                     if (!review.approve(summary)) throw new NetworkIdentity.Refused("declined in the review");
                 }
-                String signed = com.bloxbean.intelliada.idea.joust.sign.JoustSigner.sign(cbor, keys, required);
+                java.util.List<com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.SigningKey> keys = new java.util.ArrayList<>();
+                String signed;
+                try {
+                    for (String id : ids) keys.add(accounts.signingKey(id, binding.identity().networkClass()));
+                    signed = com.bloxbean.intelliada.idea.joust.sign.JoustSigner.sign(cbor, keys, required);
+                } finally {
+                    for (var k : keys) java.util.Arrays.fill(k.privateKey(), (byte) 0);   // FAB-21: cleared once signed
+                }
                 // The signed transaction is journaled (D17: "as handed out"), so it can be sent again (#42); its id is the body's.
                 var entry = new com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry(reservation, body.txHash(), signed,
                         body.validFrom(), body.validTo(), com.bloxbean.intelliada.idea.joust.journal.JournalStore.Handout.approvalPending,
@@ -785,13 +817,20 @@ public final class JoustRunSession {
                 }
                 return new Submitted(body.txHash(), reservation, prepared.path("instance").textValue());
             } catch (Exception refused) {
-                if (handedOut) throw refused;   // its message says what happens to the inputs
-                // Refused before it was handed out: the body is discarded, and the message says whether that worked (FAB-19).
-                String notDiscarded = discardQuietly(reservation);
-                String outcome = notDiscarded == null ? "; nothing was submitted, and its inputs are released"
-                        : "; nothing was submitted, but its inputs stay reserved by the dev host until it expires (" + notDiscarded + ")";
-                if (refused instanceof HostError) throw refused;   // the build itself failed: no body
-                throw new NetworkIdentity.Refused(refused.getMessage() + outcome);
+                boolean interrupted = refused instanceof InterruptedException || Thread.interrupted();
+                try {
+                    if (handedOut) throw refused;   // its message says what happens to the inputs
+                    // Refused before it was handed out: the body is discarded, and the message says whether that worked
+                    // (FAB-19).
+                    String notDiscarded = discardQuietly(reservation);
+                    String outcome = notDiscarded == null ? "; nothing was submitted, and its inputs are released"
+                            : "; nothing was submitted, but its inputs stay reserved by the dev host until it expires (" + notDiscarded + ")";
+                    if (refused instanceof HostError) throw refused;   // the build itself failed: no body
+                    String why = refused.getMessage() == null ? refused.getClass().getSimpleName() : refused.getMessage();   // FAB-27
+                    throw new NetworkIdentity.Refused(why + outcome, refused);
+                } finally {
+                    if (interrupted) Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -828,7 +867,7 @@ public final class JoustRunSession {
         try {
             var tx = com.bloxbean.intelliada.idea.joust.tx.TxCbor.transaction(e.cbor());
             if (com.bloxbean.intelliada.idea.joust.tx.TxCbor.witnessEntries(tx).stream().noneMatch(w -> w.key() == 0)) return;   // unsigned
-            binding.api().submit(tx.bytes());
+            binding.api().withTimeout(java.time.Duration.ofSeconds(3)).submit(tx.bytes());   // under the call lock: short (FAB-29)
             LOG.info("JOUST: sent " + e.label() + " again (" + e.txHash() + ")");
         } catch (InterruptedException i) {
             Thread.currentThread().interrupt();
@@ -860,8 +899,11 @@ public final class JoustRunSession {
             synchronized (clock) {
                 try {
                     journal.settlement().poll();
-                } catch (com.bloxbean.intelliada.idea.joust.host.chain.BlockfrostApi.Failed readFailed) {
-                    LOG.info("JOUST: a settlement read failed while waiting; retrying: " + readFailed.getMessage());
+                } catch (InterruptedException i) {
+                    throw i;
+                } catch (Exception passFailed) {
+                    // A failed read, a busy lock or a slow monitor passes by itself; a stop or a block is checked above (FAB-28).
+                    LOG.info("JOUST: a settlement pass failed while waiting; retrying: " + passFailed.getClass().getSimpleName());
                 }
             }
             for (var e : journal.journal().entries()) {
@@ -927,6 +969,10 @@ public final class JoustRunSession {
         try {
             while (true) {
                 JsonNode pre = prerequisites(contract);
+                for (int again = 0; again < 10 && pre.isArray() && !pre.isEmpty() && published.contains(pre.get(0).path("id").textValue()); again++) {
+                    Thread.sleep(1_000);   // the host's reads may trail the settlement pass by a moment (FAB-28)
+                    pre = prerequisites(contract);
+                }
                 if (!pre.isArray() || pre.isEmpty()) break;
                 String id = pre.get(0).path("id").textValue();
                 if (!published.add(id)) {
@@ -958,9 +1004,24 @@ public final class JoustRunSession {
         }
     }
 
-    /** The session history (L7): this module's journal entries on this chain, newest last; empty without a journal. */
+    /** Every entry this session has seen, by reservation, oldest first (FAB-24: History outlives the journal's pruning). */
+    private final java.util.LinkedHashMap<String, com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry> seen = new java.util.LinkedHashMap<>();
+
+    /** How many entries History keeps. */
+    static final int HISTORY = 500;
+
+    /**
+     * The session history (L7): every journal entry this session has seen, at its latest state, oldest first; final
+     * entries the journal pruned (they hold no inputs) stay. Empty without a journal.
+     */
     public java.util.List<com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry> history() throws Exception {
-        return journal == null ? java.util.List.of() : journal.journal().entries();
+        if (journal == null) return java.util.List.of();
+        var now = journal.journal().entries();
+        synchronized (seen) {
+            for (var e : now) seen.put(e.reservation(), e);
+            while (seen.size() > HISTORY) seen.remove(seen.keySet().iterator().next());
+            return java.util.List.copyOf(seen.values());
+        }
     }
 
     /** The contract's {@code x-joust}, as IntelliAda read it from the snapshot (I26), for the panel's forms. */

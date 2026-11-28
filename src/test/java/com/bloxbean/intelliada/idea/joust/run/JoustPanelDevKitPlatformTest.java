@@ -12,7 +12,6 @@ import com.bloxbean.intelliada.idea.joust.tasks.JoustRunGuard;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.intellij.ide.trustedProjects.TrustedProjects;
-import com.intellij.openapi.application.PathManager;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 
 import java.net.URI;
@@ -27,6 +26,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
@@ -85,6 +86,8 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
         String privateHex = HexFormat.of().formatHex(accounts.signingKey(caller.id,
                 com.bloxbean.intelliada.idea.joust.host.chain.NetworkIdentity.NetworkClass.DEVNET).privateKey());
         JoustRunSession s = null;
+        List<String> checkerInputs = new CopyOnWriteArrayList<>();
+        JoustRunSession.checkerInputForTests = checkerInputs::add;
         try {
             topUp(admin, store, caller.address);
             nodes.addRemoteNode(node);
@@ -125,6 +128,8 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
                     && initReview.callerNetOutflow().compareTo(initReview.fee()) > 0);
             assertTrue("an output to the contract", initReview.outputs().stream().anyMatch(o -> o.to() == JoustReview.To.DEPLOYMENT));
             assertTrue("nothing to other addresses: " + JoustReview.lines(initReview), initReview.others().isEmpty());
+            assertTrue("the caller moves no token: " + initReview.callerTokensOut(), initReview.callerTokensOut().isEmpty());
+            assertNull("the inputs were read", initReview.note());
 
             // Increment.
             ObjectNode inc = call(contract, caller.address, "action", "increment", init.instance());
@@ -155,24 +160,42 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
             String history = JoustRunPanel.historyText(s1.history());
             assertTrue(history, history.contains(closed.txHash()) && history.contains(incremented.txHash()));
 
-            // I10: the canary and its key reach no child, console, log, journal or temp file.
+            // I10: the canary and its key reach no child, console, log, journal or temp file. Each capture is checked to
+            // be real first (FAB-25), so a search can never pass because it looked at nothing.
             List<String> places = new ArrayList<>();
             ProcessHandle host = s1.running().process().toHandle();
-            places.add("host command line: " + host.info().commandLine().orElse(""));
-            places.add("host environment: " + environment(host.pid()));
+            String commandLine = host.info().commandLine().orElse("");
+            assertTrue("the host's command line was read", commandLine.contains("java"));
+            places.add("host command line: " + commandLine);
+            String env = environment(host.pid());
+            assertTrue("the host's environment was read", env.contains("PATH="));
+            places.add("host environment: " + env);
             places.add("host stderr: " + s1.running().stderr().text());
-            Path log = Path.of(PathManager.getLogPath(), "idea.log");
-            if (Files.isRegularFile(log)) places.add("idea.log: " + Files.readString(log, StandardCharsets.ISO_8859_1));
-            for (Path p : recentFiles(journalDir, 0)) places.add(p + ": " + Files.readString(p, StandardCharsets.ISO_8859_1));
+            assertFalse("the checker's inputs were captured", checkerInputs.isEmpty());
+            assertTrue("a checker input is what the checker reads", checkerInputs.get(0).contains("\"anchors\""));
+            for (String in : checkerInputs) places.add("checker stdin: " + in);
+            String control = "JOUST-CANARY-CONTROL-" + UUID.randomUUID();
+            com.intellij.openapi.diagnostic.Logger.getInstance(JoustRunSession.class).info(control);
+            String log = testLog();
+            assertTrue("the test log is searched (positive control)", log.contains(control));
+            places.add("idea.log (this test's): " + log);
+            List<Path> journalFiles = recentFiles(journalDir, 0);
+            assertFalse("the journal was written", journalFiles.isEmpty());
+            for (Path p : journalFiles) places.add(p + ": " + Files.readString(p, StandardCharsets.ISO_8859_1));
             for (Path p : recentFiles(Path.of(System.getProperty("java.io.tmpdir")), started)) {
                 places.add(p + ": " + Files.readString(p, StandardCharsets.ISO_8859_1));
             }
-            String firstWords = String.join(" ", List.of(canary.split(" ")).subList(0, 6));
+            List<String> words = List.of(canary.split(" "));
+            byte[] key = HexFormat.of().parseHex(privateHex);
+            List<String> keyForms = keyForms(key);
+            // Positive control of the matcher: the phrase as a JSON array, and the key in upper case, are found.
+            assertTrue(leaks("[\"" + String.join("\", \"", words) + "\"]", words, keyForms));
+            assertTrue(leaks("x " + privateHex.toUpperCase(Locale.ROOT) + " y", words, keyForms));
             for (String place : places) {
-                assertFalse("the canary mnemonic in " + place.substring(0, Math.min(120, place.length())), place.contains(firstWords));
-                assertFalse("the private key in " + place.substring(0, Math.min(120, place.length())), place.contains(privateHex));
+                assertFalse("the canary or its key in " + place.substring(0, Math.min(120, place.length())), leaks(place, words, keyForms));
             }
         } finally {
+            JoustRunSession.checkerInputForTests = null;
             JoustRunSession.checkerForTests = null;
             nodes.removeRemoteNode(node);
             service.stop(module);
@@ -206,8 +229,39 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
         fail("the top-up did not appear");
     }
 
-    /** The environment of a process of this user (macOS and Linux {@code ps}). */
+    /**
+     * Whether {@code text} holds the mnemonic (its first six words with any separators: spaces, new lines, a JSON array)
+     * or the key (hex in either case, either 32-byte half, base64).
+     */
+    static boolean leaks(String text, List<String> words, List<String> keyForms) {
+        String squeezed = text.toLowerCase(Locale.ROOT).replaceAll("[\\s\"',\\[\\]]", "");
+        if (squeezed.contains(String.join("", words.subList(0, 6)))) return true;
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (String k : keyForms) if (k.startsWith("b64:") ? text.contains(k.substring(4)) : lower.contains(k)) return true;
+        return false;
+    }
+
+    static List<String> keyForms(byte[] key) {
+        HexFormat h = HexFormat.of();
+        List<String> out = new ArrayList<>(List.of(h.formatHex(key), h.formatHex(key, 0, 32), h.formatHex(key, 32, 64)));
+        out.add("b64:" + java.util.Base64.getEncoder().encodeToString(key));
+        out.add("b64:" + java.util.Base64.getEncoder().encodeToString(java.util.Arrays.copyOfRange(key, 0, 32)).replace("=", ""));
+        return out;
+    }
+
+    /** This test's buffered log (IntelliJ's test logger keeps it in memory until a test fails). */
+    private static String testLog() {
+        var buffer = new java.io.ByteArrayOutputStream();
+        try (var out = new java.io.PrintStream(buffer, true, StandardCharsets.UTF_8)) {
+            com.intellij.testFramework.TestLoggerFactory.dumpLogTo("canary", out);
+        }
+        return buffer.toString(StandardCharsets.UTF_8);
+    }
+
+    /** The environment of a process of this user: {@code /proc/<pid>/environ} on Linux, {@code ps -E} on macOS. */
     private static String environment(long pid) throws Exception {
+        Path proc = Path.of("/proc", Long.toString(pid), "environ");
+        if (Files.isReadable(proc)) return Files.readString(proc, StandardCharsets.ISO_8859_1).replace('\0', ' ');
         Process p = new ProcessBuilder("ps", "-E", "-ww", "-p", Long.toString(pid), "-o", "command=").redirectErrorStream(true).start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         p.waitFor(10, TimeUnit.SECONDS);

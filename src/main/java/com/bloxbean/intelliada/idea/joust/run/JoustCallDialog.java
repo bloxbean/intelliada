@@ -67,14 +67,15 @@ final class JoustCallDialog extends DialogWrapper {
     record AccountItem(JoustAccounts.Entry e) {
         @Override
         public String toString() {
-            return PlainText.label((e.name == null || e.name.isBlank() ? e.id : e.name + " (" + e.id + ")") + " · "
+            return PlainText.label((e.name == null || e.name.isBlank() ? e.id : e.name + " (" + e.id + ")") + " - "
                     + abbreviate(e.address), 120);
         }
     }
 
     static String abbreviate(@Nullable String address) {
         if (address == null) return "";
-        return address.length() <= 24 ? address : address.substring(0, 14) + "…" + address.substring(address.length() - 8);
+        // "..." survives PlainText.label, so a shortened address never reads as a whole one (FAB-29).
+        return address.length() <= 24 ? address : address.substring(0, 14) + "..." + address.substring(address.length() - 8);
     }
 
     /** The calls the panel offers from a description's {@code x-joust}: creations and actions, without keyed ones. */
