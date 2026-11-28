@@ -88,6 +88,9 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
         JoustRunSession s = null;
         List<String> checkerInputs = new CopyOnWriteArrayList<>();
         JoustRunSession.checkerInputForTests = checkerInputs::add;
+        // The test's idea.log (what the platform's file log receives), from its length now.
+        Path testLog = com.intellij.testFramework.TestLoggerFactory.getTestLogDir().resolve("idea.log");
+        long logStart = Files.isRegularFile(testLog) ? Files.size(testLog) : 0;
         try {
             topUp(admin, store, caller.address);
             nodes.addRemoteNode(node);
@@ -176,9 +179,13 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
             for (String in : checkerInputs) places.add("checker stdin: " + in);
             String control = "JOUST-CANARY-CONTROL-" + UUID.randomUUID();
             com.intellij.openapi.diagnostic.Logger.getInstance(JoustRunSession.class).info(control);
-            String log = testLog();
-            assertTrue("the test log is searched (positive control)", log.contains(control));
-            places.add("idea.log (this test's): " + log);
+            String log = "";
+            for (int i = 0; i < 50 && !log.contains(control); i++) {
+                if (i > 0) Thread.sleep(100);
+                log = logSince(testLog, logStart);
+            }
+            assertTrue("this test's idea.log is searched (positive control)", log.contains(control));
+            places.add("idea.log (this test's part): " + log);
             List<Path> journalFiles = recentFiles(journalDir, 0);
             assertFalse("the journal was written", journalFiles.isEmpty());
             for (Path p : journalFiles) places.add(p + ": " + Files.readString(p, StandardCharsets.ISO_8859_1));
@@ -249,13 +256,12 @@ public class JoustPanelDevKitPlatformTest extends BasePlatformTestCase {
         return out;
     }
 
-    /** This test's buffered log (IntelliJ's test logger keeps it in memory until a test fails). */
-    private static String testLog() {
-        var buffer = new java.io.ByteArrayOutputStream();
-        try (var out = new java.io.PrintStream(buffer, true, StandardCharsets.UTF_8)) {
-            com.intellij.testFramework.TestLoggerFactory.dumpLogTo("canary", out);
-        }
-        return buffer.toString(StandardCharsets.UTF_8);
+    /** What {@code log} holds after {@code start} bytes (all of it when it was rotated meanwhile). */
+    private static String logSince(Path log, long start) throws Exception {
+        if (!Files.isRegularFile(log)) return "";
+        byte[] all = Files.readAllBytes(log);
+        int from = start <= all.length ? (int) start : 0;
+        return new String(all, from, all.length - from, StandardCharsets.ISO_8859_1);
     }
 
     /** The environment of a process of this user: {@code /proc/<pid>/environ} on Linux, {@code ps -E} on macOS. */

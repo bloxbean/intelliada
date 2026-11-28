@@ -60,4 +60,15 @@ public class JoustPanelWriteTest {
         assertTrue(text, text.contains("details unavailable: CBOR x") && text.contains("until slot 900") && text.contains("genesis-1"));
         assertTrue(text, text.contains("Your net outflow: unknown"));
     }
+
+    /** D15 (M3.3b4): the ledger's "registered already" refusal, as DevKit's submit API relays it, names the credential. */
+    @Test
+    public void aRegisteredAlreadyRefusalNamesItsScriptCredentials() {
+        String node = "the node refused the transaction (HTTP 400): {\"status_code\":400,\"message\":\"{\\\"contents\\\":{\\\"error\\\":"
+                + "[\\\"ConwayCertsFailure (CertFailure (DelegFailure (StakeKeyRegisteredDELEG (ScriptHashObj (ScriptHash "
+                + "\\\\\\\"dd15fe5da434a91d00aa7f3a6891b77a59cfd4e442506d47189b703d\\\\\\\")))))\\\"]}}\"}";
+        assertEquals(List.of("dd15fe5da434a91d00aa7f3a6891b77a59cfd4e442506d47189b703d"), JoustRunSession.alreadyRegistered(node));
+        assertEquals(List.of(), JoustRunSession.alreadyRegistered("the node refused the transaction (HTTP 400): ValueNotConservedUTxO"));
+        assertEquals(List.of(), JoustRunSession.alreadyRegistered(null));
+    }
 }

@@ -1,6 +1,7 @@
 package com.bloxbean.intelliada.idea.joust.run;
 
 import com.bloxbean.intelliada.idea.core.util.NodeType;
+import com.bloxbean.intelliada.idea.joust.core.PlainText;
 import com.bloxbean.intelliada.idea.joust.host.HostError;
 import com.bloxbean.intelliada.idea.joust.host.HostJson;
 import com.bloxbean.intelliada.idea.joust.host.HostSession;
@@ -674,8 +675,11 @@ public final class JoustRunSession {
         reviewer = r;
     }
 
-    /** A submitted transaction: its id, the host's reservation, and the instance it creates or acts on (or null). */
-    public record Submitted(String txHash, String reservation, @Nullable String instance) {
+    /**
+     * A submitted transaction: its id, the host's reservation, the instance it creates or acts on, and the owned object
+     * it creates or acts on (each or null).
+     */
+    public record Submitted(String txHash, String reservation, @Nullable String instance, @Nullable String object) {
     }
 
     /**
@@ -793,8 +797,22 @@ public final class JoustRunSession {
                         } catch (Exception kept) {
                             notReleased = kept.getMessage();
                         }
-                        throw new NetworkIdentity.Refused(refused.getMessage() + (notReleased == null ? "; its inputs are released"
-                                : "; " + held + " (" + notReleased + ")"));
+                        String outcome = notReleased == null ? "; its inputs are released" : "; " + held + " (" + notReleased + ")";
+                        // D15 (M3.3b4): the ledger says a credential this body registers is registered already. That is
+                        // registration evidence: the host is told, so the publication is built again without it.
+                        java.util.List<String> known = alreadyRegistered(refused.getMessage());
+                        if (!known.isEmpty()) {
+                            for (String credential : known) {
+                                ObjectNode evidence = HostJson.object().put("txHash", body.txHash())
+                                        .put("message", PlainText.literal(refused.getMessage(), 2_000));
+                                ObjectNode reg = HostJson.object().put("credential", credential);
+                                reg.set("evidence", evidence);
+                                call("registered", reg, false);
+                            }
+                            throw new AlreadyRegistered("the node reports " + String.join(", ", known) + " registered already; the dev host "
+                                    + "was told" + outcome, known);
+                        }
+                        throw new NetworkIdentity.Refused(refused.getMessage() + outcome);
                     } catch (com.bloxbean.intelliada.idea.joust.host.chain.BlockfrostApi.Failed unknown) {
                         if (attempt >= SUBMIT_ATTEMPTS) {
                             throw new NetworkIdentity.Refused("the submission's outcome is unknown (" + unknown.getMessage() + "); "
@@ -815,7 +833,7 @@ public final class JoustRunSession {
                 if (!id.equals(body.txHash())) {
                     throw new NetworkIdentity.Refused("the node answered another transaction id (" + id + ") than the transaction's");
                 }
-                return new Submitted(body.txHash(), reservation, prepared.path("instance").textValue());
+                return new Submitted(body.txHash(), reservation, prepared.path("instance").textValue(), prepared.path("object").textValue());
             } catch (Exception refused) {
                 boolean interrupted = refused instanceof InterruptedException || Thread.interrupted();
                 try {
@@ -833,6 +851,35 @@ public final class JoustRunSession {
                 }
             }
         }
+    }
+
+    /**
+     * D15 (M3.3b4): a submission the ledger refused because a script credential it registers is registered already. The
+     * host was given that refusal as registration evidence; Deploy builds the publication again.
+     */
+    public static final class AlreadyRegistered extends Exception {
+        private final java.util.List<String> credentials;
+
+        AlreadyRegistered(String why, java.util.List<String> credentials) {
+            super(why, null, false, false);
+            this.credentials = java.util.List.copyOf(credentials);
+        }
+
+        public java.util.List<String> credentials() {
+            return credentials;
+        }
+    }
+
+    private static final java.util.regex.Pattern REGISTERED_ALREADY = java.util.regex.Pattern.compile(
+            "StakeKeyRegisteredDELEG \\(ScriptHashObj \\(ScriptHash \\\\*\"([0-9a-f]{56})\\\\*\"");
+
+    /** The script credentials a ledger refusal reports as registered already (Conway's {@code StakeKeyRegisteredDELEG}). */
+    static java.util.List<String> alreadyRegistered(@Nullable String nodeMessage) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (nodeMessage == null) return out;
+        var m = REGISTERED_ALREADY.matcher(nodeMessage);
+        while (m.find()) if (!out.contains(m.group(1))) out.add(m.group(1));
+        return out;
     }
 
     /** Discards a body never handed out; null when it was discarded (or there was none), else why not. */
@@ -966,6 +1013,7 @@ public final class JoustRunSession {
                 .findFirst().orElseThrow(() -> new NetworkIdentity.Refused("the caller is not an account of this network"));
         java.util.List<Submitted> done = new java.util.ArrayList<>();
         java.util.Set<String> published = new java.util.HashSet<>();
+        java.util.Set<String> evidenced = new java.util.HashSet<>();
         try {
             while (true) {
                 JsonNode pre = prerequisites(contract);
@@ -981,7 +1029,16 @@ public final class JoustRunSession {
                 }
                 progress.step("Publishing " + id);
                 ObjectNode publish = HostJson.object().put("ttlSlots", ttlSlots).put("contract", contract).put("prerequisite", id).put("address", address);
-                Submitted s = submit("publish", publish, callerId, java.util.List.of());
+                Submitted s;
+                try {
+                    s = submit("publish", publish, callerId, java.util.List.of());
+                } catch (AlreadyRegistered known) {
+                    // The host now holds the evidence; the same prerequisite is built again without the registration.
+                    if (!evidenced.addAll(known.credentials())) throw known;   // told already: not a loop
+                    published.remove(id);
+                    progress.step("Registered already: " + String.join(", ", known.credentials()) + "; publishing again");
+                    continue;
+                }
                 if (s == null) {
                     throw new DeployStopped("the dev host lists " + id + " as outstanding but has nothing to publish for it; Deploy stopped "
                             + "before init", done, null);

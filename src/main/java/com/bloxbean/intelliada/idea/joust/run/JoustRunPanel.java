@@ -562,6 +562,7 @@ public final class JoustRunPanel implements Disposable {
                     }
                     if (last != null) {
                         if (last.instance() != null) step.accept("Instance " + last.instance());
+                        if (last.object() != null) step.accept("Object " + last.object());
                         step.accept("Waiting for it to land…");
                         boolean landed = s.awaitInclusion(last.txHash(), java.time.Duration.ofMinutes(3));
                         step.accept(landed ? "Landed on chain." : "Not on chain yet: History shows when it settles.");

@@ -55,7 +55,9 @@ public class JoustSignDevKitPlatformTest extends BasePlatformTestCase {
         JournalStore journalStore = new JournalStore(Files.createTempDirectory("joust-sign-journal"));
         JoustHostService service = JoustHostService.getInstance(getProject());
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
-        String caller = "genesis-5";
+        // A fresh funded account: a genesis account on a long-lived DevKit can run out of spendable UTxOs.
+        var account = fresh("sign");
+        String caller = account.id;
         try {
             nodes.addRemoteNode(node);
             JoustRunSession.Launcher launcher = (init, key, reads) -> service.launch(guard, module, init, key, reads, e -> { });
@@ -100,6 +102,7 @@ public class JoustSignDevKitPlatformTest extends BasePlatformTestCase {
             JoustRunSession.checkerForTests = null;
             nodes.removeRemoteNode(node);
             service.stop(module);
+            com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance().remove(account.id);
         }
     }
 
@@ -131,7 +134,8 @@ public class JoustSignDevKitPlatformTest extends BasePlatformTestCase {
         JournalStore journalStore = new JournalStore(Files.createTempDirectory("joust-resend-journal"));
         JoustHostService service = JoustHostService.getInstance(getProject());
         JoustRunGuard guard = JoustRunGuard.capture(getProject());
-        String caller = "genesis-6";
+        var account = fresh("resend");
+        String caller = account.id;
         try {
             nodes.addRemoteNode(node);
             JoustRunSession.Launcher launcher = (init, key, reads) -> service.launch(guard, module, init, key, reads, e -> { });
@@ -146,11 +150,11 @@ public class JoustSignDevKitPlatformTest extends BasePlatformTestCase {
                     .put("kind", "init").put("method", "init").put("address", address).set("args", HostJson.object()));
 
             // 1. Every POST fails to reach the node: an unknown outcome, journaled signed; the timer sends it again.
-            String first = unsent(s1, init);
+            String first = unsent(s1, init, caller);
             assertTrue("sent again by the settlement timer, it lands", off(() -> s1.awaitInclusion(first, Duration.ofMinutes(3))));
 
             // 2. The same, and the host stopped at once: the restored host sends it again.
-            String second = unsent(s1, init);
+            String second = unsent(s1, init, caller);
             service.stop(module);
             assertTrue(s1.running().process().waitFor(20, TimeUnit.SECONDS));
             JoustRunSession s2 = off(() -> {
@@ -169,16 +173,17 @@ public class JoustSignDevKitPlatformTest extends BasePlatformTestCase {
             JoustRunSession.checkerForTests = null;
             nodes.removeRemoteNode(node);
             service.stop(module);
+            com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance().remove(account.id);
         }
     }
 
     /** Submits {@code init} with every POST failing to reach the node; returns the journaled transaction's id. */
-    private static String unsent(JoustRunSession s, ObjectNode init) throws Exception {
+    private static String unsent(JoustRunSession s, ObjectNode init, String caller) throws Exception {
         var before = new java.util.HashSet<String>();
         for (var e : s.journalForTests().journal().entries()) before.add(e.txHash());
         JoustRunSession.unreachableForTests.set(JoustRunSession.SUBMIT_ATTEMPTS);
         try {
-            off(() -> s.submit("prepare", init.deepCopy(), "genesis-6", List.of()));
+            off(() -> s.submit("prepare", init.deepCopy(), caller, List.of()));
             fail("a submission that never reached the node succeeded");
         } catch (Throwable expected) {
             String m = String.valueOf(expected.getMessage());
@@ -192,5 +197,26 @@ public class JoustSignDevKitPlatformTest extends BasePlatformTestCase {
         assertTrue("journaled signed", com.bloxbean.intelliada.idea.joust.tx.TxCbor.witnessEntries(
                 com.bloxbean.intelliada.idea.joust.tx.TxCbor.transaction(e.cbor())).stream().anyMatch(w -> w.key() == 0));
         return e.txHash();
+    }
+
+    /** A fresh devnet account funded with 1000 ADA by DevKit's faucet ({@code JOUST_DEVKIT_ADMIN}). */
+    private static com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.Entry fresh(String name) throws Exception {
+        String admin = System.getenv("JOUST_DEVKIT_ADMIN"), store = System.getenv("JOUST_DEVKIT_STORE");
+        assertNotNull("JOUST_DEVKIT_ADMIN funds the test's account", admin);
+        var e = com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance()
+                .createFresh(name, com.bloxbean.intelliada.idea.joust.host.chain.NetworkIdentity.NetworkClass.DEVNET);
+        var http = java.net.http.HttpClient.newHttpClient();
+        var r = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(admin + "/local-cluster/api/addresses/topup"))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{\"address\":\"" + e.address + "\",\"adaAmount\":1000}")).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertEquals("top-up: " + r.body(), 2, r.statusCode() / 100);
+        for (int i = 0; i < 60; i++) {
+            var u = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(store + "/addresses/" + e.address + "/utxos")).GET().build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (u.statusCode() == 200 && u.body().contains("tx_hash")) return e;
+            Thread.sleep(1_000);
+        }
+        throw new AssertionError("the top-up did not appear");
     }
 }
