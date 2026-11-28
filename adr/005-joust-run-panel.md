@@ -1,0 +1,1513 @@
+# ADR-005: Running JOUST contracts from IntelliAda (devnets, testnets, mainnet)
+
+**Status:** Proposed (r24). r10 adds §12, implementation refinements found while building M3.1a and M3.1b; the decisions above are unchanged. The draft (d1, d2) gave requirements to JOUST's dev-host ADR. r1 amended it to the protocol
+JOUST built, as gate G3.1 requires; r2–r9 answer review rounds 1–8 (§10). Reviewed before any milestone that signs starts.
+
+**Date:** 2026-11-25 (draft d1: 2026-11-19).
+
+**Authors:** Claude Code, for the IntelliAda maintainers.
+
+**Scope:** design only. This PR adds no code, build change or plugin.xml entry.
+
+**Origin.** This is Part C of ADR-004 r2 (PR #9), moved here on 2026-11-19 (decision L16 in ADR-004 §11) so that Parts
+A and B could be accepted on their own.
+- **Kept from ADR-004:** decision IDs (D11–D16, D11a, D13a, D14a), invariant IDs (I9–I14, I16, I17, I19, I22–I24) and
+  milestone IDs (M3, M3b, M3c, M5). New IDs continue from them (D14b, D17, D18; I25–I30; L23–L33).
+- **Cited from ADR-004, not copied:** facts **F1–F37** (§1.1), the threat model **§2**, the rule **D1**, and the shared
+  invariants **I15, I18, I20 and I21**.
+
+**Builds on:**
+- IntelliAda ADR-004 (accepted; M1 #19, M2 #22 and the LSP4IJ upgrade #25 are approved).
+- **JOUST dev-host protocol 1** at JOUST `main` `01bad1f7` (2026-11-25): `docs/protocol/dev-host-1.md` and its JSON
+  Schemas (normative), the client conformance kit (`docs/protocol/dev-host-1-conformance.md`), and JOUST ADR-0022
+  (r8, the dev host; its §12 maps this ADR's H1–H17 to the protocol). JOUST ADR-0023 (`@Params` and `@AuthorizedBy`,
+  protocol 2) is not implemented; this ADR uses protocol 1 only.
+- JOUST ADR-0024 (the browser playground, a second client of the same host): a reference for the chain-read adapter
+  and the journal (`js/joust/src/playground/devkit.js`, `journal.js`).
+
+**Risk:** high. IntelliAda starts project processes, signs with keys it holds, and, behind opt-ins, spends real funds on
+public networks.
+
+## 0. What r1 changes, and the facts it rests on
+
+JOUST merged its dev host (PRs #145–#176, landed in #189 on 2026-11-24) and its playground (#174, #178–#180). r1:
+- replaces D11a's requirements table with the protocol's answer to each (§D11a);
+- changes D11's launch to the protocol's: a `joustHostSpec` launch spec, a private snapshot, a digest (§D11);
+- replaces D13's ten IntelliAda checks with **the protocol's normative client signing rules**, run by **JOUST's own
+  reference checker, bundled in the plugin** (§D13, L24);
+- adds the reservation journal, the recovery high-water mark and restore (D17), and the chain-read adapter (D18);
+- amends I16 (L25) and L17's testnet escalation (L25);
+- splits M3 into reviewable parts (§4, L27).
+
+**Facts (r1), each checked at JOUST `01bad1f7` with `0.1.0-pre3-01bad1f-SNAPSHOT` published to the local Maven
+repository** (`./gradlew publishToMavenLocal -Pversion=0.1.0-pre3-SNAPSHOT`; JOUST appends the commit):
+- **F38.** A Gradle Counter made by that build's `joust new -t gradle -l jsc --joust-repository file://~/.m2/repository`
+  runs `./gradlew build joustHostSpec` and writes `build/joust/host-spec.json`: `protocol` 1, `java` (the toolchain's
+  JDK 25), `mainClass` `org.julclang.state.host.DevHost`, `digest`, and 74 ordered `launch` entries (`dir` entries with a
+  `files` map of SHA-256s, `jar` entries with one `sha256`).
+- **F39.** A scratch client (Python) copied the 74 entries into a snapshot, recomputed the digest from the copies
+  (equal to the spec's), launched the host with protocol 1's arguments and an allow-listed environment, and sent
+  `initialize` (devnet magic 42): the host answered protocol 1, `fingerprint` equal to the digest, capabilities
+  `views, objects, quorum`, read kinds `utxos, output, tip, protocolParams, script, stakeRegistration`, engine version
+  `0.1.0-pre3-01bad1f-SNAPSHOT`, and the contract with its spend and mint hashes. `describe` listed `init`,
+  `increment`, `reset`, `close` and the view `count`, all `served`, with the `.jsc` message map. `shutdown` and `exit`
+  ended it with exit status 0.
+- **F40.** The conformance kit is `org.julclang:julc-state-host:<v>:conformance` (4.9 MB jar, 365 entries): the
+  reference checker `org.julclang.state.host.conformance.ReferenceChecker` (`check(JsonNode)` → a list of violation
+  codes; `main(file)` prints them as JSON and exits 0 or 1), a scripted `FakeHost`, recorded sessions (`sessions/`,
+  including seven `violation-*` transport faults) and **333 verifier vectors** (`verifier/`). Its classes are Java 25
+  and need `julc-state-runtime`, `julc-state-serve`, `julc-vm`, JuLC and CCL 0.8.0-pre8 on the class path.
+- **F41.** A verifier vector's client-side inputs are `method`, `request`, `networkId`, `maxFee`, `anchors`
+  (`description`, `language`, `policy`, `address`, and `outputVerifier`/`mapVerifier` each with `language`, `hash`,
+  `address`; the contract has no `hash` field), `resolved` (node UTxOs by `txHash#index`), `node` (holder scripts and
+  registrations), `protocolParams`, on keyed prepares `clock` (102 vectors), and on some offline and ordering cases
+  `orderedReads`; only `result` comes from the host. `ReferenceChecker.main` reads its file argument (`/dev/stdin`
+  works) and prints the verdict with `println` (`[]` and a line feed).
+- **F42.** The anchors are in the build output: `META-INF/joust/<pkg>.<Contract>.json` (the description, whose
+  `x-joust` names `package` and `validator`), and the validator's script. The Counter build holds **two** copies,
+  `META-INF/plutus/CounterValidator.plutus.json` and `META-INF/plutus/org/example/counter/CounterValidator.plutus.json`,
+  plus an aggregate `plutus.json`; each `.plutus.json` carries `cborHex` and a `hash`. JOUST's runtime reads the
+  simple-name resource **from the validator class's own code source** and refuses two classes of one simple name there
+  (`ValidatorScripts.resolve`). The shared verifiers are `META-INF/plutus/OutputVerifier.plutus.json` and
+  `MapVerifier.plutus.json` in the `julc-state-verifier` jar.
+- **F43.** IntelliJ IDEA 2026.1 (build 261.22158) ships JBR **25.0.2**; 2025.2.x ships JBR 21. IntelliAda's floor is
+  2026.1 (`sinceBuild = "261"`, commit `57ddbc0`), so a released IntelliAda always runs on a Java 25 runtime.
+- **F44.** The playground's DevKit adapter answers every read kind from Yaci Store's Blockfrost-style API (`/addresses/
+  {a}/utxos`, `/txs/{h}/utxos`, `/blocks/latest`, `/epochs/{e}/parameters` (after `/epochs/latest`), `/scripts/{h}/cbor`, `/accounts/{s}`,
+  `/assets/{u}/transactions`, `/txs/{h}/redeemers`, `/scripts/datum/{h}/cbor`), reading the tip before and after each
+  answer and retrying when the chain moved (`devkit.js` `chainReads`).
+
+**Two questions this ADR adds to ADR-004 §2:**
+- **Chain reads.** The host reads the chain only through IntelliAda (D18), so a node endpoint and its credential are
+  never transmitted to project code. Trusted project code runs as the user and can read IntelliAda's configuration,
+  including a Blockfrost `authKey` held in plain text today (ADR-004 R8); D18's reason is D14's single node binding.
+- **Funds.** On public networks the assets include real funds. D14a's opt-ins, the mandatory mainnet review and the
+  protocol's refusals are the controls.
+
+**Trust (as JOUST ADR-0023 states it, 2026-11-23):** the chain provider, the wallet (IntelliAda) and the client's journal
+are trusted, as in any CCL or MeshJS application. The **host is not**: every transaction it returns is checked (D13)
+against anchors IntelliAda reads itself.
+- **What D13 defends against** (r2, ADR5-SEC-4, ADR5-DES-5): a **buggy or protocol-misbehaving host**, a **stale
+  build**, and **accidental corruption**. It does not contain **hostile project code**: trusted project code runs as the
+  user and can rewrite any file the user can, IntelliAda's plugin included (ADR-004 §2; JOUST ADR-0022 §2 "Not
+  addressed"). The measures below that keep state in memory or off disk (I26, the checker's input on a pipe) are cheap
+  hardening against corruption and races, not a claim of containment.
+- **The provider** (r2, ADR5-SEC-7): for the run panel, the bound node's answers are trusted; their integrity rests on
+  D14 (HTTPS to Blockfrost; a devnet with positive identity). This narrows ADR-004 §2's "defence in depth against a lying
+  endpoint" for the run panel: the checker defends against the host, not the provider (L32).
+
+## 1. Context
+
+The maintainer asked for a way to deploy and call a JOUST contract **directly from its code in the editor**: first on a
+local DevKit or Yano devnet, then on public testnets and mainnet behind explicit opt-ins (ADR-004 §11, L4). On
+2026-11-25 the maintainer asked to build it now, against a local build of JOUST main (L23).
+
+## 2. Decision
+
+### D11. Where off-chain execution runs: the project's JOUST dev host, in its own process
+
+The candidates (unchanged from d1): the project's JVM through a dev host; JOUST's prepare service; the JS engine; and
+IntelliAda's in-IDE CCL. **Decision: the dev host** (JOUST ADR-0022), the project's own JOUST runtime in a separate
+process, speaking protocol 1 over stdio. IntelliAda is the wallet, the chain client and the submitter; it never builds a
+transaction. In-IDE CCL, `JoustServer` over HTTP, `joust dev`, loading JOUST into the IDE JVM and an IntelliAda-written
+launcher stay rejected for d1's reasons.
+
+**Launch (Gradle, M3; protocol 1 "Launch and framing"):**
+1. On the first run action in a trusted project (D1), IntelliAda runs `joustHostSpec` on the contract module through
+   IntelliJ's Gradle integration (ADR-004 M2's runner), and reads `build/joust/host-spec.json` after success, with
+   the strict JSON reader and a size cap (1 MiB).
+2. **Validation:** `protocol` 1; `mainClass` exactly `org.julclang.state.host.DevHost`; `java` an absolute path to a
+   regular, executable `bin/java` (or `bin/java.exe`) of a JDK home whose `release` file declares `JAVA_VERSION` 25 or
+   later; ordinals contiguous from 0; absolute entry paths; `kind` `dir` or `jar`; SHA-256s as 64 lowercase hex;
+   relative paths POSIX, without `.`/`..` segments, a leading `/` or a control character.
+3. **Snapshot:** IntelliAda creates the snapshot in a temporary private directory under the IDE system directory
+   (`<system>/intelliada/joust/snapshots/`), then renames it into place. It opens each source **without following
+   links**, copies only regular files under a deadline, hashes **the bytes it writes**, compares each hash to the spec,
+   refuses a jar whose manifest has a nonempty `Class-Path` (as the host does), recomputes the digest by the
+   protocol's fingerprint format, refuses a mismatch, and makes the snapshot read-only. A snapshot is never reused: each
+   launch makes its own, deleted when no host uses it any more (a Counter snapshot is about 95 MB); leftovers are swept
+   at IDE start.
+4. **Anchors (I26):** before launch, IntelliAda reads from the copies, into memory, every description
+   (`META-INF/joust/*.json`) and every Plutus blueprint (`META-INF/plutus/**.json`) with its class-path ordinal, and
+   derives the anchors as D13's "Anchors" says. Signing decisions never re-read the snapshot. When the anchors cannot be
+   derived under the reviewed set (D12), the host still starts **read-only**: views, listings and decoding work, signing
+   and export are off, and the panel says why (ADR5-CDX-14).
+5. **Confirmation:** the first start in each IDE session shows the project, the `java`, the main class and the
+   project's JOUST version: the string constant in `org/julclang/state/runtime/RuntimeVersion.class`'s static
+   initializer (`VERSION = String.valueOf("…")`), read from the snapshot copy with a class-file reader, never by loading
+   the class (D1; ADR5-DES-11, ADR5-DES-14, ADR5-CDX-14).
+6. **Process:** `GeneralCommandLine(java, -XX:+DisplayVMOutputToStderr, -Xlog:disable, -Xlog:all=warning:stderr,
+   --enable-native-access=ALL-UNNAMED, -cp <snapshot entries in ordinal order>, org.julclang.state.host.DevHost,
+   --stdio)` from the project root, with `ParentEnvironmentType.NONE` and the protocol's environment allow-list (PATH,
+   HOME, LANG, LC_*, and on Windows USERPROFILE, SystemRoot, TEMP/TMP) and nothing else: no project JVM options, no
+   `JAVA_TOOL_OPTIONS`. The host console offers no thread dump (the protocol forbids SIGQUIT).
+7. **`initialize`:** `protocol [1]`; the bound network (D14) with `mainnet:true` only after M5's gate; the clock and
+   time limits of D14b; `limits {callDeadlineMs 60000, readsPerCall 256, readBytesPerCall 32 MiB}`;
+   `build {snapshot, digest}`; `restoring` per D17. IntelliAda refuses a host whose `protocol` is not 1, whose
+   `fingerprint` differs from the digest it computed, or whose contract list or script hashes disagree with the anchors
+   (I24).
+
+**Calls are serial** (ADR5-DES-9): each host has one queue; views, listings, prepares and settlements wait their turn,
+so IntelliAda never sends a second forward call (`bad/busy`). Several hosts may be live (one per contract module and
+bound node); every host on one **chain** (D14, whichever node configuration bound it) shares that chain's lock and mark
+(D17). **One live owner** (ADR5-CDX-19): a contract module has at most one live host per chain; binding the same module to
+another node configuration of that chain while its host runs is refused ("already running on this chain through …").
+The module's journal records the owning host session; restore and settlement route by it.
+
+**Admission is atomic** (ADR5-CDX-2, ADR5-SEC-17, ADR5-CDX-21): under the chain lock IntelliAda checks the body's
+spending, collateral and **reference** inputs against **every live journal entry on the chain** (whether or not its host
+is running), and a publication's components (a script at its holder address, a stake registration of its credential;
+a combined verifier publication counts as both of its components) against every pending publication there; then it
+records the entry and raises the mark, and only then signs or hands the body out. A body refused for overlap was never handed out: it is settled
+`discarded` with its own host, and the panel says the wallet's UTxO is pending; the other host keeps choosing that
+UTxO until the first body settles.
+
+**Lifecycle (I20, I24):** started on the first run action, one host per contract module and bound node; stopped on
+project close, trust revocation, a change of the bound node or its identity, **Stop** in the panel, a protocol
+violation, or process exit (the session state is then lost, and D17's restore applies at the next start). A rebuild
+does not change what runs (the snapshot is pinned); the panel marks the host **stale** when the module's build output
+changes, and Deploy or a call from a stale host first offers a restart. The host's stderr is drained continuously into a
+capped "JOUST host" console; stdout carries only frames. An **orderly** stop sends `shutdown` and `exit`, closes the host's
+input and reads its output to the end for at most 5 s (a frame after `exit` is a violation), then ends the process tree.
+After a **protocol violation** IntelliAda sends nothing more: it discards the in-flight result, closes the host's input
+and ends the process at once (ADR5-CDX-15).
+
+**npm (M3b):** `node node_modules/@julclang/joust/bin/joust-host.js --stdio` from the project root, after checking the
+real paths of the package, the entry and the runtime; `build.snapshot` is the project root and the digest covers the
+closure the protocol lists. Node must be the validated Node from ADR-004 D4; `NODE_OPTIONS` is never passed.
+
+### D11a. The JOUST protocol against this ADR's requirements (r1)
+
+| H | Requirement (d2) | Protocol 1 | Status |
+|---|---|---|---|
+| H1 | versions, protocol, contracts, script hashes, fingerprint | `initialize` result (F39) | met; build version is null on Gradle |
+| H2 | `describe` | `describe`: description, messages (null for Java), `calls` with `served` or an `unsupported` code | met |
+| H3 | `deployment`; `@Params` unsupported | `deployment(now, contract)`: addresses, policies, script hashes, reference scripts, governors (empty); `@Params` → `unsupported/params`, `@AuthorizedBy` → `unsupported/authorizedBy` (ADR-0023 is protocol 2) | met; governors later |
+| H4 | `prepare` with predicted effects, co-signers, designation | `prepare(now, ttlSlots, call)` → `prepared` (reservation, cbor, txHash, validFrom, validTo, signers, plan) and `predicted` (state, objects, events, payouts, sends); `cosigners` up to 64 on quorum calls; `designated` and `operation` on keyed calls | met |
+| H5 | `view` | `view(now, contract, instance, view, args)`; named views on the JVM host only | met (Gradle); npm state only |
+| H6 | `instances`, `objects` | paged over a listing snapshot (limit 1–500; `bad/listingGone` restarts) | met |
+| H7 | `decode` | may answer `ambiguous` | met |
+| H8 | bounded `publish` | `prerequisites`, then `publish(now, ttlSlots, contract, prerequisite, address)` per component; `registered` asserts a credential | met |
+| H9 | time from the client | `now` per call, never decreasing; `reset` re-baselines | met; D14b |
+| H10 | chain reads through the client | `chain/read` reverse requests, nine kinds, only during a call, under per-call caps | met; D18 |
+| H11 | `settled` | by reservation id with the observed tip; `discarded`; thresholds on observed tips only | met; D17 |
+| H12 | cancellation, deadlines | `$/cancelRequest`; host deadline; client hard timeout | met |
+| H13 | framing, stdout redirected | Content-Length frames ≤ 4 MiB, header ≤ 1 KiB, 10 s per frame; fd 1 diverted on Linux and macOS | met; Windows relies on the client's strict parser |
+| H14 | structured errors | `data {kind, code, message, sites, retryAtSlot}`; branch on kind/code only | met |
+| H15 | `reset(now)` | `reset(now, clock?, rewound?)`, keeps reservations | met |
+| H16 | keyed designation | `call.designated` + `call.operation` with `attempts`; `needsDesignated`, `pending`, `mayHaveLanded`, `cooldown` | met; M3c |
+| H17 | history | none | not required (L7) |
+
+### D12. Which JOUST runs: the project's, never IntelliAda's
+
+- **The host and every task are the project's** (Gradle: the plugin version pins the runtime, processor, JuLC and CCL;
+  npm: `package.json` and the lockfile). A script's hash depends on the JuLC version that compiled it.
+- **IntelliAda runs no JOUST code that builds transactions** (I9). It bundles JOUST's **reference checker** (L24) with
+  the smallest class-path closure that passes all 333 vectors; it is only ever invoked as the checker, out of process
+  (D13), never as a host or builder.
+- **Version policy (L31; ADR5-SEC-1, ADR5-DES-7, ADR5-DES-14, ADR5-CDX-14):** the plugin carries a **reviewed set**:
+  for each JOUST version its kit was reviewed against, the SHA-256s of that version's `julc-state-api`,
+  `julc-state-runtime`, `julc-state-serve`, `julc-state-host` and `julc-state-verifier` jars, and the `x-joust.version` values of its
+  descriptions; the version string is a label. IntelliAda signs or exports only when
+  - the snapshot's launch entries for those five artifacts are jars whose hashes (from the verified launch spec) are a
+    reviewed set's;
+  - **no other launch entry holds a class** under `org/julclang/state/api/`, `runtime/`, `serve/`, `host/` or
+    `verifier/` (ADR5-DES-21), so the
+    classes the JVM selects are the reviewed jars' (an earlier directory or shaded jar would otherwise win; ADR5-CDX-14,
+    ADR5-SEC-16), and `RuntimeVersion` is read from the reviewed runtime jar's own entry;
+  - `RuntimeVersion` (D11 step 5) and `initialize`'s `versions.engine.joust` both equal that set's label;
+  - every anchored description declares one of its `x-joust.version` values.
+
+  Otherwise the panel stays read-only (views, listings) and names the versions. A `dir` runtime (a composite build) or
+  an unknown SNAPSHOT build is never in the set. **npm (M3b):** the fingerprinted
+  `node_modules/@julclang/joust-runtime/package.json` version, every contract's `built.joust` and `versions.engine.joust`
+  must agree and be reviewed. An IntelliAda update widens the set after the new kit's vectors pass.
+- IntelliAda shows the host's versions and refuses a protocol other than 1.
+- **Before Deploy,** IntelliAda offers to run the build when a contract source is newer than its description.
+- **The language server's compiler** (ADR-004 D5) may differ from the project's. The run panel never uses it.
+
+### D13. Accounts, keys and signing (rewritten in r1, revised r2)
+
+**Accounts.** The caller list shows only accounts of the session's network class (D13a, I12): on devnets also the
+devnet's genesis accounts. Co-signers (quorum calls) come from the same class.
+
+**Keys stay in the IDE process (I10).** The host receives addresses only. No mnemonic or private key appears in any
+child's arguments, environment, stdin or files (the checker's included), nor in IntelliAda's consoles, notifications or
+`idea.log`.
+
+**What IntelliAda checks before signing or exporting (I11, I13, I23).** The protocol's **client signing rules**
+(dev-host-1 "Client signing rules (D13, normative)": rules 1–8, the MerkleMap rules and the three publication shapes)
+are IntelliAda's allow-list. They supersede d2's checks 1–10 and are a superset of them. **They are run by JOUST's
+reference checker, bundled in the plugin (L24):**
+- **The checker files:** the `conformance` jar of a reviewed JOUST version and the smallest closure that passes all 333
+  vectors, in their own plugin directory (`joust-verifier/`), **off the plugin class path**, listed in a SHA-256
+  manifest built into the plugin and verified before each run. The build resolves them under Gradle dependency
+  verification (`verification-metadata.xml`; PGP for releases) and **refuses to build a Marketplace distribution from a
+  SNAPSHOT kit** (ADR5-SEC-6).
+- **The process:** the IDE's own runtime (`java.home`, JBR 25 on the 2026.1 floor, F43; checked to be Java 25 or later),
+  never the project's `java`. One process per check, on every OS: a small runner class bundled beside the kit (listed in
+  the manifest) that reads stdin, calls `ReferenceChecker.check(JsonNode)` and prints the verdict. The input is written to the process's **stdin from memory** (no file), so the verdict is about the exact bytes
+  IntelliAda assembled (ADR5-CDX-1). The working directory is a fresh private empty directory; the environment is the
+  protocol's environment allow-list (D11 step 6; Windows `SystemRoot` included); deadline 30 s. **Accepted:** exit status 0 and stdout exactly `[]` with
+  at most one line terminator. **Refused:** exit status 1 with one JSON array of code strings (shown), and anything else
+  (a timeout, a crash, other output).
+- **The input IntelliAda assembles** (F41), with only `result` from the host:
+  - `method` and `request`: the exact forward method and parameters IntelliAda sent;
+  - `anchors`: derived as below, from the in-memory snapshot resources (I26);
+  - `resolved`: every spending, reference and collateral input, read by IntelliAda through the bound node (D18)
+    **at signing time**, never taken from the answers it gave the host;
+  - `node`: script presence at the holder addresses and registration status, read the same way;
+  - `protocolParams` from the bound node; `networkId` from D14; `maxFee` per D14b;
+  - `clock`: the session's clock as initialized or last reset (keyed calls, ADR5-CDX-8). (`orderedReads` in the vectors is
+    replay evidence; the checker does not read it, so IntelliAda does not send it.)
+- **Anchors (ADR5-SEC-2, ADR5-CDX-5, ADR5-DES-3).** IntelliAda derives them as JOUST's runtime resolves scripts:
+  - the description is `META-INF/joust/<pkg>.<Contract>.json`; two different copies on the class path refuse;
+  - the validator class is `x-joust.package` + `x-joust.validator`; its script is
+    `META-INF/plutus/<validator simple name>.plutus.json` **from the class-path entry that holds the validator's class
+    file**; that entry holding two classes of that simple name, or no such resource, refuses;
+  - the **script hash is recomputed** as CCL computes a Plutus script's hash: Blake2b-224 of the language tag (`0x03`
+    for V3) followed by the `cborHex` bytes **with their outer CBOR byte-string header removed once**; never read from
+    the blueprint's `hash`, though the two must agree (a difference refuses). On the F38 Counter this gives
+    `5de2e73f…`, the host's reported hash (ADR5-SEC-13, ADR5-CDX-5). The policy is that hash; the address (and a
+    staking contract's reward address) is derived with CCL for the bound network;
+  - the **output and map verifiers** are resolved like contracts (ADR5-DES-13, ADR5-SEC-12, ADR5-CDX-5): from the
+    class-path entry that holds `org/julclang/state/verifier/OutputVerifier.class` / `MapVerifier.class`, which must be
+    the `julc-state-verifier` jar of the reviewed set (D12), reading `META-INF/plutus/OutputVerifier.plutus.json` /
+    `MapVerifier.plutus.json` from that entry; another entry holding a resource of that name, or a second class of that
+    simple name in it, refuses;
+  - npm (M3b): `build/joust/contracts.json` and the installed `@julclang/joust-runtime` engine bundle, as ADR-0022 D13
+    names them.
+- **Deployment check:** before any `prerequisites`, `publish` or `prepare`, the host's `deployment` answer (addresses,
+  policies, script hashes, verifier hashes and holder addresses, reward addresses) must equal the derived anchors; any
+  difference stops the session (I24).
+- **IntelliAda's own checks on top:** the bound node's identity is positive for its class and the class's opt-in is on
+  (D14, D14a); the caller and co-signers are accounts of that class (D13a); the session, host and binding that prepared
+  the body are still current; the version policy (D12, L31); no overlap with another host's live reservations (D11);
+  the fee within D14b's user maximum (also passed as `maxFee`).
+- **The review modal** shows what IntelliAda derives from the **body** with CCL's transaction reader (display only):
+  outputs to addresses that are not the deployment's or the caller's, the caller's net outflow, the fee, the required
+  signers, the validity window; never the host's `predicted`. A refusal is final: the modal cannot override it (L25).
+  Devnet: off by default (setting **Confirm every devnet transaction**); testnet: on by default, can be turned off per
+  testnet; mainnet: always.
+
+**Signing (I11).** IntelliAda slices the received transaction's body bytes, hashes them (Blake2b-256), and signs the hash
+with each required **payment** key it holds: the caller's, and each co-signer the user chose from IntelliAda's accounts
+of the class (ADR5-CDX-9). It builds the signed transaction by **splicing**: the original array header, the body bytes as
+received, a witness set made of the received witness set's entries **as raw bytes** (the checker admits only keys 4, 5
+and 7 there) plus a new vkey-witness entry, and the remaining elements as received. It never re-encodes the body, the
+redeemers or the datums. **Before submission, every key the body requires** (its `required_signers` and the payment key
+of every wallet spending and collateral input) has a witness; otherwise nothing is submitted. It submits through the bound node and checks that
+the returned id equals `txHash`.
+
+**External signing (D14a, M3.5):** export the unsigned transaction (after the same checks); import witness sets (one per
+co-signer if needed), accepting **only vkey witnesses** (key 0), each verified against `txHash` and belonging to a key the
+body requires; merged by the same splice.
+
+**Calls the panel offers:** every call the checker can verify and the host serves: init, action, destroy, owned calls,
+quorum calls (co-signers chosen from the class, or by import), calls with sends, map calls, and publications. **Keyed
+calls** wait for M3c (D17's designation journal). `@Params` and `@AuthorizedBy` contracts show the host's
+`unsupported` reason.
+
+### D13a. The account model (unchanged from d2; Q12 decided, L13)
+
+- **A new account store in IntelliJ's `PasswordSafe`.** Each account is tagged with **one network class**: `devnet`,
+  `testnet` or `mainnet`. The run panel uses only this store.
+  - **`devnet` accounts are only ever created fresh** (or are the genesis constants), never imported (CDX-20).
+  - **`testnet` and `mainnet` accounts** may be created fresh or imported, for that class only.
+- **Legacy accounts** are migrated by an explicit action (which also starts fixing #10) and are never offered on
+  mainnet.
+- **Class tags hold everywhere** (I12): every account chooser hides accounts of another class; importing a mnemonic
+  already held under another class is refused (compared by a key fingerprint).
+- **Devnet genesis mnemonics** are IntelliAda constants, never read from the project or the node.
+- **A mnemonic is shown only on explicit request,** never written to a console, notification or log (I10, R7).
+
+### D14. Networks and network classes
+
+- **Eligible nodes:** IntelliAda's own node configurations only (I14); never `joust.config.json`'s `networks` or
+  `start`, nor Gradle properties.
+- **The run panel session is bound to one explicit `RemoteNode`**, chosen in the panel. Its services start nothing
+  (F8); a devnet starts only on the panel's **Start**. The binding serves every read (D18), faucet call, admin control,
+  signature check and submission. Changing the bound node, its endpoint or its identity stops the host (D11).
+- **Network identity is positive:**
+  - **Devnet:** node type `YaciDevKit`, `LocalYaciDevKit` or `Yano`; a loopback or allow-listed (HTTPS) endpoint; the
+    node's magic equals the devnet magic recorded in IntelliAda's configuration and is never a public network's
+    (1, 2, 764824073, 4); the devnet admin API answers (DevKit `/local-cluster/api/admin/devnet`, Yano
+    `/api/v1/devnet/…`); and the provider's genesis has the admin API's magic and start time (playground D-1).
+  - **Testnet:** a Blockfrost configuration marked preprod (1) or preview (2), the node's reported magic equal to it.
+  - **Mainnet:** a Blockfrost configuration marked mainnet (764824073), the node's reported magic equal to it (M5).
+  - Any other magic is refused. Koios configurations are not offered (L26).
+- **Chain identity** (for the journal and the mark, D17; r3: ADR5-SEC-10, ADR5-SEC-11, ADR5-DES-15, ADR5-CDX-2,
+  ADR5-CDX-6): **the chain alone, never the node configuration** (which is kept only as metadata on each entry):
+  - **public networks:** the network magic (1, 2, 764824073). A public chain is never "recreated";
+  - **devnets:** the network magic and the hash of the block at height 1 (`/blocks/1`), which survives time controls
+    and epoch shifts (they do not rewrite blocks) and differs on a recreated devnet (G3.3).
+- **A lower tip is never a new chain** (ADR5-DES-17, ADR5-CDX-6). On any class, a tip below one IntelliAda observed
+  is first a transient read (re-read; after D18's retries, `failed`). It is **persistent** after three consecutive reads
+  over at least 10 s. A persistent lower tip, or a different block hash at a height IntelliAda recorded (a fork, even
+  at the same slot or the same tip), is reconciled under the **same** identity by **restarting the hosts**
+  (ADR5-CDX-6, r6): IntelliAda persists a recovery fence and the reconciliation, stops **every live host on that chain**,
+  starts fresh ones with `restoring:true` (re-sending `registered` evidence for confirmed publications, ADR5-DES-23), and restores every journal entry from its re-read status. (A live host's `reset` with `rewound`
+  cannot restore an inclusion at a different slot: JOUST's `Reservations` keeps the old slot and `restore` answers
+  `bad/conflict`, which Codex reproduced against `01bad1f7`.) The re-read status is: an inclusion still on chain is restored `shallow` with its slot, **even one that was final** (its depth is
+  recomputed against the restored tip, so its inputs and collateral stay reserved through the margin again); an
+  inclusion at another slot is restored `shallow` at the new slot; an absent one is restored `prepared` while its
+  `validTo` is above the tip. It is triggered only when the fork or lower tip touches a journal entry: an inclusion
+  whose height or block changed, or whose depth margin the new tip re-opens; a handed-out body whose `validTo` is above
+  the new tip (an expired body a rewind makes valid again); or a new tip more than `maxNowAheadSlots` below the last
+  `now` sent (ADR5-DES-22, ADR5-SEC-20). A fork elsewhere triggers nothing. Building is fenced until that restore
+  completes. A rewind IntelliAda did not make (an external Yano restore) takes the same path, keeping the journal and
+  the mark.
+- **A recreated devnet** is recognised only by a different block hash **at height 1**. Until the devnet has a block 1,
+  or while it cannot be read, the panel shows "waiting for the devnet's first block" and building is blocked.
+- **The clock** (`zeroSlot`, `zeroTimeMs`, `slotLengthMs`), era-correct (ADR5-CDX-6):
+  - **public networks:** the Shelley-era anchors CCL's `SlotConfigs` uses: mainnet slot 4,492,800 at
+    1,596,059,091,000 ms, preprod 86,400 at 1,655,769,600,000, preview 0 at 1,666,656,000,000; 1,000 ms slots;
+  - **devnets:** slot 0 at the genesis start, the genesis slot length (DevKit admin API, Yano genesis);
+  - **after a Yano epoch shift or catch-up** that moves genesis time: IntelliAda re-reads the genesis and sends
+    `reset({now, clock})`; after a time advance (no genesis change) only `now` moves.
+
+### D14b. Signing and time policy (new in r2; was L30, ADR5-DES-8)
+
+- **Fee:** within the protocol's derived cap (rule 3) **and** the user maximum: an application setting, default 3 ADA,
+  hard ceiling 10 ADA, sent as `maxFee`.
+- **`now`:** `max(previous now, bound node's tip slot)` per call (I28); re-baselined only by `reset`. A rewind (Yano
+  snapshot restore, rollback) goes through D17's rewind path (a restored fresh host), never a lower `now`.
+- **TTL per call:** devnets `min(900, horizon)` slots, where the horizon is ⌊3k/f⌋ from the devnet's genesis or admin API
+  (300 when not stated), as JOUST's playground computes it (ADR5-CDX-7); public networks 900 slots (15 min at 1 s
+  slots). **Export** is chosen **before** `prepare`, and an exported call asks for 7,200 slots (2 h).
+- **Session limits:** `maxTtlSlots` = the largest TTL a call of that session may ask (devnets the per-call TTL;
+  public networks 7,200); `maxNowAheadSlots` 900.
+- **`settlementSlots`:** devnets 60; public networks 2,160 slots. At an active-slot coefficient of 0.05 that is about 108
+  blocks on average, well short of the security parameter (2,160 blocks on preprod and mainnet, 432 on preview); the
+  accepted exposure is that a rollback deeper than that, after the host released a body's inputs, surfaces as
+  `refusal/deepRollback` and a restart (ADR5-CDX-12).
+
+### D14a. Public testnets (M3.5) and mainnet (M5), each by explicit opt-in
+
+- **Opt-ins:** two application settings, off by default: **Allow the JOUST run panel on public testnets** and **Allow
+  the JOUST run panel on mainnet**. Mainnet also needs a confirmation per panel session.
+- **Endpoints:** IntelliAda's Blockfrost configurations over HTTPS; credentials stay in IntelliAda (D18).
+- **Accounts:** testnet-class accounts on testnets, mainnet-class on mainnet; **Export unsigned transaction** and
+  **Import witness set** on both.
+- **Checks:** all of D13's; refusals are final on every class (L25); the modal is mandatory on mainnet.
+- **No faucet, time, snapshot or rollback** on public networks. Session history only (L7).
+- **Phasing:** testnets in M3.5; mainnet in M5 with its own gates.
+
+### D15. The run panel: from the code to a network
+
+- **Entry points:**
+  - **`.jsc`:** gutter icons on `init`, actions, destroy and views (a `LineMarkerProvider` for `language="textmate"`
+    filtered to `*.jsc`). Positions come from document symbols matched by name and `detail` (F34) until JOUST's
+    `joust/entryPoints` exists.
+  - **Java:** a `LineMarkerProvider` on methods annotated `@Init`, `@Action`, `@View`, `@Destroy`, `@OwnedInit`,
+    `@OwnedAction` or `@OwnedDestroy` (`org.julclang.state.api`).
+  - **A JOUST Run tool window** lists the contracts from the **built descriptions** (before any host runs; the host is
+    never started just to list them, ADR5-DES-11); once a network is bound and the host is up, each contract shows its
+    `describe` calls with their `served` flag or `unsupported` reason.
+  - Icons only open the panel. Nothing runs without D1.
+- **Flow:** choose the network (D14) and, on a devnet, **Start** it; choose the caller (D13a); fund it (devnets: Yano
+  `fundAddress`, DevKit's top-up); **Deploy** = `prerequisites`, then each `publish` in order (each signed, submitted and
+  settled before the next), then the `init` call; call actions and views.
+- **Registration evidence (ADR5-CDX-10):** when a node rejects a registration as already registered, or IntelliAda sees
+  the registration confirmed at an inclusion slot, it sends `registered` with that evidence and lists `prerequisites`
+  again; a script's presence is checked separately (a duplicate registration says nothing about it). Both kinds of
+  evidence are kept in the chain's journal and re-sent to every fresh host (D14). Before slot evidence is re-sent,
+  IntelliAda re-reads the registering transaction by `txHash`: dropped if it is absent, updated if it moved (a fork can
+  remove it below the tip); a rewind drops a duplicate-registration message unless the provider confirms the
+  registration again (ADR5-CDX-26).
+- **Forms from the description** in its JSON encoding (`x-joust.encoding.json`), as d2 lists: bytes as hex (with key
+  hash pickers), integers as decimal strings, Bool by shape, Optional, lists, maps (canonical key order), sum types by
+  `$variant`, `Data` as CBOR hex; `payable` lovelace and `takesAssets` rows (policies and names in the protocol's
+  canonical order); owned calls pick an object (`objects`). **Forms never encode Plutus data** (I16): the host does.
+- **Untrusted descriptions** have caps: 1 MiB, schema depth 32, 500 fields; `$ref` cycles refused; every label plain
+  text (I15).
+- **State:** the instance's state (`view` with a null view), its UTxO, owned objects (`objects`), and the **session
+  history**: each call IntelliAda handed out, with method, arguments, transaction id, the D17 status, and the host's
+  **predicted** effects labelled as predicted until the call is confirmed, after which the state is read again and the
+  diff shown. A rolled-back call is never shown as confirmed.
+- **Time, faucet, snapshots and rollback (devnets):** Yano gets time advance (slots, seconds, epochs), epoch shift,
+  catch-up, named snapshots, restore and rollback; DevKit the faucet (L8). A time control only moves the chain forward,
+  so the next call's `now` follows it (D14b); an epoch shift also resets the clock (D14). A **snapshot restore or rollback** rewinds: IntelliAda persists the
+  fence and the reconciliation, restarts the host with `restoring:true`, restores (D17), then re-checks each recorded
+  instance (I17).
+- **Persistence:** recorded instances per project and per chain identity (D14) in IntelliAda's per-user state
+  (`~/.intelliada/`, beside the journal, r37, M33B1-DES-21: an IDE update or a second IDE product must not forget
+  them), not in `.idea/` and not in an IDE's system directory, with no keys; validated as untrusted on load (M3.4).
+
+### D16. Results and errors
+
+- **Success:** the transaction id, the fee, execution units per redeemer, the predicted effects (labelled), and after
+  confirmation the new state and its diff.
+- **Host errors** by `kind`/`code` only (never by message text): `refusal/require` shows the message with its `.jsc`
+  `sites` as links, opened only inside the project's contracts directory (I18); `refusal/pending`,
+  `refusal/prerequisite` (offers Deploy's next step), `refusal/cooldown` (shows `retryAtSlot`), `refusal/reconcile`,
+  `refusal/deepRollback` (restart required); `unsupported/*` names the feature; `bad/*` and `internal/*` are shown as
+  host or IntelliAda faults. **Any other code** (`expiredOnArrival`, `window`, `busy`, `nowDecreased`, codes added later)
+  is shown with its kind and code and the host's message as plain text, and never retried automatically.
+- **The checker refused:** "IntelliAda did not sign: <codes>", visually distinct from contract errors, each code with
+  its protocol meaning.
+- **The node refused:** the node's text, with any `#…` trace key matched against the message map.
+- **Where:** the panel's result pane; the raw exchange (no key material, I10) in the Cardano Log console; the host's
+  stderr in its own capped console. All text plain: HTML disabled, ANSI sequences stripped (I15).
+
+### D17. The journal: reservations, settlement, the high-water mark and restore (new in r1, rewritten r2)
+
+The protocol makes these the client's duties (dev-host-1 "Reservation journal (D8)"); JOUST's playground journal
+(`journal.js`) is the reference.
+
+- **Store and lock (ADR5-DES-2, ADR5-CDX-2):** in a per-user directory independent of the IDE product and version
+  (`~/.intelliada/joust-journal/`; r36, M33B1-DES-20, -SEC-12: an IDE's system directory is not migrated on upgrade and
+  differs between products, so a store there would lose every record of a handed-out body on an ordinary update), one journal per **chain identity (D14)
+  and contract module** (the host that reserved), and one **chain record** per chain holding its high-water mark and
+  the list of module journals that ever held a handed-out body there; a **registry entry per chain**, a file of its own
+  (independently replaceable, written under that chain's lock; ADR5-CDX-24), records that the chain has a record and
+  holds the **highest tip and the highest `now`** IntelliAda ever observed or sent on it, raised (never lowered) in the
+  same admission that raises the mark (ADR5-DES-12, ADR5-SEC-14, ADR5-CDX-3,
+  ADR5-SEC-18). Every update is made under the
+  per-chain lock (in-process and a file lock), written to a temporary file, forced to disk, renamed, and the directory
+  forced where the platform supports it; schema-versioned; no keys. Loads are strict: an unreadable journal or mark is
+  **lost history** (below), never an empty one.
+- **Entry (ADR5-CDX-16):** reservation id; `txHash`; the transaction CBOR as handed out (signed, or unsigned for an
+  export or a pending approval); `validFrom`/`validTo` read from the body; the handout (`none`, `approvalPending`,
+  `submitted`, `exported`); the node configuration that bound it (metadata); the reservation **state** as the host
+  returned it (`prepared`, `shallow` with its inclusion slot, `confirmed`, `expired`, `discarded`); and, separately,
+  the **events** IntelliAda observed (`confirmed@slot`, `rolledBack`, a deep rollback) and any **fence** (a deep
+  rollback after final confirmation fences building and requires a restart; a rewind fence until restore completes).
+- **Before signing for submission or export (I25, ADR5-SEC-5):** the entry and the per-chain mark
+  `max(validTo + settlementSlots)` are both persisted, as one admission under the chain lock (D11). A failed write
+  refuses to sign and settles the body `discarded` (it was never handed out).
+- **Settlement (ADR5-DES-1, ADR5-CDX-4, ADR5-SEC-3):** IntelliAda records a submission **before** sending it. It
+  observes the bound node (the transaction's inclusion slot; the tip), at least every `settlementSlots/2` slots while
+  any entry is live and before forwarding the next call, and sends `settled` with the reservation, `txHash`, the status
+  and the observed tip (the first `confirmed` carries the inclusion slot as its tip, as the playground does; ADR5-DES-20): `confirmed` with the inclusion slot, `rolledBack`, `expired` once the
+  observed tip passes `validTo + settlementSlots`. **The reply is checked** (ADR5-CDX-20): IntelliAda keeps, per
+  reservation, the state machine of the protocol's table and applies, **in order, every tip the host accepts into its reservation table**,
+  exactly as JOUST's `Reads` does (ADR5-CDX-23, r8): each `settled` event's tip; and a reverse-read answer's tip when it
+  is a `value` or `absent` answer of `utxos`, `output`, `tip`, `protocolParams`, `script` or `stakeRegistration`, or an
+  `unsupported` answer of `stakeRegistration`. It is **not** applied for a `failed` answer (the host ends the call before
+  observing it), for any other `unsupported` answer, or for the map-history kinds (`assetHistory`, `redeemers`, `datum`),
+  whose tips count only toward the call's greatest tip. Because the host accepts a read only **after** that kind's own checks
+  (`Reads.java`: a `utxos` listing only once its last chunk validates), a read tip is applied **only when the call that
+  carried it completed without a read-related host error**, and for a chunked `utxos` answer only once its final chunk
+  was delivered (ADR5-CDX-23, ADR5-SEC-21, r9). A read whose acceptance is uncertain (a partial listing, an answer in a
+  call that ended in `bad/readLimit`, `internal/chainMoved`, `internal/inconsistentRead`, `bad/nowImplausible` or
+  another read-related error, or one written during a cancellation or timeout) goes only to an **upper** copy of the
+  machine: the host's reply may match either copy, and the journal **always keeps the less advanced state** until a
+  later accepted tip settles it. A tip applies to every reservation of that host as it exists when the tip is accepted, so **inclusions
+  are reported first** (ADR5-CDX-25): before any forward call and on each poll, IntelliAda sends every newly observed
+  inclusion in ascending slot order, each `confirmed` with its inclusion slot as tip, and only then the current tip; no
+  forward call (whose reads would carry newer tips) is sent while an observed inclusion is unreported. **Inside a call**
+  (ADR5-CDX-25, r8), before answering a reverse read whose tip would pass `validTo + settlementSlots` of a reservation
+  that is `prepared` (or included but not yet reported) on that host, IntelliAda asks the node whether that body landed;
+  if it did, or if its inclusion is recorded but unreported, the read answers `failed` (retryable: "a transaction
+  landed and its settlement is not reported yet"), the call ends, and the inclusion is reported before the next call,
+  as the playground's read handler does. The expected state is the machine's and compares the host's reply;
+  the journal keeps IntelliAda's derived state, and a disagreement keeps the reservation and fences that host (stopped;
+  a new host is restored from the journal), as the playground's `inform` does. **`discarded` only for a body declined before handout** (and, in M3c,
+  a keyed attempt the node definitely rejected). A handed-out ordinary body, even one the node refused or whose
+  submission timed out, is released only by chain evidence or expiry: a refusal from one node or a 5xx is not evidence
+  that it cannot land.
+- **Restart (ADR5-CDX-3):** a new host is initialized with `restoring:true` when the journal holds bodies that can still
+  land or retained inclusions, or a persisted rewind fence. IntelliAda then sends `restore` in batches: every handed-out
+  body whose `validTo` is above the restored tip, every retained inclusion (`shallow` with its slot) within its margin
+  **even when its `validTo` has passed**; bodies awaiting approval are **invalidated** (their modal closes, they are
+  removed from the journal) rather than restored. The last batch has `complete:true`. Settlement then
+  uses **the ids `restore` returned**, recorded in the journal.
+  - **Complete history** (journal and mark readable, **and no persisted recovery fence**): restore and resume at once.
+    A recovery fence is persisted in the chain record next to any replacement or derived mark and is cleared only once
+    an observed tip passes it, so a crash right after writing a replacement never looks like complete history
+    (ADR5-CDX-3).
+  - **Lost history, mark intact** (ADR5-CDX-3): a module journal the chain record lists is missing or unreadable: start
+    fenced, restore what survives, and complete restore only once an observed tip is **strictly** above the mark.
+  - **Lost mark** (the chain record unreadable or missing while the registry lists the chain, or any journal for it
+    survives; ADR5-CDX-3, ADR5-SEC-15, ADR5-DES-18): no surviving journal is trusted to bound what was handed out.
+    IntelliAda derives a conservative bound from the policy's hard ceilings, which no handed-out body can exceed:
+    `base + maxNowAheadSlots (900) + 7,200 (the largest maxTtlSlots any class allows, D14b) + settlementSlots`, where
+    **base is the highest of the registry's highest tip and highest `now` for the chain, every tip and `validTo` in any
+    surviving journal, and the tip at detection** (a rewind before detection cannot lower it; ADR5-CDX-3, ADR5-SEC-18).
+    It persists the bound as the chain's new mark **before** lifting anything (so an IDE restart during recovery keeps
+    it), restores what survives, and completes restore only once an observed tip is strictly above it (about 2.9 h past
+    the base on a public network). No user confirmation ends this fence.
+  - **Registry entry and chain record both unreadable** while a journal survives (ADR5-CDX-3, ADR5-SEC-19): no bound
+    on the missing history can be derived (k counts blocks, not slots, so no slot margin covers a rewind before
+    detection), and no restored copy can be shown to be fresh (a backup may predate a later handout from another module,
+    ADR5-CDX-3, r8). There is no user override for the same chain: building on it stays fenced, and the panel explains
+    why. It lifts only for a devnet that is positively recreated (D14); on a public chain it does not lift. Views and
+    listings still work.
+  - **Accepted residual (ADR5-DES-24):** a user who also deletes the surviving journals turns this into the
+    everything-lost case below, which IntelliAda cannot tell from a new chain. Deleting IntelliAda's state by hand is
+    outside what it can defend.
+  - **Everything lost** (no registry entry, no record, no journal for a chain): IntelliAda cannot tell it from a new
+    chain. This residual, losing all of IntelliAda's state for a chain, is accepted and documented.
+  - **Forget this chain** is offered only for a devnet positively identified as recreated (D14); forgetting local
+    state cannot invalidate a body already exported, so it is never offered for a public chain.
+- **Rewind (Yano snapshot restore, rollback, an external rewind or fork; r6):** persist the recovery fence and the
+  outstanding reconciliation first, then start a fresh host with `restoring:true`, `restore` from the re-read chain
+  state as above (D14), and clear the persisted reconciliation and fence only after the final response.
+- **A recreated devnet** (positively identified, D14) is a new chain: its journal starts empty; the old chain's journal
+  is kept, read-only, until the user clears it.
+- **Keyed designation (M3c):** the persisted designated input and `operation` record with its attempts, per the
+  protocol's "Keyed calls" duties.
+
+### D18. Chain reads (new in r1; L26)
+
+- **One read adapter over the Blockfrost REST shape** (`java.net.http`), serving DevKit's Yaci Store, Yano and
+  Blockfrost (F44). It answers the host's `chain/read` requests (all nine kinds) and IntelliAda's own reads for D13.
+- **Strict outcomes (T8):** HTTP 404 is `absent` only for the kinds where the protocol defines absence; any other failure
+  is `failed {message}`, never an empty answer. A kind the provider cannot answer is `unsupported`.
+- **One chain point per answer:** the tip is read before and after; the answer is read again when the tip moved (at most
+  8 times, then `failed`). For `utxos` and `assetHistory`, **all provider pages** are fetched inside one bracket, so the
+  whole set has one chain point and the provider's order; IntelliAda then hands it to the host in chunks of at most
+  1 MiB of JSON, each nonfinal chunk with an opaque `more` cursor that IntelliAda keeps in memory for that call only
+  (ADR5-CDX-11). Each chunk's response counts toward the call's byte budget. The pages are accumulated under the
+  call's **remaining** byte budget and one deadline covering the whole bracket and its retries; exceeding either
+  answers `failed` and returns no partial set (ADR5-CDX-17).
+- **Registration:** Blockfrost's `/accounts/{stake}` 404 is `registered:false`; a provider that cannot say (Yaci Store
+  for an unknown credential form) is `unsupported`, as the playground answers.
+- **Limits:** reads are accepted only while a forward call is in flight; they run off the EDT; the host's per-call
+  counts and byte budgets apply, and IntelliAda's own per-read deadline (10 s).
+- **Hygiene:** no redirects at all (`Redirect.NEVER`); the Blockfrost `project_id` is sent only to its configured HTTPS host and
+  never logged; parameters are validated against the protocol's formats before they reach a URL.
+- **Koios is not offered** in the run panel until an adapter exists (L26).
+
+## 3. Invariants
+
+These continue ADR-004's. This ADR also relies on ADR-004's I15, I18, I20 and I21.
+
+| # | Invariant | Decisions |
+|---|---|---|
+| I9 (r2) | No JOUST code runs in the IDE process; the only JOUST code IntelliAda ships is the bundled checker, invoked only as the checker, out of process; the dev host is the project's | D11, D12, D13 |
+| I10 | No mnemonic or private key reaches a child process's arguments, environment, stdin or files (the checker's included), nor IntelliAda's consoles, notifications or `idea.log`. The host receives addresses only | D13, D13a |
+| I11 | IntelliAda signs only a body whose hash it computed from the received bytes and which equals `txHash`. It never re-encodes the body, redeemers or datums, signs only with payment keys, submits only when every required key has a witness, and the submitted id equals `txHash` | D13 |
+| I12 | An account can be selected only in sessions of its own network class, in every IntelliAda flow. A mnemonic is held under one class only | D13, D13a |
+| I13 | IntelliAda signs nothing unless the bound node's identity is positive for its class (D14) and the class's opt-in is on (D14a) | D13, D14, D14a |
+| I14 | Endpoints and credentials come from IntelliAda's application-level node configuration only. The host reads the chain only through IntelliAda (D18) | D11, D14, D18 |
+| I16 (amended r1, r2) | IntelliAda's own code never encodes Plutus data for the host, the chain or a form; it decodes only to display the review modal. Encoding and decoding to compare happen only inside the bundled checker | D13, D15 |
+| I17 | After a snapshot restore or rollback, the next prepare runs on a fresh host that was restored from the re-read chain state; recorded instances are re-checked | D15, D17 |
+| I19 | The dev host and the checker listen on no socket: stdio only | D11, D13 |
+| I22 | The host channel enforces protocol 1's framing: header ≤ 1 KiB, body ≤ 4 MiB, a frame complete within 10 s of its first byte, matched ids, no reverse request outside a call, no stray bytes; a violation discards the in-flight result and stops the host. A hard client timeout stops a host that never answers | D11, D11a |
+| I23 | IntelliAda signs or exports only a transaction the bundled checker accepted (exit 0, `[]`) for the input IntelliAda assembled and piped to it (only `result` from the host), plus D13's own checks. A refusal is final on every class | D13, D14a |
+| I24 (r2) | Every prepare comes from a host whose `fingerprint` equals the digest IntelliAda computed from its snapshot copies, and whose `initialize` contracts and script hashes and whose `deployment` answers equal the anchors IntelliAda derived | D11, D12, D13 |
+| I25 (r3) | Before a body is signed for submission or export, its journal entry and the per-chain high-water mark covering it are persisted in one admission under the chain lock; a failed write refuses; after lost history, restore completes only once an observed tip is above the mark | D11, D17 |
+| I26 (r2) | Signing decisions use anchors read into memory from the snapshot copies before launch, never the host's answers or a later read of the snapshot (hardening against staleness and corruption, not containment) | D11, D13 |
+| I27 (r2) | The checker runs only from files whose SHA-256s equal the manifest built into the plugin, on the IDE's Java 25+ runtime, with its input on stdin; any failure to obtain a clean verdict refuses | D13 |
+| I28 | `now` never decreases within a host session except through `reset` | D14b |
+| I29 (new) | IntelliAda signs or exports only for a host whose JOUST runtime version and description versions are in the bundled checker's reviewed set | D12, L31 |
+| I30 (new) | A handed-out ordinary body is released (settled) only on chain evidence or expiry, never `discarded` | D17 |
+| I31 (r3–r5) | The journal and the mark are keyed by the chain, never by the node configuration; a lower tip or a fork never starts an empty journal and is reconciled as a rewind, restoring each entry from its re-read status with its depth recomputed; a devnet counts as recreated only on a different block at height 1 | D14, D17 |
+| I32 (r4) | A host's settlement reply is accepted only when it equals the state IntelliAda derives from its own chain evidence; otherwise the reservation is kept and the host fenced | D17 |
+| I33 (r4) | Each chain and module has at most one live host; admission checks every live journal entry and pending publication on the chain | D11, D17 |
+
+## 4. Milestones
+
+### 4.0 Invariant to test traceability
+
+| Invariant | Test (milestone) |
+|---|---|
+| I9 | M3.3a: the plugin zip has `org/julclang/**` classes only under `joust-verifier/`, none on the plugin class path; the checker closure is the minimal one, and its SHA-256s are posted on the PR |
+| I10 | M3.3b: a canary mnemonic, searched for in every child's arguments, environment, stdin capture and temp files (host and checker), in the consoles, notifications and `idea.log`; M3.2: account creation logs no mnemonic |
+| I11 | M3.3b: the kit's `accept-indefinite-body`, `accept-nonminimal-integers`, `accept-untagged-sets` signed by IntelliAda keep their body bytes and give id `txHash`; a mutated body is refused; a quorum call with two IntelliAda keys has both witnesses, and a missing one blocks submission |
+| I12 | M3.2: an account of another class is absent from the run panel and the transfer and mint choosers; a cross-class re-import is refused |
+| I13 | M3.1b (binding) and M3.3b (at signing): a fake node reporting magic 4, 1 on a devnet configuration, or a devnet magic without an admin API; a non-allow-listed host; HTTP to an allow-listed host; each refused; M3.5 for testnets |
+| I14 | M3.1b: a fixture `joust.config.json` whose `networks.x.start` writes a sentinel is never used |
+| I15 (ADR-004) | M3.1b, M3.3b: host strings, descriptions, checker codes and node errors render as plain text (HTML and ANSI in a fixture are shown literally) |
+| I16 | M3.3a: an architecture test over IntelliAda's JOUST packages: no reference to a Plutus data encoder; CCL decoding only in the review modal's package |
+| I17 | M3.4: a Yano snapshot restore, after which a fresh host is restored and the instance re-checked; a body whose inclusion moved slot is restored at the new slot on the real host |
+| I19 | M3.1a (host) and M3.3a (checker): no listening socket belongs to either process |
+| I20, I21 (ADR-004) | M3.1a: trust revocation and project close stop the host and delete its snapshot; M3.3a: the checker process ends with its verdict or deadline; M3.3b: the project's file tree is snapshotted before and after a host session and panel use (deploy, call, view) and is unchanged apart from the build's own outputs (ADR-004's I21 test) |
+| I22 | M3.1a: the kit's Bank session and seven `violation-*` sessions against `FakeHost`, plus IntelliAda's own tests for a stalled frame, a host that never answers, and a frame after `exit`; M3.3b: `sessions/maps.json`; M3c: `sessions/keyed.json` |
+| I23 | M3.3a: the checker adapter agrees with all 333 vectors; a recorded `prepared` (Bank) fed through IntelliAda's **own input assembly** (anchors derived from a snapshot of JOUST's example, reads from a recorded node) is accepted, and one mutation per rule family refused; a checker that crashes, times out, prints extra output or is tampered with refuses |
+| I24 | M3.1a: a snapshot copy edited after hashing, a spec digest mismatch, and a host reporting another fingerprint are each refused; M3.3a: anchors derived from JOUST examples' snapshots equal the vectors' `anchors`; the recomputed Counter hash equals the host's; a tampered blueprint `hash`, a duplicate resource, a project class named `OutputVerifier` and a conflicting `deployment` are refused |
+| I25 | M3.3b: a crash immediately before signing and between persisting and handout; a failed journal write refuses; two modules sharing a payer on one chain, and simultaneous prepares through two node configurations of one chain; a restart with a lower limit never lowers the mark; with complete history restore resumes at once; a lost journal completes restore only above the mark; a missing chain record beside a surviving journal, and a public chain in the registry with neither, unblock only after the derived bound; with the registry entry and the record both lost the chain stays fenced across restarts, and a restored stale backup (listing only module A while B's journal is lost) does not lift it; a record lost after a rewind uses the registry's highest tip as the base; an IDE restart during recovery keeps the derived mark and its fence (a restart right after writing the replacement is not complete history); simultaneous admissions on two chains keep both registry maxima |
+| I26 | M3.3b: rewriting the snapshot's description after launch does not change the anchors |
+| I27 | M3.3a: a changed checker file refuses before any process starts; output `[]` with extra text refuses |
+| I28 | M3.1b: a node answering an older tip yields the previous `now` |
+| I29 | M3.3a: a description with a bumped `x-joust.version`, a runtime jar whose hash is not reviewed, a `dir` runtime, a `RuntimeVersion` that disagrees with `versions.engine.joust`, and an earlier launch entry holding a same-version copy of `org/julclang/state/runtime/**` each leave the panel read-only |
+| I32 | M3.3b: a host answering `confirmed` one slot after inclusion is fenced and the reservation kept; a body restored valid through 2025, a read answered at tip 2070, then `confirmed` at slot and tip 2005, is expected exactly as the real host answers (no fence); a `failed` read carrying tip 2100 does not advance the expected state (`Registry-remove`: `shallow` at 2005, `confirmed` at 2070); two bodies restored together (`Bank-publish-1`, `Bank-init`) with inclusions at 1871 and 1875 are both reported before the poll tip 1951, with no `conflict`; a body `shallow` at 2005 (margin 60), a `failed` read at 2100, then a repeat confirmation at 2006 is expected `shallow`; an `unsupported` `stakeRegistration` answer advances it and a successful `datum` answer does not; a reverse read inside an in-flight call whose tip would expire a body that landed answers `failed`, and the inclusion is reported before the next call; a first `utxos` chunk at tip 2100 with a continuation, in a call that then ends `bad/readLimit`, leaves the `shallow` body unchanged (`Registry-remove`: repeat confirmation at 2006 is `shallow`); a `utxos` value answer in a call that ends `internal/chainMoved` does not advance it |
+| I33 | M3.3b: the same module opened through two aliases of one chain is refused while the first runs; restarting one host leaves another host's live reservation untouched; concurrent publications of one shared verifier from distinct payers admit one |
+| I30 | M3.3b: a 5xx and a node refusal on submit leave the body reserved until chain evidence or expiry; a shallow rollback returns it to `prepared` and keeps its inputs across a restart; a deep rollback fences building |
+| I31 | M3.3b: a lagging provider tip and a shallow rollback keep the journal and the mark; a lower tip below an expired handed-out body's `validTo`, and one more than 900 slots below the last `now`, each trigger reconciliation; a public-network reorg below the depth margin leaves deeper inclusions untouched; a replacement branch with unchanged block 1, one retained and one removed inclusion, restores the retained one `shallow` and the removed one `prepared`; a final inclusion retained after a rewind to within its margin becomes shallow again (inputs held), and a final one that moved slots is restored at its new slot; two node configurations of one chain share one mark; M3.4: an external Yano snapshot restore across an inclusion with an outstanding export fences and reconciles (same identity); a recreated DevKit (new block at height 1) starts a new journal |
+
+### M3: the run panel on devnets and public testnets, Gradle projects
+
+**Entry gates:**
+- **G3.0** M1 and M2 exited. **Met** (PRs #19, #22, #25 approved).
+- **G3.1** JOUST's dev host exists with a protocol version. **Met for development** at JOUST `01bad1f7`, local Maven
+  `0.1.0-pre3-01bad1f-SNAPSHOT` (L23, L29). **Shipping** signing to users needs a JOUST release containing protocol 1
+  and its conformance kit; IntelliAda then pins that release. The build refuses a Marketplace distribution whose
+  checker comes from a SNAPSHOT (D13), so a development build cannot reach users by accident.
+- **G3.2** (replaced in r1): the bundled checker agrees with the kit's 333 vectors (M3.3a), and IntelliAda's signer keeps
+  body bytes (I11).
+- **G3.3** network identity sources verified per node type (D14): DevKit admin API, Yaci Store genesis and
+  `/blocks/1`; Yano's devnet API, genesis and `/blocks/1`; Blockfrost's `/genesis`.
+- **G3.4** Yano read coverage: every D18 endpoint answered by Yano as by Yaci Store, or the gap reported to Yano and the
+  kind answered `unsupported` (map calls then refused by the host).
+- **G3.5** the class-tagged account store (M3.2).
+
+**Parts (L27), each its own stacked PR with the three-reviewer process:**
+
+| Part | Scope | Exit |
+|---|---|---|
+| **M3.1a** | Launch spec through Gradle, validation, private snapshot and digest, in-memory resources (D11 steps 1–6); the protocol client: framing, JSON-RPC, serial calls, cancellation, deadlines, hard timeout, orderly stop, stderr console; `initialize`, `describe`, `shutdown`/`exit` | the kit's FakeHost Bank session and seven violation sessions; IntelliAda's stall, hang and after-`exit` tests; a real host on the F38 Counter (tool-gated); I19 (host), I20, I22, I24 (snapshot and fingerprint) |
+| **M3.1b** | D18's read adapter (paging, chunking); D14's devnet identity, clock and chain identity; `deployment`, `prerequisites`, `view`, `instances`, `objects`, `decode`; the JOUST Run tool window, read-only (no signing) | reads answered for a real host on DevKit and Yano (tool-gated), G3.4's coverage table; I13 (binding), I14, I15, I28 |
+| **M3.2** | D13a's `PasswordSafe` account store, class tags, legacy migration, filtered choosers, genesis constants, R7's fix | I10 (accounts), I12 |
+| **M3.3a** | The bundled checker (L24): minimal closure, `joust-verifier/` directory, manifest, dependency verification, SNAPSHOT guard, the stdin runner, anchor derivation and the deployment check, input assembly; the version policy (L31); no UI | I9, I16, I19 (checker), I23, I24 (anchors), I27, I29; all 333 vectors |
+| **M3.3b** (three parts, §12 E10) | Signing by splicing (caller and co-signers), submission, the review modal, D17's journal, mark, settlement and restore; Deploy (prerequisites, publications, registration evidence) and calls on devnets; the session history | end to end on DevKit and Yano: a Gradle Counter in Java and in `.jsc` (start, create and fund an account, deploy, increment, view, reset as the owner, close); JOUST's `bank` (owned), a quorum call with two IntelliAda keys on IntelliAda's own fixture project, the kit's `HostCouncil` repackaged
+outside `org.julclang.state` (for example `com.bloxbean.intelliada.fixture.HostCouncil`, so D12's package rule admits
+it; ADR5-DES-19, ADR5-CDX-18) and rebuilt with the reviewed JOUST (`vote`, as in `quorum-two`; protocol 1 serves `@Quorum` without `@Params`, and every JOUST example with `@Quorum` is
+parameterized or keyed: `StakedVault`, `Treasury`, `Registry`; ADR5-DES-16, ADR5-CDX-18), a call with sends (`dex`) and a map call (`token`); a restart between submit and settlement restores; I10, I11, I13 (signing), I25, I26, I30 |
+| **M3.4** | Yano controls (time, epoch shift with clock reset, snapshots, rollback with a restored fresh host), DevKit faucet, gutter icons (`.jsc`, Java), recorded instances | a `@ValidAfter` call made valid by advancing Yano's time, and across an epoch shift; a snapshot restore with re-check (I17) |
+| **M3.5** | Public testnets behind the opt-in (Blockfrost preprod and preview), export unsigned / import witness sets | the Counter on preprod **and** preview with a testnet account and the review modal, and once through export and import; I13 for testnets |
+
+**M3b (npm):** the npm host, D11's npm launch and fingerprint, the same parts' tests on a `joust new -t node` project.
+**M3c (keyed calls):** D17's designation journal and the keyed duties; JOUST's `registry` example end to end,
+including a refused keyed call with its cooldown slot and **Advance to slot N** on Yano, an IDE restart between
+submit and settlement, and an accepted **future-start** body (the kit's `Registry-remove`: `now` 1929, `validFrom`
+2005) that IntelliAda **signs only at `validFrom`** (after the D13 checks again) and then submits: a reset or rebinding
+before signing settles the unsigned attempt `discarded`; once signed (or exported for external signing) the attempt is
+journaled and stays reserved and recoverable until chain evidence settles it, even if the scheduled send is cancelled
+(ADR5-CDX-8, ADR5-CDX-22, ADR5-SEC-17).
+
+**Measurements** (recorded with machine and versions): first-call latency (launch spec, snapshot, host start), warm call
+latency, the checker's per-call time, Yaci Store's indexing delay after a submit, and the HTTP requests behind each
+read kind on Blockfrost (ADR5-DES-12).
+
+### M5: mainnet (D14a)
+
+- **Entry gates:** decide the default signing path for mainnet (SEC-13; lean: export and external signing by default on
+  Linux and Windows); M3.5 exited on preprod and preview; D13a's store shipped and legacy migration done (#10); a JOUST
+  release pinned; a security review of the signing path and the mandatory modal on the implementation.
+- **Exit:** mainnet refused without the opt-in and the per-session confirmation; the modal on every mainnet
+  transaction; legacy accounts not selectable; export and import of a witness set with `cardano-cli`; a minimal real
+  deployment done manually by the maintainer and recorded in the PR.
+
+## 5. Compatibility
+
+- **IDE:** 2026.1 or later (IntelliAda's floor, F43), with the Java plugin (Java line markers) and `com.intellij.gradle`
+  (the launch spec). The checker needs the IDE's Java 25 runtime.
+- **JOUST:** protocol 1 (JOUST `main` `01bad1f7` and later). A project whose JOUST has no `joustHostSpec` task gets
+  "this JOUST version has no dev host" in the panel.
+- **Plugin size:** the checker and its minimal closure add a measured amount (recorded in M3.3a).
+- **Disk:** each live host has its own snapshot (about 95 MB for a Counter); deleted when the host ends, swept at start.
+- **Data:** journals, high-water marks and recorded instances in the per-user `~/.intelliada/` (D17, r36/r37), schema-versioned,
+  no keys; snapshots stay per IDE (D11 step 3);
+  accounts move to `PasswordSafe` by an explicit migration (D13a).
+
+## 6. Risks
+
+| Risk | Mitigation |
+|---|---|
+| A host obtains a signature it should not | D13: the bundled checker on an input IntelliAda assembled; I23, I26, I27 |
+| The bundled checker is a conformance-kit class, not a supported production artifact | pinned files and manifest (I27); a JOUST issue asking to support it and to expose anchor derivation; agreement with the vectors in every update |
+| Signing is built against an unreleased protocol | G3.1: shipping waits for a JOUST release; tests pin the local snapshot (L29) |
+| Verifier evidence is not produced in CI (local snapshot only, L29) | the tool-gated suite runs in each PR's verification and its output is posted on the PR; switch to the release when it exists |
+| A user mnemonic with real funds is used on a devnet | class-tagged accounts (I12, D13a) |
+| Real funds lost on mainnet through an IntelliAda bug | M5's gates; the mandatory review; refusals; fee caps; external signing |
+| Yano or Yaci Store lacks a read the host needs | G3.4; `unsupported` answers fail closed |
+| The journal is lost or corrupted | atomic writes under a per-chain lock; the high-water mark kept apart (I25); restore refuses to complete below it; no journal and no mark blocks the chain until the user acts |
+| The project's JOUST is newer than the bundled checker | the version policy (L31, I29): read-only until IntelliAda reviews that version |
+| Hostile project code (same user) | out of scope (§0 Trust); D13 defends against a buggy host, staleness and corruption |
+
+## 7. Decision log
+
+From ADR-004 §11 (maintainer unless marked): L4 testnets in M3 and mainnet in M5 by opt-in; L5 a JOUST dev-host ADR;
+L6 co-signers through it; L7 session history only; L8 Yano full controls, DevKit the faucet; L13 class-tagged
+`PasswordSafe` accounts; L14 (delegated, ratified by L20) chain reads through IntelliAda; L17 (delegated, ratified)
+the d2 signing defaults, amended by L25 and L30.
+
+New in r1:
+
+| # | Decision | By | Date | Basis |
+|---|---|---|---|---|
+| L23 | Build the dev-host features now, against a local build of JOUST main published to the local Maven repository | maintainer | 2026-11-25 | "all joust PR related to dev-host and playground is done. You can create a local build and publish to local maven repository and build remaining feature in intelliada which are dev-host specific" |
+| L24 | The protocol's client signing rules are run by JOUST's reference checker, bundled in the plugin (own directory, off the class path, SHA-256 manifest) and run out of process on the IDE's JBR 25; not ported. IntelliAda's floor is 2026.1 | maintainer | 2026-11-25 | asked with both advisors' views (security: port; maintainer lens: bundle); the maintainer confirmed the 2026.1 floor and the reason, avoiding duplicate code |
+| L25 | Amend I16 (the verifier alone encodes and decodes Plutus data, to compare) and L17 (a testnet outflow excess is a refusal, not a modal; the modal never overrides a refusal) | maintainer | 2026-11-25 | "Accept both" |
+| L26 | Chain reads through one Blockfrost-style adapter (DevKit, Yano, Blockfrost); Koios is not offered in the M3 run panel | maintainer | 2026-11-25 | "Blockfrost-style only" |
+| L27 | M3 in parts M3.1a, M3.1b, M3.2, M3.3a, M3.3b, M3.4, M3.5, each its own PR | delegated | 2026-11-25 | both advisors asked for a finer split, the verifier in its own PR |
+| L28 | The verifiable set is everything the checker verifies (plain, owned, quorum, sends, maps, publications); keyed calls after M3c | delegated | 2026-11-25 | maintainer-lens advisor (under bundling the checker covers maps); security advisor's map deferral applied only to a port |
+| L29 | IntelliAda's JOUST-dependent tests resolve the kit and plugin from the local Maven repository (`joustTestVersion`, default `0.1.0-pre3-01bad1f-SNAPSHOT`) and run with `JOUST_REQUIRE_TOOLS=1` | maintainer | 2026-11-25 | "Local snapshot only" |
+| L30 | Signing and time policy, now **D14b** (r2): fee within the derived cap and the user maximum (3 ADA, ceiling 10); devnet TTL `min(900, ⌊3k/f⌋)`, public 900, exports 7,200 chosen before `prepare`; `settlementSlots` 60 devnet, 2,160 public (accepted exposure stated); monotone `now`; journal keyed by chain identity and module | delegated | 2026-11-25 | both advisors; revised in r2 for ADR5-CDX-7, ADR5-CDX-12, ADR5-DES-8 |
+| L31 | Version policy: sign or export only for runtime, host and verifier jars whose SHA-256s are a reviewed set's, whose `RuntimeVersion` and `versions.engine.joust` equal its label, and whose descriptions declare a reviewed `x-joust.version`; otherwise read-only (r3) | delegated | 2026-11-25 | ADR5-SEC-1, ADR5-DES-7 (the same pattern as ADR-004 E22 for LSP4IJ) |
+| L32 | For the run panel the bound node's answers are trusted (ADR-0023's model); ADR-004 §2's "defence in depth against a lying endpoint" no longer applies to it; provider integrity rests on D14 | delegated | 2026-11-25 | ADR5-SEC-7; JOUST ADR-0023 (maintainer, 2026-11-23) |
+| L33 | Threat boundary: D13 defends against a buggy or misbehaving host, staleness and corruption, not hostile same-user project code | delegated | 2026-11-25 | ADR5-SEC-4, ADR5-DES-5; ADR-004 §2, ADR-0022 §2 |
+| L34 | Chain identity is the chain (magic; devnets also the block at height 1), never the node configuration; a lower tip is a rollback or a transient read, never a new chain; recreation only on a positive identity change | delegated | 2026-11-25 | ADR5-SEC-10, ADR5-SEC-11, ADR5-DES-15, ADR5-CDX-6 |
+| L35 | A lost chain record is replaced by a bound derived from the policy's hard ceilings over the highest tip and `now` ever recorded (r5), persisted with an explicit recovery fence and waited out; with the registry entry also lost, the chain stays fenced (a restored backup cannot prove freshness), lifting only for a recreated devnet (r7, r8); no user confirmation ends a recovery fence; public chains are never forgotten | delegated | 2026-11-25 | ADR5-SEC-15, ADR5-CDX-3, ADR5-DES-18 |
+
+Delegated decisions (L27, L28, L30–L35) are tracked for the maintainer's ratification on this PR.
+
+## 8. Earlier findings carried here
+
+| Finding | Where it is answered |
+|---|---|
+| DES-1, CDX-16 | D11a, G3.1 |
+| DES-4 | D15 entry points |
+| DES-5, CDX-6 | I24, D11 lifecycle |
+| DES-7 | G3.0 |
+| DES-9 | D13 signing, I11 |
+| DES-10 | D14 |
+| SEC-3, CDX-3 | D14 |
+| SEC-4, CDX-2 | D13, I23 (the protocol's rules supersede checks 1–10; the redeemer is checked by the checker against the description IntelliAda read) |
+| SEC-5 | D13a, I12 |
+| SEC-6 | I10, ADR-004 R7 |
+| SEC-7 | I22, D11, D15 persistence |
+| SEC-13 | M5 gate |
+| CDX-5 | ADR-004 §2, I10 |
+| CDX-7 | M3c |
+| CDX-8 | protocol `publish` with bounds; the checker's publication shapes |
+| CDX-15 | G3.2, G3.4 |
+| CDX-20 | D13a |
+
+## 9. Open questions
+
+- **Q15.** JOUST support for the bundled checker as a production artifact (a stable `julc-state-verify` jar or entry)
+  and an exported anchor derivation from a snapshot. Lean: file a JOUST issue in M3.3a.
+- **Q16.** Yano's coverage of `/txs/{h}/redeemers`, `/scripts/datum/{h}/cbor` and `/assets/{u}/transactions` (G3.4).
+  Lean: answer `unsupported` where missing (map calls then refused) and report the gap to Yano.
+
+## 12. Implementation refinements (M3.1a #29, M3.1b #31; r10)
+
+These record what implementation and its reviews settled within the decisions above; none changes a decision or an
+invariant.
+
+- **E1. A read under a moving tip (D18).** On a provider whose tip read is slower than a block (a 114,000-block DevKit's
+  Yaci Store answers `/blocks/latest` in 0.7–1.6 s against 1 s blocks), a tip read before and after an answer almost
+  never agree. When they differ, IntelliAda reads the answer again: identical answers read before and after the later
+  tip was observed held at that tip, and the answer is reported there; a changing answer is retried and finally
+  `failed`, never given a mixed chain point. A `tip` read is its own chain point (one read). (M31B-SEC-3.) The rule
+  assumes an answer does not change and change back between its two reads (A→B→A): a stake credential deregistered and
+  re-registered, or an output created and spent in between, would be reported at a point where it differed. Spent
+  references never return, so a non-empty `utxos` or `assetHistory` set cannot reappear; an `absent` or empty answer can
+  hide such a short-lived state, which leaves the host building nothing or failing on a spent input. Once signing
+  depends on these reads (M3.3b), the checker re-validates against IntelliAda's own reads. (M31B-SEC-8, M31B-DES-14.)
+- **E1a. Chain points only go forward within a call (protocol 1).** A tip behind the last chain point handed to the
+  host in the same call (a lagging backend) is read again under the read's deadline, and finally answered `failed` at
+  that last point, never a lower one. (M31B-CDX-22, M31B-DES-11.) A continuation whose list was read at a point the
+  call has since passed (another read came in between) is `failed` too, so an interleaved read costs the rest of a
+  chunked set; JOUST's host reads chunks back to back. bloxbean/joust#192 covers making the order normative.
+  (M31B-CDX-29, M31B-DES-17.)
+- **E7. The checker's files are pinned by a lock, not by Gradle dependency verification (L37; D13).** The closure is the
+  21 jars that pass all 333 vectors (measured by removing each jar of the full 64-jar, 93 MB closure in turn; 19 MB),
+  listed in `gradle/joust-verifier.lock` by exact coordinate and SHA-256 and resolved with `transitive=false`; the build
+  requires exactly that set and fails on any mismatch, and the plugin's built-in manifest is generated from the verified
+  files and the runner. This is equivalent to verification metadata **for the checker's files only**; it is
+  trust-on-first-use until a released, PGP-signed kit exists. Not covered (known gaps, outside D13): the plugin's own
+  runtime class path, the buildscript and Gradle plugins, and `mavenLocal()` listed first in the repositories. The build
+  is strict by default: an unresolvable kit fails it unless `-Pjoust.checkerOptional=true` is given on the command line,
+  which builds a plugin that refuses every check (signing and export); `buildPlugin`, `signPlugin` and `publishPlugin`
+  refuse a SNAPSHOT kit (including timestamped versions) unless `-Pjoust.allowSnapshotKit=true` is given on the command
+  line, and such a build's manifest says `snapshot=true`, which the panel names. Before each check the files are read
+  without following links, hashed, copied into a private directory and run from the copy.
+- **E2. Yano is not bound in M3.1b (L36).** Yano lacks four reads the run panel needs (`/txs/{h}/redeemers`,
+  `/scripts/datum/{h}/cbor`, `/assets/{u}/transactions`, `/genesis`; bloxbean/yano#269), so its positive identity
+  (D14) cannot be established the way DevKit's is. The run panel binds Yaci DevKit only until Yano serves them or an
+  identity source is agreed (G3.3, G3.4); M3.4's Yano controls depend on it. G3.4's coverage on DevKit's Yaci Store:
+  `tip`, `protocolParams`, `utxos`, `output` and `redeemers` answer values; unknown `script`, `assetHistory` and `datum`
+  are `absent`; `stakeRegistration` is `unsupported` (Yaci Store's accounts carry no registration flag).
+- **E3. Read attribution residual (I22).** Protocol 1 does not tie a read's generation to its forward call, so a stray
+  read the host sends after a call that made no reads of its own is credited to the next queued call (common when
+  calls are queued). Only IntelliAda's own chain reads, answered to a host already trusted to read the chain, are at
+  stake. bloxbean/joust#192 asks for the generation to be normative (the forward call's index).
+- **E4. Snapshot directory identity on Windows (D11 step 3).** Windows' JBR has no `fileKey`; there the directory
+  identity check is skipped and the per-component no-link checks stand alone (a concurrent swap by same-user code is
+  outside L33). A Windows CI job is follow-up #30.
+- **E5. DevKit's admin endpoint (D14).** Until the node configuration has its own field, it is the node's host on port
+  10000, DevKit's default; read through the same capped, deadline-bounded client as every provider read.
+- **E6. The bundled checker and anchors (D13, Q15).** bloxbean/joust#193 asks JOUST to support the checker as a
+  production artifact with a stable entry and to export the anchor derivation.
+
+- **E8. A scoped exception to I12 until #10 is fixed; mainnet accounts wait for M5 (L38).** The JOUST store and its
+  sessions meet I12: an account is offered only in sessions of its class, the two stores refuse each other's keys by
+  payment-key fingerprint, and a legacy account enters only by migration, which is a move (legacy testnet accounts
+  whose address is their phrase's first key; removed from the legacy store once the phrase is read back from a durable
+  safe; a move an interruption left half done is completed when the Accounts tab opens). **The exception:** legacy
+  IntelliAda accounts carry no network class, so the legacy transfer and mint choosers still offer a legacy `addr_test`
+  account on any non-mainnet node. I12's "in every IntelliAda flow" holds for JOUST accounts now and for legacy ones once
+  #10's fix migrates every legacy account and deletes the old store. Removing a legacy entry does not erase older copies
+  in backups or synced settings; the migration dialog says so. **Mainnet:** until M5's opt-in (D14a), the store refuses
+  to create or import mainnet accounts and the tab offers devnet and testnet only; mainnet entries already in the store
+  are kept and named, not hidden. (M32-SEC-5, M32-DES-2, M32-DES-9.)
+
+- **E8a. Migration copies and hides; the legacy store is never written (L39, superseding E8's "move").** Round 2 of
+  M3.2 showed that removing the legacy copy is not safe: IntelliJ's native credential store serves a read from a
+  postponed write, so a read-back does not prove durability; a crash between the legacy delete and the component save
+  loses the mapping; a retry could delete the only phrase; one phrase can be both a testnet and a mainnet legacy account;
+  and the legacy backend can lose its encryption key when a rewrite fails. So: migration copies a legacy testnet account
+  whose address is exactly its phrase's first address, and is refused when any other legacy entry holding a phrase holds
+  the same key; the entry's id is derived from the key, so a retry reuses it and rewrites a lost phrase from the legacy
+  copy; the legacy store is never written. Every legacy listing (`AccountService.getAccounts`, behind every chooser and the
+  account list) hides an account whose payment key the JOUST store holds, read from a lock-free set of public
+  fingerprints, so the key is selectable under one class only. The legacy copy stays in the old store, hidden while the JOUST
+  copy exists; it can be deleted from IntelliAda only by #10's fix, or by removing the JOUST copy first (the legacy
+  account then reappears in the legacy list, and the Remove dialog says so). The migration dialog says the old store
+  protects it less well. A copy whose phrase was lost (a keychain reset) is offered for repair in the migration chooser,
+  found by its exact address in the unfiltered legacy store. Watch-only legacy entries hold no key and stay listed.
+  M3.3b's signing takes accounts only through `forSession`, which offers an entry only when the class stored with its
+  secret is the session's (M32-SEC-13, M32-SEC-14, M32-DES-18, M32-CDX-27, M32-CDX-29). **Durability:** a new testnet or mainnet entry is
+  *unconfirmed* until a later IDE session reads its phrase back, and the user is offered a backup at creation. **Class
+  binding:** the class is stored with the secret (the credential's user name), and an entry whose metadata class differs
+  is never served. **One step across stores:** the ownership check and the write take one monitor for both stores; an
+  unreadable legacy store refuses rather than counting as one without the key. (M32-CDX-12..19, M32-SEC-9..12,
+  M32-DES-12..16.)
+
+- **E9. Anchor and checker rules refined in M3.3a (D13, I9, I24, I27).**
+  - **One entry per class.** A class an anchor rests on (the validator, `OutputVerifier`, `MapVerifier`) must be in exactly one launch entry. Otherwise a dependency shipping the validator's real class with a self-consistent blueprint of its own would decide the contract while the host agrees (M33A-SEC-1).
+  - **One blueprint, no repeated names.** The owning entry holds exactly one blueprint of the name, and a jar whose directory repeats an entry name is refused (M33A-SEC-2, -CDX-7).
+  - **Resolution for the launch JDK.** Classes resolve as the launch spec's JVM loads them: base entries, and versioned copies only in `Multi-Release` jars, at most that version (M33A-CDX-8).
+  - **Network.** Anchors carry their network.
+  - **Production gates.** The host's `initialize` catalog and each contract's `deployment` are checked in the live session (launch, and before the first `prerequisites`/`publish`/`prepare`); a difference stops the host (M33A-CDX-1, -CDX-2). `JoustSigningGate` composes D12 with the rule that the verifiers come from the reviewed `julc-state-verifier` jar's own entry (M33A-DES-3).
+  - **Checker process.** stdin and stdout are supervised and the deadline runs from launch; a verdict counts only after the whole input was written to the pipe (and the stream closed cleanly) and the output read to its end, and the pinned runner reads its input to the end before deciding; every unfinished exit ends the root process first, then its descendants, and reaps it; the JVM runs without the attach mechanism or perf data.
+  - **Read-only, not stopped (D11 step 4).** A contract that cannot be anchored leaves the session read-only (views, listings, decoding); only an established conflict (a contract missing or extra against the host's discovery rule, a differing hash or status) stops the host. Every deployment reply is checked when anchors exist. The signing gate covers every contract the snapshot describes, never a caller's subset. A snapshot refuses repeats only of the names IntelliAda reads (anchors, the manifest, `RuntimeVersion`).
+  - **I9.** It holds as "no JuLC class on the plugin class path, no JOUST class outside `joust-verifier/`" (logical names, multi-release copies included). IntelliAda's earlier JuLC integration keeps its compiler and VM in `julc-runtime/`, loaded by its own class loader: the one other place JuLC classes may be, and never JOUST's.
+  - **The reviewed set** (D12) must be the bundled kit's: the same label, `julc-state-api` hash and `julc-state-runtime` hash. The build checks this.
+  - **Catalog facts and status (M3.3a round 3).** Each catalog fact is compared as soon as its evidence exists: the contract's own script and description, even when a shared verifier cannot be anchored. The status rule is the reviewed host's: a parameterized contract is `unsupported:"params"`, a served one `served:true`; a non-parameterized contract claimed as `params` is a conflict, while another contract-level `unsupported` reason (a newer JOUST) leaves that contract read-only. Descriptions are read as the host reads them (Jackson's byte-stream reader: a BOM, UTF-16/32); blueprints as strict UTF-8 with one optional leading BOM, as the runtime decodes them; both with the strict mapper. Names are exact in every jar. A directory holds what its own file system serves under a name: when the snapshot is made, every anchor named anywhere on the class path, each description's validator class and blueprint, the verifiers', and the protected package roots are resolved against each copied directory, and the results are kept for the signing decision. Case, Unicode case folding (a long s for s) and normalization are therefore the file system's answer, never IntelliAda's approximation. Multi-release jars follow the JDK: a version directory spelled as the JDK reads it; a `Multi-Release` value other than exactly true or false, or one this JDK reads differently, keeps the snapshot but anchors nothing (read-only). The validator's same-name check counts physical entries as the runtime counts them (a base and a versioned copy are two; one file reached through another spelling is one) and refuses more than one. A protected package is served only with a class beneath it (a file the literal `.class` name reaches; a package-info class counts). Each directory copy must hold exactly the declared names when walked, or the snapshot is refused. The launcher refuses a JDK other than the confirmed one before any process exists, and the confirmation names the JDK's feature version. A legacy account store whose privacy cannot be established refuses the ownership decision; only one established as untrusted is skipped. Residual: the checker records descendants by sampling while it lives, so one started and orphaned between samples can outlive a refusal; it never affects a verdict, and full containment needs OS process groups (accepted, M33A-CDX-60).
+  - **Deferred to M3.3b:** the verifier and staking deployment fields against a live host (Dex, Token) in its end-to-end runs. Also three conditions on the session's signing path (M33A-DES-13): signing and export take only a session whose `JoustSigningGate` passed, and are blocked by any read-only reason; one discovery function and one anchors map; read-only reasons accumulate. The first two land with the signing flow; the discovery function is already shared and reasons already accumulate. With the session factory, an injected anchors source replaces the test hook `unanchorableForTests` (M33A-DES-23). Also first in M3.3b, from Codex's approving round 9 (non-blocking P2s): a directory's protected-package rule uses only what it serves, so an exploded `META-INF/versions/…` copy no longer counts (M33A-CDX-70); and the module descriptor is matched by its exact entry name, base or versioned, so a class whose name merely ends in `module-info` counts (M33A-CDX-71).
+
+- **E10. M3.3b in three parts (L40).** M3.3b is delivered as three stacked PRs, each with the three-reviewer process:
+  - **M3.3b1, the journal and settlement (headless).** D17's store, lock, chain record, registry entry and mark, with
+    one atomic admission (I25); the settlement model mirroring the host's reservation table, its lower and upper copies
+    and reply checking (I32); inclusions reported first; restart and restore; the lost-history, lost-mark and both-lost
+    fences; the rewind reconciliation (I31); one live host per chain and module, and admission against every live entry
+    on the chain (I33). It reads bodies with IntelliAda's own structural CBOR reader (no CCL decoding outside the review
+    package, I16). Nothing signs. Exit: those invariants' rows (M3.4's excepted) against synthetic bodies, the kit's
+    `bank` and `maps` sessions, and a real host on DevKit that journals, restores and discards unsigned bodies
+    (tool-gated). It opens with M33A-CDX-70/71.
+  - **M3.3b2, the signer and the Deploy sequence (headless).** The splice signer with co-signers (I11), the at-signing
+    I13 check, I26, M33A-DES-13's signing-path conditions and DES-23's injected anchors source; submission (I30);
+    Deploy's order (prerequisites, each publication settled before the next, then `init`) and registration evidence
+    (D15; deferred to the first contract that needs it, E13). Exit: a tool-gated Counter deploy and call on DevKit, and a restart between submit and settlement.
+  - **M3.3b3, the panel's write path.** The review modal, Deploy and call UI, the session history; the end-to-end exits
+    of the M3.3b row on DevKit and Yano; I10's canary, I15 on the new surfaces, I21.
+  - **Until M3.3b3, no production action, service or tool-window path reaches admission or the signer;** a test checks
+    it. Yano's part of the exit waits for bloxbean/yano#269 (E2, L36).
+  - **M3.3b1 as built.**
+    - **Files.** The store lives in `~/.intelliada/joust-journal/`, per user and independent of the IDE product and
+      version (r36): `registry/<chain>.json` sits
+      apart from `chains/<chain>/` (the record, one journal per module, the lock), so either can be lost alone. Writes are
+      atomic and durable; directories are private and this user's; loads are strict (another version, an unknown field,
+      a body whose hash or validity differs from the entry's: unreadable, never empty).
+    - **Staleness.** The record and the registry entry carry a generation, raised together (since round 3 on every
+      module-journal write, not only at admission: SEC-7). Each settlement event therefore costs a record write and a
+      registry write before the journal write. A record behind
+      its registry entry, or one that does not list a journal present on disk, is treated as a lost mark (a restored
+      backup is caught when the registry is current). The both-lost case is persisted as its own marker file, so a
+      restored stale backup cannot lift it.
+    - **Lost-journal fences.** When one lifts, the lost modules leave the record. An unreadable journal is renamed aside,
+      never deleted, so the module can journal again.
+    - **Final entries** (confirmed or expired) stay journaled for `2 × settlementSlots + maxNowAheadSlots` slots past
+      their threshold. A rewind back into their margin restores them `shallow` (I31). A deeper rewind is caught by the
+      "more than `maxNowAheadSlots` below the last `now`" trigger, but a final entry past its retention can no longer be
+      restored. This residual is accepted: the ledger still refuses a double spend.
+    - **Settlement.** It follows JOUST's `Reservations` and `Reads` at `01bad1f7`:
+      - each event's tip also advances every other reservation, and the journal takes those states;
+      - no threshold event is sent while restore is open (the host applies none and refuses `expired`);
+      - an inclusion that moved block, or a final inclusion that vanished, is a rewind at once;
+      - a vanished `shallow` inclusion is `rolledBack`;
+      - a lower tip is transient until it persists (three readings over at least 10 s).
+    - **Session.** A new host's history is classified before launch, so `initialize` carries `restoring`. The module's
+      host lock (I33 across IDE processes) is held for the session. The host is restored after its catalog check, and
+      building is blocked while any fence, open restore or deep rollback stands.
+    - **Registration evidence** (D15) is stored with the record. It is sent to hosts once a contract needs it (E13),
+      with its `txHash` re-read (ADR5-CDX-26).
+    - **Bodies are read by `TxCbor`**, IntelliAda's own structural reader. It agrees with the host's hash, validity,
+      inputs, collateral, reference inputs, signers and publications on every kit vector without a violation (62).
+  - **M3.3b1 round 1 (#34).**
+    - **One classification.** Opening a host and admitting a body classify the chain's history with the same function, so
+      a body is admitted only where a fresh host would find complete history. A missing or unreadable registry entry
+      beside an admitted record is a lost mark: the entry is what shows a restored record is not stale. Its residual: a
+      rewind before detection while the entry is lost. The registry entry is never rebuilt at admission; lost-mark
+      recovery rewrites it with the derived base, so a later loss cannot derive a lower bound.
+    - **Generations per module.** The record binds each module's journal to the generation of its last admission. A
+      journal behind it (an older backup) is a lost journal.
+    - **Rewinds per module.** A rewind lists every module with a journaled body. It clears only once each has reconciled
+      on a fresh host, and admission stays closed meanwhile. Other hosts of the chain stop at their next pass or call, and
+      are refused building at once. Admission enforces this across processes; no host is stopped from outside.
+    - **Settlement.**
+      - Only a successful call's read tips are certain. Any error, `internal/evaluator` included, leaves them uncertain.
+      - A reply resolves only its own reservation's copies.
+      - Accepted read tips are written to the journal.
+      - Rollbacks are reported first, at the body's own inclusion slot, so one event finalizes no other body.
+      - An inconclusive pass withholds the next forward call while anything is live.
+      - The model commits a body's facts from its bytes.
+    - **Observation.** It follows E1's rule: answers identical before and after a later tip hold at it. A lower tip is
+      re-read inside the pass until three readings span at least 10 s; forward calls wait meanwhile.
+    - **Retention** of a final entry runs from the later of its inclusion and its `validTo`.
+    - **Discard.** A body never handed out (`none`, `approvalPending`) is discarded through the model, with its journal
+      entry removed. A handed-out body is refused (I30).
+    - **Bounds.** A journaled body is at most 64 KiB, four times Conway's maximum transaction size.
+    - **Policy.** D14b's numbers live in one policy class, shared by `initialize` and the journal. A host initialized
+      with another settlement margin is refused.
+  - **M3.3b1 round 2 (#34).**
+    - **Revisions.** Every module-journal write bumps the module's revision in the chain record first. A journal behind
+      its record is a lost journal; one ahead shows the record is stale, and is a lost mark. A crash between the two
+      writes therefore fences until the mark, which is accepted.
+    - **Rewinds.** Each rewind has an id. A host leaves only the rewind it was restored after, and a host whose restore
+      is held open is fenced by a later one.
+      - A rewind found while no host ran is detected at any module's open: a retained entry of any module that the tip
+        reopens.
+      - A rollback the host answers with `deepRollback` is a chain rewind.
+      - Vanished inclusions are rolled back in ascending slot order, all at the lowest vanished slot.
+      - A lower tip touches a final inclusion's margin, not a shallow one's.
+    - **Both lost** is persisted wherever it is found (open, admission, rewind, observation). A fresh record is made
+      only for a new chain.
+    - **Calls.** Read answers belong to the call they were asked in. A read that would finalize a shallow body that
+      vanished answers `failed`, so the rollback is reported first. Only live reservations make a call wait.
+      - The journal step after a call runs once, with its outcome. If its write fails after a build, the body is
+        discarded, or the host fenced. After any other call the result stands, and the write is retried before the next
+        call.
+      - A build the model refuses surfaces as an error.
+    - **Discard** releases only a body this host prepared in this session, after a settlement pass, on intact history.
+      Handouts only move forward.
+    - **Admission** refuses `validTo` beyond the largest TTL past the tip or `now` (the recovery bound's ceiling).
+    - **Store.**
+      - A permission-denied file is lost history.
+      - The file size is checked before writing.
+      - Every ancestor directory the store creates is synced.
+      - The reader validates simple values and UTF-8 text while skipping.
+  - **M3.3b1 round 3 (#34).**
+    - **Generation on every write.** Every journal write raises the chain generation in the record and then the registry
+      entry, so a chain directory restored from before a handout is a lost mark (SEC-7). D17's registry maxima are still
+      raised only by admission.
+    - **Serialization.** Admission and handout changes run on the settlement monitor that discard runs under.
+    - **The clock check.** `now()` re-reads a tip far below the session's `now` under D14's rule (three readings over at
+      least 10 s) before it stops the host (DES-12).
+  - **M3.3b1 round 4 (#34).**
+    - **Writes.**
+      - An ordinary journal write needs the journal current with its record. The one exception is the revision this
+        session itself last wrote, after its own failed write.
+      - A restore's replacement goes only over the revision its opening read.
+      - Journals are size-checked before any write.
+    - **Recovery.**
+      - The highest recovery fence ever lifted is remembered. A chain back at or below it is fenced again.
+      - A lost mark found when a fence would lift is persisted first.
+      - `open` re-reads every module's retained inclusions, and renews a rewind still being reconciled when another one
+        touches it.
+    - **Settlement.**
+      - Reads are owned by the forward call that held them at dispatch.
+      - The read guard compares the whole recorded inclusion.
+      - A `deepRollback` reply persists the rewind before any state.
+      - A rollback's tip crosses no reservation's threshold.
+      - Read tips are accepted only after the bound chain's check.
+      - A clock far below `now` records a chain rewind.
+    - **The signer's entry points.**
+      - Discard re-checks both copies after its pass and requires a `discarded` reply.
+      - Admission needs a body built in this session and still prepared.
+      - Handouts move under the chain lock, on intact history.
+    - **Durability.**
+      - Each ancestor directory's link is synced once per process, up to the user's home. The root's parent
+        (`~/.intelliada`) must be a real directory owned by the user that no other user can write; one the store
+        creates is 0700, one of the user's that others can write (a umask of 002, common on Linux) loses its group and
+        other write bits, and a link or another user's refuses (r37/r38, M33B1-CDX-80, -SEC-13, -DES-22). On a file
+        system with ACLs instead of POSIX modes, every directory of the store and its parent must belong to this process's
+        user, and no principal but that user and the OS-resolved identities of the local system, the built-in
+        administrators, the creator-owner placeholder and the installer service may change their entries. Principals
+        are compared by identity, never by name. A directory the store creates gets an ACL for this user alone. An
+        empty access list, which the JDK also reports for a null DACL, is refused. Before a file's bytes are trusted,
+        every directory from the root to it and the file itself are checked: Windows does not govern access by path, so
+        a private root does not make what is under it private. With neither POSIX nor ACL attributes, the store refuses
+        (M33B1-CDX-85, -91, -92, -96..98, -SEC-14). Every directory from the root down must be a real directory
+        (no link, junction or other reparse point) that resolves to itself under the root's real path, on every OS and
+        on reads too (M33B1-CDX-103).
+      - A rewind the process detected, by any path (a clock rewind, a settlement pass or an open), is held in memory
+        for the chain before its write, whole: its tip, reason, pending modules and evidence. It is cleared once
+        persisted. Admission, handout and pruning check it under the chain lock, and every host of the chain in the
+        process stops on it. A retry from a settlement pass or an open persists it without adding the module that
+        retried. The next open persists it, recovering the record first when needed. Status queries only read it
+        (M33B1-CDX-84, -87..90, -94, -DES-24).
+      - A module with nothing journaled still observes the chain while a fence on it waits for a later tip
+        (M33B1-CDX-93).
+      - Every forward call, and every idle timer pass, checks the chain's rewind count against the one this host
+        started or was restored at. A rewind another module began, even one already reconciled and cleared, stops the
+        host (M33B1-CDX-95).
+      - A closing session finishes any pass in progress before it releases its module lock.
+  - **M3.3b1 round 5 (#34).**
+    - **Rewinds.**
+      - The chain record counts rewinds. A host admits only at the count it started or was restored at, so a host that
+        missed a rewind must restart.
+      - A rewind still being reconciled is renewed only on new evidence: a lower point, or a module that already
+        reconciled touched again.
+      - Admission records a rewind when its tip is more than a margin below recorded evidence. The margin allows for a
+        prepare's tip trailing another module's observation.
+    - **Recovery writes.**
+      - A restore's replacement needs the record revision and the fence its opening read.
+      - An ordinary write may go over a journal behind its record only after this instance's own known failed write.
+      - Admissions keep the remembered recovery bound.
+    - **`open`.** Retained inclusions are read outside the chain lock. A failed read fails that open only; it is never a
+      rewind (DES-14, SEC-9).
+    - **Settlement.**
+      - Accepted read tips raise the lower-tip baseline.
+      - A landed body the host expired is a reconciliation, with its evidence kept. Inclusion evidence is cleared only by
+        a reported rollback.
+      - A closed session commits nothing.
+      - Each thread accounts for the call it dispatched.
+      - Approvals are promoted only for prepared bodies.
+    - **Store.**
+      - Directory syncs are recorded only after they succeed.
+      - The record's later fields are optional when read.
+      - Prepared validity must be slot integers.
+  - **M3.3b1 round 6 (#34).**
+    - **Chain rewinds come only from chain evidence** (DES-16):
+      - `Settlement`'s triggers under D14's rule;
+      - `open`'s rule, where an inclusion is read and found different.
+    - **No chain rewind** in two cases:
+      - An admission far below recorded evidence is refused.
+      - A landed body the host expired stops only that host; the journal keeps it `shallow` at its inclusion.
+    - **Generations.** Every chain-record write (rewinds, fences and registrations included) raises the generation in
+      the record and the registry entry. A lagging registry entry is first repaired to the record's mark.
+    - **Admission.** An expired body whose validity the admission tip reopens still holds its inputs.
+    - **Settlement.** An event's states are published only after its outcome is checked.
+    - **Lost journals.** Newly lost journals need a fence over the current mark.
+    - **`open`.** Inclusions recorded during an open are read before it completes. Fork evidence renews a rewind. Both
+      lost is persisted before any provider read.
+    - **Failed writes.** A failed registry write is a known failed write, which its owner finishes.
+  - **M3.3b1 round 7 (#34).**
+    - **Overlap.** Every journaled body holds its inputs until it leaves the journal, final and expired ones included;
+      only a discarded one releases them. This replaces the per-case reopening rules.
+      - **The cost (DES-18).** An expired body's inputs wait out its retention window, `validTo + 2 × settlementSlots +
+        maxNowAheadSlots`, before another body may spend them. That is about 17 minutes on a devnet and 5,220 slots
+        (about 1.45 h) on a public network.
+      - **Refusals.** Each one names the holding transaction's state and the slot its hold ends.
+      - **To revisit in M3.5.** There an unsubmitted export makes expiry the usual case, so a shorter hold for expired
+        bodies should be reconsidered: a detection window past expiry, with the rewind fence covering the rest. This
+        departs from D17's "released by chain evidence or expiry" during that window.
+    - **Rewinds.**
+      - A rewind carries the evidence that made it. It is renewed only on evidence not yet recorded, or at a lower point.
+      - A stale record is never advanced. A lost mark the registry proves is persisted under `open`'s first lock.
+      - A first rewind on a new chain creates the registry entry.
+    - **`open`.** It reads a fresh tip each round, and re-reads inclusions recorded differently since they were read.
+    - **Revisions.** Module revisions are allocated above the chain generation, so they are never reused.
+    - **Settlement.**
+      - A fenced host's model is never synced to the journal.
+      - An expired body the chain shows included within its margin stops the host; the journal keeps it `shallow`.
+      - The host is fenced before the evidence is written (SEC-10).
+
+- **E11. The journal's fault model and the review stopping rule (L41).**
+  - **What #34's review was asked to cover.** After eight Codex rounds, each raising six or more new P1s (design and
+    security approved from round 4), the journal's guarantee is stated as a fault model. The review is scoped to it.
+  - **In scope:**
+    - one IntelliJ process per chain directory, where the store is **per user**, shared by every IDE product and version
+      (r36), so side-by-side IDEs see one store and its locks;
+    - any number of contract modules in it;
+    - chain events treated as normal, not as faults: rollbacks, forks, rewinds and lagging providers;
+    - at most one independent fault at a time: one crash or kill at any point, one failed or partial write, one
+      provider timeout or error, or one file lost or unreadable.
+  - **Always in scope:** anything that breaks the on-disk format, the store's location and lifetime (an IDE update or a
+    second IDE product is normal operation, never a fault; SEC-12), or an invariant the signing PRs rely on. Those are: no
+    lost record of a handed-out body, no input released while its body can still land, no double hand-out after
+    recovery, and no silent overwrite.
+  - **Out of scope, filed as a follow-up:**
+    - findings that need two or more independent faults together (a restored backup between writes plus a timeout, for
+      example);
+    - concurrent IDE processes on one chain directory beyond what the module lock already refuses;
+    - deliberate tampering with the store by the same OS user (other users are kept out by the private directories and
+      owner checks, which stay in scope);
+    - security-descriptor content the JDK does not expose on Windows: conditional, callback and object ACEs, and
+      mandatory labels (L42, M33B1-CDX-102). Placing it takes WRITE_DAC, which only the owner, an already-trusted
+      principal or an administrator's policy holds. #37 must close before M3.3b2 merges, or M3.3b2 refuses signing on
+      non-POSIX stores;
+    - file-system behaviour beyond atomic rename and fsync.
+  - **The rule.** In-scope P0/P1 findings, and security P2s, are fixed in the PR. Out-of-scope findings, and P2s that
+    cost only availability, become issues that must close before **M3.3b2** (signing) merges. A cheap fix of an
+    out-of-scope finding is still made. One final Codex round runs, scoped to this model.
+  - **Filed so far:** #35 (M33B1-CDX-73, availability); #37 (M33B1-CDX-102, Windows descriptors; L42); #38 (L43).
+  - **Reachability (L43).** M3.3b1 blocks only on code production can reach in it: opening, restore, settlement
+    passes, views and the store. `JoustArchitectureTest` bars every production class from the build path
+    (`JoustRunSession.build`), admission and handout. Those methods are `@ApiStatus.Internal`. In-model findings
+    on them go to #38, which must close before M3.3b2 merges. To close it, M3.3b2 provides:
+    - a written concurrency model for build, admission, handout and recovery (DES-28's per-call `BuildAttempt`);
+    - a deterministic or end-to-end test for each deferred finding;
+    - a dedicated review of these paths.
+    
+    A finding on those paths that shows a flaw in the journal format, the store, or what restore or settlement
+    assume still blocks M3.3b1. Only the commit that wires these paths may relax the architecture test, and it must
+    reference #38.
+    **No release from a branch containing M3.3b1 before M3.3b2** (a gate, not an assumption; M33B1-SEC-16): the store is
+    shared across IDEs and versions, so a released M3.3b1 would keep running its older rules beside a fixed M3.3b2.
+    #38's dedicated review covers fence lifting in `observed` (CDX-142, -148) and build completion in `Settlement`
+    (CDX-144). If a release happens anyway, M3.3b2 raises the format `VERSION` and decides how an older copy's permanent
+    fence (an M3.3b1 copy reads a newer store as both lost) is treated.
+  - **A gate for M3.3b2 (L42):** the signer signs only a body built in this session, bound to the hash recorded in
+    memory at its build (restored bodies are already handed out and never signed again; M33B1-DES-25). A journal
+    changed behind IntelliAda's back can then cause a refusal or a failed transaction, never a different spend.
+
+- **E12. The journal simplified for devnets and test networks (L44, the maintainer's decision; supersedes E10's
+  store layout, fences and rewinds, and E11's fault model, for M3.3b1).**
+  - **Why.** The maintainer: IntelliAda is mostly for test networks and devnets, so developer convenience comes before
+    typical security; test-network ADA and tokens have no value. The Fable review of #34 found that the earlier
+    machinery (lost-history fences, a permanent both-lost fence, parent and ACL checks, cross-module rewinds, stale-
+    observation checks) blocked developers for hours, or for good, to prevent a conflicting test transaction.
+  - **What the journal is now.** A history and restart aid that never blocks:
+    - one file per module and chain, `chains/<chain>/<module>.journal.json` (format version 2), written atomically once
+      per update; no chain record, no registry, no both-lost marker; the directory sync is best effort; directories are
+      created private where the file system has POSIX modes, with no parent or ACL checks;
+    - a missing journal is a new start; one that cannot be read (damaged, another version) is moved aside as
+      `.lost-<time>`, said once in the console, and a new one begun;
+    - each module restores only its own bodies, from the chain as it is now; there are no cross-module rewind records;
+    - only live bodies (prepared, or included but not final) hold their inputs; final and expired ones are history,
+      pruned after `2 × settlementSlots`;
+    - a rollback the host cannot follow (a final inclusion rolled back, a body in another block, a lower tip crossing its
+      reservations, a tip far below its `now`) stops the host only while it holds live reservations; a restart restores
+      them; on a devnet a lower tip is acted on at once, on a public network after D14's three readings;
+    - the per-chain in-process monitor stays, entered with a 30 s bound and a message;
+    - a journal store that cannot be used at all starts the host read-only, without the journal (FAB-1).
+  - **What stays strict, because signing (M3.3b2) depends on it:** an entry is written before its body is handed out
+    (I25); the signer signs only a body built in this session, bound to the hash recorded at its build (L42's gate); a
+    handed-out body is released only by chain evidence or expiry (I30); live input overlap across modules is refused;
+    one host per module and chain (I33); `TxCbor`'s checks on every body; `HostTable`'s checking of every reply (I32).
+  - **Mainnet.** No mainnet path exists in M3.3b1 (binding accepts only a local DevKit). M5 decides mainnet's rules,
+    with their own review.
+  - **Superseded follow-ups:** #35 (final entries no longer hold inputs), #37 (no ACL checks), #39 (opens make no
+    provider reads under the monitor, which is bounded). #38 stays for M3.3b2's build, admission and handout paths.
+
+- **E13. M3.3b2 as built: signing, submission and Deploy (L45; closes #38).**
+  - **One transaction, in order, under the session's call lock** (`JoustRunSession.submit`):
+    1. signing must be possible: the signing gate passed (`signingDisabled()` is null) and the journal is open (a
+       read-only host never signs);
+    2. the host builds it (`prepare` or `publish`, after the deployment check); the exact parameters sent, `now`
+       included, are kept as the checker's request;
+    3. JOUST's reference checker accepts it (D13): `JoustCheckInput.assemble` with the contract's anchors (DES-23),
+       the network id, a maximum fee of 5 ADA (a setting comes with M3.3b3) and inputs IntelliAda reads from the
+       bound node itself (`NodeChain`: outputs, reference scripts at an address, registration, protocol parameters),
+       never the host's answers;
+    4. the required keys are `required_signers` plus the payment key of every spending and collateral input held at a
+       key address; an input the node does not know refuses. The caller's and the chosen co-signers' keys (I11) sign the
+       Blake2b-256 of the body bytes as received; each signature is verified, a missing key refuses, and the witness set
+       is spliced (key 0 added, the received entries kept byte for byte); the id must not change;
+    5. the entry is journaled `approvalPending` (I25), only for a body this host built in this session with the same
+       hash (L42), then recorded `submitted` **before** the POST, so a crash after sending keeps its inputs held (I30);
+    6. it is sent through the bound node (`/tx/submit`). A 4xx means the node did not take it: `Settlement.nodeRefused`
+       releases it, only for a body submitted from this session that a fresh pass still shows prepared (not on chain).
+       A 5xx, a timeout or an interrupt is an unknown outcome: the body stays submitted and settles from the chain, or
+       expires. The id the node answers must be the body's.
+
+    Any refusal before step 5 discards the body (it was never handed out). Keys stay in the IDE process (I10);
+    `SigningKey` never prints them.
+  - **Deploy** (`JoustRunSession.deploy`, D15's order): each outstanding prerequisite is published and must land
+    (shallow or confirmed, read by settlement passes) before the next; then `init`. A publication that does not land in
+    time stops Deploy. Genesis accounts sign only on a devnet; other accounts only on their own network class.
+  - **Registration evidence is deferred** to the first contract that needs it (D15): the Counter fixture has no staking,
+    so M3.3b2 sends none; the checker still reads registration from the node.
+  - **Concurrency model (#38, item 1).** The lock order is: the session's call lock (`clock`, also taken by the idle
+    settlement timer and `awaitInclusion`'s passes), then `Settlement`'s monitor, then the per-chain journal monitor
+    (`ChainJournal.enter`, bounded at 30 s), then the file write. Build, checker, signing, admission, handout, submission
+    and node refusal all run inside one hold of the call lock, so no pass, build or discard interleaves with a
+    transaction between its build and its handout. `Settlement` keeps two in-memory sets: `builtHere` (built in this
+    session, not yet handed out: discardable, admittable) and `submittedHere` (submitted from this session: releasable
+    only on the node's refusal). A restored body is in neither: it is held until chain evidence or expiry.
+  - **#38's deferred findings.** CDX-120, -126, -132, -137, -138, -142, -143, -144 and -145 concern recovery fences,
+    recovered bounds and the chain record, which E12 removed; they no longer apply. CDX-146 (a refusal reporting a
+    discard that did not happen) is fixed: a failed discard says so. Tests: `JoustSignerPlatformTest` (the splice, co-
+    signers, a missing key, existing vkeys, key printing), `SettlementTest` (node refusal releases only this session's
+    submission; a submitted body is never discarded), `JoustArchitectureTest` (nothing in production reaches
+    `submit`, `deploy`, the signer, the node submission or signing keys until M3.3b3), and
+    `JoustSignDevKitPlatformTest` (the exit: a Counter deployed, an `increment` submitted, the host restarted before it
+    settles, the restored host settles it). The dedicated review is one Fable review (L44).
+  - **Found on DevKit:** Yaci DevKit's `/txs/{hash}` has no `block` field; `ProviderChain` reads the block hash from
+    `/blocks/{height}` when it is absent.
+
+- **E14. M3.3b3 as built: the panel's write path (L46).**
+  - **Resending (#42, FAB-17..19).** The journal entry holds the **signed** transaction (D17: "as handed out"; the
+    host's `restore` hashes only the body, so the id is unchanged). The POST is tried three times on an unknown outcome
+    (an I/O error, a 5xx); a 4xx after the first attempt is unknown, not a refusal, because the first may have reached the
+    node. Each settlement tick sends again every journaled `submitted` body that the host holds prepared, the chain does
+    not show, and is still valid; a restored host does the same. `awaitInclusion` retries a failed read and stops at once
+    when the host stops or the journal blocks; Deploy refuses an outstanding prerequisite instead of falling through,
+    reports its steps, and carries what it submitted (`DeployStopped`). Every refusal says whether the inputs were
+    released, or until about which slot they stay reserved.
+  - **The review modal** (D13), in `joust/review` (I16: CCL decoding there only): from the body with CCL's reader, the
+    outputs that go neither to the deployment (a script address whose hash is one of the anchors') nor to the caller,
+    the caller's net outflow (its inputs read from the node, minus the outputs back to it), the fee, the signers by
+    account, the validity window and any mint. It runs after the checker accepts the body and before signing; a decline
+    discards the body. Setting **Confirm every devnet transaction** (off by default); D14b's largest fee is a setting
+    too (5 ADA by default), passed to the checker as `maxFee`.
+  - **Deploy and Call** in the run panel: a form built from the description as IntelliAda read it from the snapshot
+    (I26): the call, the caller, the instance (unless `init`), the object (owned actions and destroys), each argument as
+    text (a JSON object or array passes as JSON; I16), the payment for payable calls, and co-signers (sent as
+    `cosigners` key hashes, signed by IntelliAda's keys; I11). Keyed calls wait for M3c. Every session call runs off the
+    EDT (the call lock is held across `PasswordSafe`); one write runs at a time; the TTL is 300 slots within the
+    network's maximum. After submitting, the panel waits for the transaction to land and says so.
+  - **History** (L7): the session's journal entries, newest first, refreshed every 5 s off the EDT, as plain text.
+  - **Gate relaxed (L43):** `JoustArchitectureTest` lets the run panel, and only it, reach `submit` and `deploy`; the
+    signer, node submission and signing keys stay the session's.
+  - **Exit tests (DevKit, tool-gated):** `JoustPanelDevKitPlatformTest`: a fresh account (the canary) is funded; the
+    Counter is deployed, incremented (the state shows it), a reset declined in the review (nothing journaled, inputs
+    released) and the instance closed; the review summary is checked against the real bodies; **I10**: the canary
+    mnemonic and its private key appear in neither the host's command line nor its environment, its stderr, `idea.log`,
+    the journal, nor any temp file written meanwhile; **I21**: the module's files are unchanged apart from `build/` and
+    `.gradle/`. `JoustSignDevKitPlatformTest`: a submission that never reached the node lands, sent again by the timer
+    and by a restored host. **I15**: call names and history labels render literally (`JoustPanelWriteTest`).
+  - **Deferred to M3.3b4 (L46):** the rest of the M3.3b row's exit: the Java Counter, JOUST's `bank` (owned), the quorum
+    call with two IntelliAda keys on the repackaged `HostCouncil`, `dex` (sends) and `token` (a map call), each through
+    the same paths. Yano's part still waits for bloxbean/yano#269 (E2, L36).
+
+- **E15. M3.3b4 as built: registration evidence, #44, and the rest of the M3.3b exit (L47).**
+  - **Registration evidence (D15).** Yaci DevKit's `/accounts/{stake address}` answers every credential with neither
+    `active` nor `registered`, so IntelliAda's `stakeRegistration` read is `unsupported` and the host falls back to
+    evidence. When a publication is refused with Conway's `StakeKeyRegisteredDELEG` for a script credential, IntelliAda
+    sends the host `registered {credential, evidence: {txHash, message}}` with the node's refusal as the message (the
+    protocol's evidence by node message), and Deploy builds that prerequisite again, once per credential. The evidence
+    lives in the host for its session; a new host learns it the same way on its first Deploy. No record is kept
+    (E12: convenience over bookkeeping).
+  - **#44 (FAB-24..30).** History keeps every entry the session has seen (500); private keys are read only after the
+    review and cleared after signing, and a key the body needs but IntelliAda lacks refuses before the review; the
+    catch-all keeps its cause and the interrupt; waiting retries any failed pass but a stop or a block, and Deploy
+    re-reads a listed prerequisite for up to 10 s; one write at a time after the form too; addresses keep their
+    ellipsis; a background re-send times out in 3 s; the review shows the caller's token movement and reviews an
+    unreadable body from IntelliAda's own reader's facts. The I10 canary test now checks each capture is real (the
+    host's command line and environment, `/proc` on Linux), has positive controls for the log and the matcher, searches
+    the checker's stdin input, and matches the phrase and key in several encodings.
+  - **The exits** (`JoustContractsDevKitPlatformTest`, DevKit, tool-gated), each with fresh funded accounts through the
+    session's signing path: the **Counter in Java** (deploy, increment, view, close); **`bank`** (owned: the bank by A,
+    an account opened with a payment, a deposit, a withdrawal and the close by B); **`token`** (map calls: create, mint
+    to B, B's transfer, `balanceOf`, with the registration evidence above); a **quorum** call signed by two IntelliAda
+    keys on `HostCouncil` repackaged as `com.bloxbean.intelliada.fixture.HostCouncil` (and the same call without the
+    co-signer refused before any signing); **`dex`** (a pool on a token minted by A, liquidity added, and a swap whose
+    send reaches B's key's enterprise address). Fixtures: standalone Gradle projects with JOUST's plugin, holding the
+    contract classes copied from JOUST at `01bad1f7` (`examples/{bank,dex,token}`, `julc-state-host`'s test fixture
+    `HostCouncil`), built with `build joustHostSpec` on JDK 25; `JOUST_FIXTURES` names their directory.
+  - **Observed:** `HostCouncil`'s `open` fails in script evaluation when `members` are not in ascending order (as in
+    the kit's vector). The form passes arguments as typed (I16), so a developer sees the script's error; a clearer
+    message is JOUST's to give.
+  - **Still open:** Yano's part (bloxbean/yano#269), and driving the Swing dialogs in an automated UI test.
+
+- **E16. M3.4 split: M3.4a now, M3.4b with Yano (L48).** M3.4's exit (a `@ValidAfter` call made valid by advancing
+  Yano's time, an epoch shift, a snapshot restore with re-check) needs Yano, which waits for bloxbean/yano#269. M3.4a
+  delivers what needs no Yano; M3.4b adds Yano's controls and the exit once #269 is closed.
+  - **#46 (FAB-31..34):** registration evidence only for credentials the refused body itself registers (its
+    `publishes`), a failed `registered` call appended to the node's refusal, "try again" for a Call; History marks a body
+    that left the journal while prepared as released and keeps no CBOR; the reduced review says the fee and outflow are
+    unavailable and nothing about outputs; the refusal's whole body is read for the ledger's reasons.
+  - **DevKit faucet** (D15, L8): **Fund account…** in the panel; `JoustRunSession.fund` tops up through DevKit's admin
+    API (the binding's host, port 10000), in two outputs, so a fresh account has a seed input and separate collateral
+    for an `init` (an `init` from a one-UTxO account is refused by the host's composition). Devnets only.
+  - **Gutter icons** (D15 "Entry points"): Java methods annotated `@Init`, `@Action`, `@View`, `@Destroy`, `@OwnedInit`,
+    `@OwnedAction` or `@OwnedDestroy` in a `@StateContract` class; `.jsc` calls (`init`, `action`, `destroy`, `view`)
+    found lexically with comments and strings blanked, until JOUST's `joust/entryPoints` exists (instead of document
+    symbols: no language server needed). An icon opens the JOUST Run panel at its contract (switching to the module
+    that built it when no host runs); nothing runs.
+  - **Recorded instances** (D15 "Persistence"): each `init` this session submits is recorded in
+    `~/.intelliada/joust-instances/<chain key>/<module key>.json` (no keys; checked as untrusted on load: a file of
+    any other shape, or over 1 MiB, is ignored and replaced by the next record; 1,000 per module). Selecting a contract
+    lists its recorded instances after re-checking each with a state view: one the host refuses to read (closed, or no
+    longer on this chain) is forgotten; any other failure keeps it (I17's re-check; the snapshot-restore case is
+    M3.4b's).
+  - **Tests:** `JoustEntryMarkersTest` (the `.jsc` scan; the store's round trip and untrusted loads),
+    `JoustEntryMarkersPlatformTest` (Java and `.jsc` icons; none without `@StateContract`), `JoustPanelWriteTest`
+    (#46), and on DevKit `JoustPanelDevKitPlatformTest` (the init recorded, the closed instance forgotten on re-check,
+    the faucet's two outputs).
+  - **Observed (not yet verified at the output level):** with the caller holding a native token before Deploy, a later
+    `dex.addLiquidity` found the token only in a UTxO "carrying a reference script or a datum hash", likely because a
+    publication spent the token's UTxO into its reference-script output at the caller's address. The test mints after
+    Deploy; whether the host should keep a caller's tokens out of reference-script outputs is JOUST's to decide.
+
+| # | Decision | By | Date | Basis |
+|---|---|---|---|---|
+| L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
+| L37 | Pin the checker closure by a checked-in SHA-256 lock; strict build by default; command-line-only overrides for a checker-less or SNAPSHOT-kit build (E7) | delegated | 2026-11-26 | two advisors (maintainer, supply chain); D13 |
+| L38 | I12's legacy-chooser exception until #10; migration is a move; no mainnet accounts until M5 (E8) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 1 |
+| L39 | Migration copies and hides (never writes the legacy store); unconfirmed until a later session; class bound to the secret (E8a) | delegated | 2026-11-26 | two advisors (maintainer, security); M32 round 2 |
+| L40 | M3.3b in three stacked parts: journal and settlement, signer and Deploy sequence, panel write path; nothing reaches signing before the third (E10) | delegated | 2026-11-27 | two advisors (both asked for a split; one for three parts, one for two with a fallback cut) |
+| L41 | #34's journal guarantee is stated as a fault model (E11): in-model P0/P1s and security P2s block; multi-fault, multi-process and tampering findings become issues that must close before M3.3b2 merges; one final Codex round scoped to the model | delegated | 2026-11-27 | two advisors (both: stop open-ended point fixes, state a fault model, gate follow-ups before signing, one final scoped round); Codex P1s r1–r8: 16, 18, –, 15, 7, 8, 8, 7 |
+| L42 | Windows security-descriptor content the JDK does not expose is out of model (E11). Links, junctions and reparse points are refused. #37 (native validation, exercised by the Windows CI job) must close before M3.3b2 merges, or M3.3b2 refuses signing on non-POSIX stores. The signer signs only bodies built in the session, bound to their build hash (E11) | delegated | 2026-11-27 | two advisors (both: option B with a reparse refusal and a gate on signing); CDX-102/103; Windows cannot be tested here |
+| L43 | M3.3b1 blocks only on code production can reach in it (opening, restore, settlement, views, the store). In-model findings on the build, admission and handout paths, which `JoustArchitectureTest` bars and which are `@ApiStatus.Internal`, go to #38. #38 must close before M3.3b2 merges, with a concurrency model, a test for each finding and a dedicated review. Shared-state findings still block | delegated | 2026-11-27 | two advisors (both: option 1 with safeguards); Codex P1s over 22 rounds, the last ~10 all on these paths; Codex r22: "the build and handout findings concern the headless interfaces used by the later signing and panel milestones" |
+| L44 | The journal is simplified for devnets and test networks (E12): a history and restart aid that never blocks; strict only where signing depends on it. Supersedes the fault-model machinery of E10/E11 for M3.3b1 and the three-reviewer process (one Fable review) | maintainer | 2026-11-27 | the maintainer: "developer's convinience rather than typical security", "testnetwork ada or token doesnt have any value", "only Fable review is enough"; the Fable review of #34 (FAB-1..10, S1..S13) |
+| L45 | M3.3b2 (E13): a body is recorded `submitted` before it is sent and released only on a 4xx from the node; a 5xx, timeout or interrupt keeps it for chain evidence. Registration evidence waits for the first contract that needs it. #38 closes on E13's concurrency model, with CDX-120..145 superseded by E12 | author | 2026-11-28 | E12's rule (strict only where signing depends on it); the restart-between-submit-and-settlement exit on DevKit |
+| L46 | M3.3b3 (E14) delivers the panel's write path with the Counter on DevKit (I10, I15, I21 tested there); the other contracts of the M3.3b exit (Java Counter, `bank`, quorum on `HostCouncil`, `dex`, `token`) follow as M3.3b4 through the same paths. The signed transaction is journaled and sent again while valid (#42) | author | 2026-11-28 | E12's convenience rule; one Fable review per PR (L44); the write path is the same for every contract, the remaining exits exercise call kinds |
+| L47 | M3.3b4 (E15): registration evidence comes from the node's own refusal (`StakeKeyRegisteredDELEG`) and is sent to the host per session, with Deploy retrying the publication once; no record is kept. The rest of the M3.3b exit runs on DevKit fixtures copied from JOUST at `01bad1f7` | author | 2026-11-28 | DevKit cannot report registrations; E12's convenience rule; the protocol's evidence-by-message form |
+| L48 | M3.4 is split (E16): M3.4a (#46, DevKit faucet, gutter icons, recorded instances) now; M3.4b (Yano's time, epoch shift, snapshots and rollback, and M3.4's exit) once bloxbean/yano#269 closes. `.jsc` entry points are found lexically until JOUST's `joust/entryPoints` | author | 2026-11-29 | yano#269 open; the non-Yano parts are independent; E12's convenience rule |
+
+## 10. Review round 1 (head `73969bc`) and where r2 answers it
+
+| Finding | Change in r2 |
+|---|---|
+| ADR5-CDX-1, ADR5-SEC-4, ADR5-DES-5 | §0 Trust (boundary, L33); D13 process: input on stdin, empty working directory, D3 environment; I23, I26, I27 reworded |
+| ADR5-CDX-2, ADR5-SEC-5 | D17 store and lock, "before signing", failed writes refuse; D11 overlap check across hosts; I25 |
+| ADR5-CDX-3, ADR5-DES-2 | D17 entry schema, restore rules (retained inclusions, approvals invalidated, returned ids, lost history, no-mark block) |
+| ADR5-CDX-4, ADR5-SEC-3, ADR5-DES-1 | D17 settlement: `discarded` only before handout (keyed in M3c); I30 |
+| ADR5-CDX-5, ADR5-SEC-2, ADR5-DES-3 | D13 anchors (resolution as `ValidatorScripts`, recomputed hashes, CCL addresses, npm sources) and the deployment check; F42 corrected; I24 |
+| ADR5-CDX-6 | D14 era-correct clock, `reset({now, clock})` after a Yano shift, chain identity vs recreation |
+| ADR5-CDX-7 | D14b devnet TTL from ⌊3k/f⌋ |
+| ADR5-CDX-8 | D13 input `clock`, `orderedReads`; F41 corrected |
+| ADR5-CDX-9, ADR5-DES-6 | D13 co-signer witnesses, complete-signer rule, imported witnesses; M3.3b exit adds quorum, sends and maps; I11 |
+| ADR5-CDX-10 | D15 registration evidence |
+| ADR5-CDX-11 | D18 paging and chunking; registration 404 |
+| ADR5-CDX-12 | D14b settlement depth with stated exposure |
+| ADR5-CDX-13, ADR5-DES-10 | §4.0 rows for I15, I20, I21; I19 split; I13 at signing; input assembly test; `maps.json`, `keyed.json`; preview in M3.5 |
+| ADR5-SEC-1, ADR5-DES-7 | D12 version policy (L31), I29 |
+| ADR5-SEC-6, ADR5-DES-4 | D12/D13 minimal closure, dependency verification, SNAPSHOT guard; I9 and I16 reworded; I16 test scoped |
+| ADR5-SEC-7 | §0 Trust, L32 |
+| ADR5-SEC-8 | D11 steps 2–3 (Java 25 `release`, `Class-Path` refused, atomic creation, no reuse, deletion) |
+| ADR5-SEC-9, ADR5-DES-12 | D13 (`[]` + one terminator; Windows environment; vkey-only imports); D11 (`ParentEnvironmentType.NONE`, no thread dump; JOUST version from the runtime jar); D16 default for other codes; D18 `Redirect.NEVER`; snapshot size and cleanup in §5 |
+| ADR5-DES-8 | D14b |
+| ADR5-DES-9 | D11 serial calls and the overlap rule |
+| ADR5-DES-11 | D15 tool window from built descriptions; D11 step 5 version from the runtime jar |
+
+### Review round 2 (head `c6b1a33`) and where r3 answers it
+
+| Finding | Change in r3 |
+|---|---|
+| ADR5-CDX-2, ADR5-SEC-11, ADR5-DES-15 | D14 chain identity without the node configuration; D11 atomic admission (spending, collateral and reference inputs; entry and mark under one lock); D17 directory sync; I31 |
+| ADR5-CDX-3 | I25 aligned with D17 (the mark waits only after lost history); unreadable mark; Forget this chain only after a different identity, never on public chains |
+| ADR5-CDX-5, ADR5-DES-13, ADR5-SEC-12 | D13 verifiers resolved from the `julc-state-verifier` jar that holds their classes; collision refused; I24 test |
+| ADR5-SEC-13, ADR5-DES-12 (hash) | D13 exact hash recipe (tag ‖ `cborHex` unwrapped once), checked against F38's `5de2e73f…` |
+| ADR5-CDX-6, ADR5-SEC-10 | D14: a lower tip is a transient read or a rollback, never a new chain; unexplained rewinds fence and reconcile; recreation only on a different block at height 1; L34 |
+| ADR5-CDX-8 | M3c future-start submission test; `orderedReads` dropped |
+| ADR5-CDX-14, ADR5-DES-14, ADR5-SEC-14 (version) | D11 step 5 reads `RuntimeVersion` from bytecode; D12 reviewed set by jar SHA-256s, cross-checked with `versions.engine.joust`; npm sources; I29 tests |
+| ADR5-CDX-15 | D11: orderly stop vs violation (no frame after a violation; bounded EOF wait) |
+| ADR5-CDX-16 | D17 state separate from events and fences; I30 tests for rollbacks |
+| ADR5-CDX-17 | D18 page accumulation under the remaining budget and one deadline |
+| ADR5-DES-12, ADR5-SEC-14 (rest) | D11 overlap → `discarded`, reference inputs; D13 one runner on every OS, collateral witnesses; D17 chain registry, approvals removed; I21 test; `StakedVault` named; measurements |
+
+### Review round 3 (head `907cb56`) and where r4 answers it
+
+Security approved round 3; its P2 and P3 items are folded in here.
+
+| Finding | Change in r4 |
+|---|---|
+| ADR5-CDX-3, ADR5-SEC-15, ADR5-DES-18 | D17 chain record (mark plus the module journals it covers); a lost mark gets a derived bound from the hard ceilings, waited out with no user confirmation; everything-lost residual stated; L35 |
+| ADR5-CDX-6, ADR5-DES-17 | D14 fork reconciliation under one identity, per entry by `txHash`; "persistent" defined; recreation only on block 1; I31 tests |
+| ADR5-CDX-14, ADR5-SEC-16 | D12: no other launch entry may hold reviewed packages' classes; `julc-state-serve` added; I29 test |
+| ADR5-CDX-18, ADR5-DES-16 | M3.3b quorum exit on IntelliAda's `HostCouncil` fixture |
+| ADR5-CDX-19 | D11 one live owner per chain and module; I33 |
+| ADR5-CDX-20 | D17 settlement replies checked against IntelliAda's derived state; I32 |
+| ADR5-CDX-21, ADR5-SEC-17 | D11 admission over every live journal entry and pending publication components; M3c future-start wording |
+| ADR5-DES-18 (rest) | §7 order; D14 "waiting for the devnet's first block" |
+
+### Review round 4 (head `1beb938`) and where r5 answers it
+
+Security and design approved round 4; their non-blocking items are folded in where cheap.
+
+| Finding | Change in r5 |
+|---|---|
+| ADR5-CDX-3, ADR5-SEC-18, ADR5-DES-21 (bound) | D17: the registry keeps the highest tip and `now` per chain; the lost-mark base is the highest of those, surviving journals and the tip at detection; the derived mark is persisted before anything lifts; both files unreadable keeps the chain fenced |
+| ADR5-CDX-6, ADR5-DES-21 (final re-inclusion) | D14: every persistent lower tip or fork is reconciled as a rewind (`reset` with `rewound`, restore from re-read status, depth recomputed) |
+| ADR5-CDX-22 | M3c: future-start attempts are signed at `validFrom`; once signed or exported they stay journaled until settled |
+| ADR5-CDX-14 (non-blocking) | D11 step 4: read-only start when the anchors cannot be derived under the reviewed set |
+| ADR5-CDX-18, ADR5-DES-19 (non-blocking) | M3.3b: the `HostCouncil` fixture repackaged outside `org.julclang.state` |
+| ADR5-DES-20 (non-blocking) | D17: expected state from the highest tip given to the host; first `confirmed` carries the inclusion slot; polling cadence |
+| ADR5-DES-21 (api) | D12: `julc-state-api` pinned and its package covered |
+
+### Review round 5 (head `11a171d`) and where r6 answers it
+
+Security and design approved round 5.
+
+| Finding | Change in r6 |
+|---|---|
+| ADR5-CDX-3, ADR5-SEC-19 | D17: no override for an unknown bound; persisted recovery fence beside any replacement mark; public chains derive a k-block-margin bound, devnets stay fenced until recreated; L35 |
+| ADR5-CDX-6 | D14, D15, D17, I17: reconciliation restarts the host with `restoring:true` (no live `reset` with `rewound`), so a moved inclusion restores at its new slot |
+| ADR5-CDX-23 | D17: settlement predicted by replaying every tip given to the host in order; I32 test sequence |
+| ADR5-CDX-24 | D17: one registry file per chain, under that chain's lock |
+| ADR5-DES-22 (non-blocking) | D14: only forks touching journal inclusions trigger reconciliation |
+
+### Review round 6 (head `f4b7763`) and where r7 answers it
+
+Security and design approved round 6.
+
+| Finding | Change in r7 |
+|---|---|
+| ADR5-CDX-3 | D17: with the registry entry and record both lost, no slot bound exists; the chain stays fenced until the files are restored or a devnet is recreated (supersedes r6's k/f margin, ADR5-SEC-19); L35 |
+| ADR5-CDX-23 | D17: only tips the host accepted advance the expected state; uncertain tips go to an upper copy; I32 failed-read sequence |
+| ADR5-CDX-25 | D17: inclusions reported first, ascending, each at its slot, then the current tip; no forward call while one is unreported; I32 two-body sequence |
+| ADR5-SEC-20 (non-blocking) | D14: reconciliation also triggers for an expired handed-out body a rewind revalidates, and for a lower tip more than 900 slots below the last `now`; I31 tests |
+| ADR5-DES-23 (non-blocking) | noted for M3.3b: every live host on the chain is restarted under the chain's fence, and `registered` evidence is re-sent after a restart |
+
+### Review round 7 (head `d5acf70`) and where r8 answers it
+
+Security and design approved round 7.
+
+| Finding | Change in r8 |
+|---|---|
+| ADR5-CDX-3 | D17: a restored backup no longer lifts the both-lost fence (its freshness cannot be shown); only a recreated devnet lifts it; L35; I25 stale-backup test |
+| ADR5-CDX-23 | D17: the tips the host accepts, per kind and outcome, as JOUST's `Reads` does; the upper copy only for answers written during a cancellation or timeout; I32 cases |
+| ADR5-CDX-25 | D17: a reverse read inside a call that would expire a landed body answers `failed` and the inclusion is reported first; I32 case |
+| ADR5-CDX-26 (non-blocking) | D15: slot and duplicate-registration evidence kept, re-sent to fresh hosts, dropped by rewinds |
+| ADR5-DES-24 (non-blocking) | D17: deleting the surviving journals by hand is an accepted residual |
+
+### Review round 8 (head `26ee03e`) and where r9 answers it
+
+Security and design approved round 8.
+
+| Finding | Change in r9 |
+|---|---|
+| ADR5-CDX-23, ADR5-SEC-21 | D17: a read tip applies only after the host accepted the whole read in a call that completed without a read-related error; partial or rejected answers go to the upper copy; the journal always keeps the less advanced state; I32 cases |
+| ADR5-CDX-26 (non-blocking) | D15: slot registration evidence re-read by `txHash` before it is re-sent |
+
+## Revision history
+
+- **d1** (2026-11-19): moved from ADR-004 r2's Part C; advisor changes L14 and L17.
+- **d2** (2026-11-19): carries round 2 of PR #9 (CDX-20, CDX-2 note, SEC-13).
+- **r1** (2026-11-25): amended to JOUST dev-host protocol 1 at `01bad1f7` (G3.1). D11's launch spec, snapshot, digest
+  and in-memory anchors; D11a mapped to the protocol; D13 rewritten around the protocol's rules run by the bundled
+  reference checker (L24), with splicing for signatures; D14 chain identity and clock; D15 flow through
+  `prerequisites`/`publish`; D16 by kind/code; new D17 (journal) and D18 (reads); I16 amended (L25); I25–I28; G3.1 met
+  for development, G3.2 replaced; M3 split into seven parts (L27); facts F38–F44; decisions L23–L30. Status Proposed.
+- **r2** (2026-11-25, responds to review round 1 of `73969bc`): §0 trust boundary and provider trust (L32, L33); D11
+  launch hardening, serial calls, orderly stop; D12 version policy (L31); D13 stdin checker, anchor derivation and the
+  deployment check, co-signers and complete signers, vkey-only imports; D14 clock and chain identity; new D14b (was
+  L30); D15 tool window and registration evidence; D16 default; D17 rewritten (store, lock, before-signing persistence,
+  settlement without discarding handed-out bodies, restore, lost history); D18 paging; I9, I16, I23–I27 reworded; I29,
+  I30 new; §4.0 and M3 parts revised; §10 maps every round-1 finding.
+- **r3** (2026-11-25, responds to review round 2 of `c6b1a33`): chain identity without the node configuration and
+  without recreation on a lower tip (D14, L34, I31); atomic admission across hosts (D11); verifier anchors from the
+  verifier jar and the exact hash recipe (D13); the version policy by artifact hashes and `RuntimeVersion` (D11, D12,
+  L31); orderly stop vs violation (D11); journal state vs events, chain registry, lost-history rules (D17); bounded page
+  accumulation (D18); I25 aligned; M3c future-start test; §10 round-2 table.
+- **r4** (2026-11-25, responds to review round 3 of `907cb56`; security approved it): the chain record and lost-mark
+  bound (D17, L35); fork reconciliation per entry (D14); effective-class rule for the reviewed artifacts (D12); one live
+  owner and admission over every journal entry and pending publication (D11); settlement replies checked (D17); the
+  `HostCouncil` quorum fixture (M3.3b); I32, I33.
+- **r5** (2026-11-25, responds to review round 4 of `1beb938`; security and design approved it): lost-mark base from the
+  registry's highest tip and `now` (D17, L35); forks and lower tips reconciled as rewinds (D14, I31); future-start
+  attempts signed at `validFrom` (M3c); read-only start without reviewed anchors (D11); `julc-state-api` pinned (D12);
+  settlement tips and cadence (D17); the `HostCouncil` fixture package (M3.3b).
+- **r6** (2026-11-25, responds to review round 5 of `11a171d`; security and design approved it): reconciliation by
+  restarting the host (D14, D17, I17); settlement replayed in tip order (D17, I32); persisted recovery fences and no
+  override for an unknown bound, k-block margin on public chains (D17, L35); a registry file per chain (D17).
+- **r7** (2026-11-25, responds to review round 6 of `f4b7763`; security and design approved it): settlement advanced only
+  by tips the host accepted, inclusions reported first in slot order (D17, I32); no slot bound after losing both the
+  registry entry and the record, so the chain stays fenced (D17, L35); wider reconciliation trigger (D14, I31).
+- **r8** (2026-11-25, responds to review round 7 of `d5acf70`; security and design approved it): accepted tips per read
+  kind and outcome, and reads inside a call that cannot overtake a landed body (D17, I32); the both-lost fence lifts only
+  for a recreated devnet (D17, L35); registration evidence across restarts (D15); the manual-deletion residual (D17).
+- **r9** (2026-11-25, responds to review round 8 of `26ee03e`; security and design approved it): a read's tip advances the
+  expected settlement state only once the host accepted the whole read in a completed call; the journal keeps the less
+  advanced state (D17, I32); registration evidence re-read before replay (D15).
+- **r10** (2026-11-26): §12 implementation refinements E1–E6 from M3.1a (#29) and M3.1b (#31); L36 (delegated).
+- **r11** (2026-11-26): §12 E1 states its no-revert assumption; E1a (forward-only chain points). From M3.1b round 2.
+- **r12** (2026-11-26): §12 E1a continuations; E7 and L37 (the checker lock, delegated). From M3.1b round 4 and M3.3a.
+- **r13** (2026-11-26): §12 E8 and L38 (delegated). From M3.2 round 1.
+- **r14** (2026-11-26): §12 E8a and L39 (delegated). From M3.2 round 2.
+- **r15** (2026-11-26): §12 E8a wording (the hidden legacy copy, repair, watch-only entries, forSession). From M3.2 round 3.
+- **r16** (2026-11-26): §12 E9, anchor and checker rules from M3.3a round 1.
+- **r17** (2026-11-26): §12 E9 from M3.3a round 2 (read-only on unanchored contracts, checker I/O wording, I9).
+- **r18** (2026-11-26): §12 E9 from M3.3a round 3 (catalog facts and status, case-insensitive directories, DES-13 conditions).
+- **r19** (2026-11-26): §12 E9 from M3.3a round 4 (case-insensitive directory anchors, host-compatible resource reading).
+- **r20** (2026-11-26): §12 E9 from M3.3a round 5 (case folding only where the snapshot's file system ignores case; blueprint decoding; pre-start JDK check).
+- **r21** (2026-11-26): §12 E9 from M3.3a round 6 (directory names resolved by the snapshot's file system; multi-release rules; DES-23 and the CDX-60 residual recorded).
+- **r22** (2026-11-26): §12 E9 from M3.3a round 7 (physical same-name count; ambiguous Multi-Release is read-only; class-only package rule).
+- **r23** (2026-11-26): §12 E9 from M3.3a round 8 (copied names verified; literal class suffix; package-info).
+- **r24** (2026-11-26): §12 E9 — M3.3a approved by all three reviewers at `30cc72b`; M33A-CDX-70/71 deferred to the start of M3.3b.
+- **r25** (2026-11-27): §12 E10 and L40 (delegated): M3.3b in three parts.
+- **r26** (2026-11-27): §12 E10 — M3.3b1 as built (store layout, staleness generation, retention, settlement details).
+- **r27** (2026-11-27): §12 E10 — M3.3b1 round 1 (one classification, per-module generations and rewinds, settlement refinements).
+- **r28** (2026-11-27): §12 E10 — M3.3b1 round 2 (revisions per write, rewind ids, offline rewinds, discard limits).
+- **r29** (2026-11-27): §12 E10 — M3.3b1 round 3 (generation on every write; serialized handouts; `now()` re-read).
+- **r30** (2026-11-27): §12 E10 — M3.3b1 round 4.
+- **r31** (2026-11-27): §12 E10 — M3.3b1 round 5.
+- **r32** (2026-11-27): §12 E10 — M3.3b1 round 6 (chain rewinds only from chain evidence).
+- **r33** (2026-11-27): §12 E10 — M3.3b1 round 7 (one overlap rule; rewind evidence).
+- **r34** (2026-11-27): §12 E10 — the overlap rule's cost on public networks, and an M3.5 item (DES-18).
+- **r35** (2026-11-27): §12 E11 and L41 (delegated): the journal's fault model and the review stopping rule.
+- **r36** (2026-11-27): D17 and §12 E10/E11 — the journal store moves to a per-user directory (M33B1-DES-20, -SEC-12).
+- **r37** (2026-11-27): D15 persistence and §5 Data per user (M33B1-DES-21); E10 Files: the store's parent directory is checked (M33B1-CDX-80, -SEC-13).
+- **r38** (2026-11-27): E10 Files: a loose parent of the user's is tightened; ACL file systems; an unsaved rewind is held in memory (M33B1-DES-22, -CDX-84, -CDX-85).
+- **r39** (2026-11-27): E10 Files: ACL identities; the unsaved rewind as a whole record checked under the lock; empty modules observe fences (M33B1-CDX-87..94, -DES-24, -SEC-14).
+- **r40** (2026-11-27): E10 Files: reads checked on ACL file systems; null DACLs; the rewind count read on every forward call (M33B1-CDX-95..100).
+- **r41** (2026-11-27): E11 and L42 (delegated): Windows descriptor completeness out of model, a gate for M3.3b2; E10: links and junctions refused (M33B1-CDX-101..105).
+- **r42** (2026-11-27): E11/L42: M3.3b2's gate is one path, a body built in the session bound to its build hash (M33B1-DES-25).
+- **r43** (2026-11-27): E11 and L43 (delegated): reachability bounds M3.3b1's blocking set; #38 gates M3.3b2.
+- **r44** (2026-11-27): E11/L43: no release before M3.3b2 is a gate; #38's review scope (M33B1-SEC-16).
+- **r45** (2026-11-27): §12 E12 and L44 (the maintainer's decision): the journal simplified for devnets and test networks.
+- **r46** (2026-11-28): §12 E13 and L45: M3.3b2 as built (signing, submission, Deploy); #38's concurrency model and its deferred findings.
+- **r47** (2026-11-28): §12 E14 and L46: M3.3b3 as built (resending, the review modal, Deploy and Call, History); M3.3b4 holds the remaining contract exits.
+- **r48** (2026-11-28): §12 E15 and L47: M3.3b4 as built (registration evidence, #44, the rest of the M3.3b exit on DevKit).
+- **r49** (2026-11-29): §12 E16 and L48: M3.4 split; M3.4a as built (#46, faucet, gutter icons, recorded instances).
