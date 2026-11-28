@@ -129,8 +129,12 @@ public class JoustArchitectureTest {
                                 && !own(rel, "joust/journal/Settlement") && !own(rel, "joust/journal/ChainJournal"));
                     if (deferred) bad.add(rel + " calls " + m);
                     // M3.3b2: the session's own signing flow (submit, deploy) admits, hands out and builds; nothing else in
-                    // production does, and nothing reaches submit or deploy until M3.3b3 wires the panel's write path.
+                    // production does. M3.3b3 (#38, L43) wires the panel's write path: the run panel, and only it, reaches
+                    // submit and deploy; the signer, node submission and signing keys stay the session's.
                     boolean session = own(rel, "joust/run/JoustRunSession");
+                    boolean panelWrite = own(rel, "joust/run/JoustRunPanel")
+                            && (m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.submit")
+                                || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunSession.deploy"));
                     boolean sessionOnly = m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.admit")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.handedOut")
                             || m.equals("com/bloxbean/intelliada/idea/joust/run/JoustRunJournal.nodeRefused")
@@ -140,7 +144,7 @@ public class JoustArchitectureTest {
                             || m.equals("com/bloxbean/intelliada/idea/joust/sign/JoustSigner.sign")
                             || m.equals("com/bloxbean/intelliada/idea/joust/host/chain/BlockfrostApi.submit")
                             || m.equals("com/bloxbean/intelliada/idea/joust/accounts/JoustAccounts.signingKey");
-                    if (admitOutsideTheSession || (sessionOnly && !session) || (signing && !session)) bad.add(rel + " calls " + m);
+                    if (admitOutsideTheSession || (sessionOnly && !session) || (signing && !session && !panelWrite)) bad.add(rel + " calls " + m);
                 }
             }
         }

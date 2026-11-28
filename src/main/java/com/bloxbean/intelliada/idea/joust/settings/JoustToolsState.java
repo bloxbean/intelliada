@@ -39,6 +39,10 @@ public final class JoustToolsState implements PersistentStateComponent<JoustTool
         public long joustCliModified;
         public String joustCliSha256;
         public String joustCliVersion;
+        /** ADR-005 D13: show the review modal before signing a devnet transaction (off by default on devnets). */
+        public boolean confirmDevnetTransactions = false;
+        /** ADR-005 D14b: the largest fee IntelliAda signs, in lovelace (also the checker's {@code maxFee}). */
+        public long maxFeeLovelace = 5_000_000;
     }
 
     private Data data = new Data();

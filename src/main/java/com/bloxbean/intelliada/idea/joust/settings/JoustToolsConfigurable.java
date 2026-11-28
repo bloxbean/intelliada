@@ -44,6 +44,8 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
     private TextFieldWithBrowseButton cliField;
     private JBLabel cliStatus;
     private JBCheckBox buildOnSave;
+    private JBCheckBox confirmDevnet;
+    private com.intellij.ui.components.JBTextField maxFeeAda;
     private JBLabel status;
     private JPanel panel;
     /** Set by Validate Node Again or a confirmed Detect: Apply validates Node even if its path is unchanged (M1-CDX-14). */
@@ -85,6 +87,8 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         buildOnSave.setToolTipText("Available once joust-lsp can pin a project's compiler (ADR-004 D5). Today the language "
                 + "server always analyses with its own bundled compiler.");
         status = new JBLabel();
+        confirmDevnet = new JBCheckBox("Confirm every devnet transaction (show the review before signing)");
+        maxFeeAda = new com.intellij.ui.components.JBTextField(8);
 
         JPanel nodeRow = new JPanel(new java.awt.BorderLayout(4, 0));
         nodeRow.add(nodeField, java.awt.BorderLayout.CENTER);
@@ -113,6 +117,10 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
                         + " once to check it.</html>"))
                 .addLabeledComponent("joust (native CLI):", cliRow)
                 .addComponent(cliStatus)
+                .addSeparator()
+                .addComponent(new JBLabel("JOUST Run: deploying and calling contracts"))
+                .addComponent(confirmDevnet)
+                .addLabeledComponent("Largest fee to sign (ADA):", maxFeeAda)
                 .addComponentFillVertically(new JPanel(), 0)
                 .getPanel();
         reset();
@@ -128,7 +136,26 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
     @Override
     public boolean isModified() {
         JoustToolsState.Data d = JoustToolsState.getInstance().getState();
-        return toolsModified(d) || cliModified();
+        return toolsModified(d) || cliModified() || runModified(d);
+    }
+
+    private boolean runModified(JoustToolsState.Data d) {
+        return confirmDevnet.isSelected() != d.confirmDevnetTransactions || !Objects.equals(text(maxFeeAda), ada(d.maxFeeLovelace));
+    }
+
+    static String ada(long lovelace) {
+        return java.math.BigDecimal.valueOf(lovelace, 6).stripTrailingZeros().toPlainString();
+    }
+
+    /** ADA with at most 6 decimals, more than 0 and at most 1000 (a devnet or test network fee). */
+    static long lovelace(String ada) throws ConfigurationException {
+        try {
+            java.math.BigDecimal v = new java.math.BigDecimal(ada.strip());
+            if (v.scale() > 6 || v.signum() <= 0 || v.compareTo(java.math.BigDecimal.valueOf(1000)) > 0) throw new NumberFormatException();
+            return v.movePointRight(6).longValueExact();
+        } catch (RuntimeException e) {
+            throw new ConfigurationException("The largest fee must be an amount of ADA above 0 and at most 1000.");
+        }
     }
 
     private boolean toolsModified(JoustToolsState.Data d) {
@@ -161,9 +188,12 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         JoustToolsState state = JoustToolsState.getInstance();
         boolean toolsChanged = toolsModified(state.getState());
         boolean cliChanged = cliModified();
+        long maxFee = lovelace(text(maxFeeAda));   // validated before anything is applied
         // D9: the native joust is validated first, so a refusal leaves every setting as it was.
         String cli = text(cliField);
         ValidatedCli vc = cliChanged && !cli.isEmpty() ? validateCli(cli) : null;
+        state.getState().confirmDevnetTransactions = confirmDevnet.isSelected();
+        state.getState().maxFeeLovelace = maxFee;
         if (toolsChanged) applyTools(state);
         if (cliChanged) {
             state.getState().joustCliPath = cli;
@@ -203,6 +233,8 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
         lspField.setText(nz(d.joustLspPath));
         buildOnSave.setSelected(d.buildOnSave);
         cliField.setText(nz(d.joustCliPath));
+        confirmDevnet.setSelected(d.confirmDevnetTransactions);
+        maxFeeAda.setText(ada(d.maxFeeLovelace));
         if (JoustToolsState.getInstance().validatedJoustCli() != null) {
             cliStatus.setText(PlainText.html("Validated: joust " + nz(d.joustCliVersion) + " at " + nz(d.joustCliRealPath) + "."));
         } else {
@@ -386,6 +418,10 @@ public final class JoustToolsConfigurable implements SearchableConfigurable {
     private static Path userHome() {
         String h = System.getProperty("user.home");
         return h == null ? null : Path.of(h);
+    }
+
+    private static String text(javax.swing.text.JTextComponent f) {
+        return f.getText() == null ? "" : f.getText().strip();
     }
 
     private static String text(TextFieldWithBrowseButton f) {

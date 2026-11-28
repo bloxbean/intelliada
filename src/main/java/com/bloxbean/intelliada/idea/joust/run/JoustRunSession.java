@@ -645,8 +645,31 @@ public final class JoustRunSession {
     /** Tests: the checker to run instead of the plugin's bundled one (a test JVM is not the IDE's JBR 25). */
     static volatile com.bloxbean.intelliada.idea.joust.verifier.@Nullable JoustChecker checkerForTests;
 
-    /** The fee IntelliAda signs at most on a devnet or test network (D14b's user maximum; a setting comes with M3.3b3). */
+    /** The default largest fee IntelliAda signs (D14b); the user's setting replaces it. */
     public static final long MAX_FEE = 5_000_000;
+
+    /** D14b: the user's largest fee, in lovelace. */
+    static long maxFee() {
+        try {
+            long v = com.bloxbean.intelliada.idea.joust.settings.JoustToolsState.getInstance().getState().maxFeeLovelace;
+            return v > 0 ? v : MAX_FEE;
+        } catch (RuntimeException noApplication) {
+            return MAX_FEE;
+        }
+    }
+
+    /** The review modal's decision (D13): true signs and submits; false declines (the body is discarded). */
+    @FunctionalInterface
+    public interface Reviewer {
+        boolean approve(com.bloxbean.intelliada.idea.joust.review.JoustReview.Summary summary) throws Exception;
+    }
+
+    private volatile @Nullable Reviewer reviewer;
+
+    /** The panel's review (M3.3b3): consulted for every transaction this session signs, after the checker accepts it. */
+    public void reviewer(@Nullable Reviewer r) {
+        reviewer = r;
+    }
 
     /** A submitted transaction: its id, the host's reservation, and the instance it creates or acts on (or null). */
     public record Submitted(String txHash, String reservation, @Nullable String instance) {
@@ -682,7 +705,7 @@ public final class JoustRunSession {
                 var anchors = anchors(contract);
                 var node = new com.bloxbean.intelliada.idea.joust.host.chain.NodeChain(binding.api().copy(), binding.identity().networkId());
                 ObjectNode input = com.bloxbean.intelliada.idea.joust.verifier.JoustCheckInput.assemble(method, request, anchors,
-                        binding.identity().networkId(), MAX_FEE, result, node);
+                        binding.identity().networkId(), maxFee(), result, node);
                 var checker = checkerForTests != null ? checkerForTests : com.bloxbean.intelliada.idea.joust.verifier.JoustChecker.bundled();
                 var verdict = checker.check(input);
                 if (verdict instanceof com.bloxbean.intelliada.idea.joust.verifier.JoustChecker.Refused r) {
@@ -696,6 +719,19 @@ public final class JoustRunSession {
                 java.util.List<com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.SigningKey> keys = new java.util.ArrayList<>();
                 keys.add(accounts.signingKey(callerId, binding.identity().networkClass()));
                 for (String c : coSignerIds) keys.add(accounts.signingKey(c, binding.identity().networkClass()));
+                Reviewer review = reviewer;
+                if (review != null) {
+                    java.util.Set<String> scripts = new java.util.HashSet<>(java.util.List.of(anchors.contract().hash(), anchors.outputVerifier().hash()));
+                    if (anchors.mapVerifier() != null) scripts.add(anchors.mapVerifier().hash());
+                    java.util.Map<String, String> names = new java.util.HashMap<>();
+                    names.put(keys.get(0).fingerprint(), callerId);
+                    for (int i = 0; i < coSignerIds.size(); i++) names.putIfAbsent(keys.get(i + 1).fingerprint(), coSignerIds.get(i));
+                    String callerAddress = method.equals("publish") ? params.path("address").asText("")
+                            : params.path("call").path("address").asText("");
+                    var summary = com.bloxbean.intelliada.idea.joust.review.JoustReview.of(label(method, params), cbor, callerAddress,
+                            scripts, names, required, node::output);
+                    if (!review.approve(summary)) throw new NetworkIdentity.Refused("declined in the review");
+                }
                 String signed = com.bloxbean.intelliada.idea.joust.sign.JoustSigner.sign(cbor, keys, required);
                 // The signed transaction is journaled (D17: "as handed out"), so it can be sent again (#42); its id is the body's.
                 var entry = new com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry(reservation, body.txHash(), signed,
@@ -920,6 +956,21 @@ public final class JoustRunSession {
         } catch (Exception failed) {
             throw new DeployStopped(failed.getMessage() == null ? failed.getClass().getSimpleName() : failed.getMessage(), done, failed);
         }
+    }
+
+    /** The session history (L7): this module's journal entries on this chain, newest last; empty without a journal. */
+    public java.util.List<com.bloxbean.intelliada.idea.joust.journal.JournalStore.Entry> history() throws Exception {
+        return journal == null ? java.util.List.of() : journal.journal().entries();
+    }
+
+    /** The contract's {@code x-joust}, as IntelliAda read it from the snapshot (I26), for the panel's forms. */
+    public JsonNode callsOf(String contract) throws Exception {
+        return anchors(contract).description().path("x-joust");
+    }
+
+    /** The accounts that may sign on this session's network (D13a). */
+    public java.util.List<com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.Entry> signers() {
+        return com.bloxbean.intelliada.idea.joust.accounts.JoustAccounts.getInstance().forSession(binding.identity());
     }
 
     public JsonNode prerequisites(String contract) throws Exception {
