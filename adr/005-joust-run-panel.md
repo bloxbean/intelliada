@@ -874,7 +874,7 @@ invariant.
   - **M3.3b2, the signer and the Deploy sequence (headless).** The splice signer with co-signers (I11), the at-signing
     I13 check, I26, M33A-DES-13's signing-path conditions and DES-23's injected anchors source; submission (I30);
     Deploy's order (prerequisites, each publication settled before the next, then `init`) and registration evidence
-    (D15). Exit: a tool-gated Counter deploy and call on DevKit, and a restart between submit and settlement.
+    (D15; deferred to the first contract that needs it, E13). Exit: a tool-gated Counter deploy and call on DevKit, and a restart between submit and settlement.
   - **M3.3b3, the panel's write path.** The review modal, Deploy and call UI, the session history; the end-to-end exits
     of the M3.3b row on DevKit and Yano; I10's canary, I15 on the new surfaces, I21.
   - **Until M3.3b3, no production action, service or tool-window path reaches admission or the signer;** a test checks
@@ -906,8 +906,8 @@ invariant.
     - **Session.** A new host's history is classified before launch, so `initialize` carries `restoring`. The module's
       host lock (I33 across IDE processes) is held for the session. The host is restored after its catalog check, and
       building is blocked while any fence, open restore or deep rollback stands.
-    - **Registration evidence** (D15) is stored with the record. It is sent to hosts in M3.3b2, with its `txHash`
-      re-read (ADR5-CDX-26).
+    - **Registration evidence** (D15) is stored with the record. It is sent to hosts once a contract needs it (E13),
+      with its `txHash` re-read (ADR5-CDX-26).
     - **Bodies are read by `TxCbor`**, IntelliAda's own structural reader. It agrees with the host's hash, validity,
       inputs, collateral, reference inputs, signers and publications on every kit vector without a violation (62).
   - **M3.3b1 round 1 (#34).**
@@ -1158,6 +1158,52 @@ invariant.
   - **Superseded follow-ups:** #35 (final entries no longer hold inputs), #37 (no ACL checks), #39 (opens make no
     provider reads under the monitor, which is bounded). #38 stays for M3.3b2's build, admission and handout paths.
 
+- **E13. M3.3b2 as built: signing, submission and Deploy (L45; closes #38).**
+  - **One transaction, in order, under the session's call lock** (`JoustRunSession.submit`):
+    1. signing must be possible: the signing gate passed (`signingDisabled()` is null) and the journal is open (a
+       read-only host never signs);
+    2. the host builds it (`prepare` or `publish`, after the deployment check); the exact parameters sent, `now`
+       included, are kept as the checker's request;
+    3. JOUST's reference checker accepts it (D13): `JoustCheckInput.assemble` with the contract's anchors (DES-23),
+       the network id, a maximum fee of 5 ADA (a setting comes with M3.3b3) and inputs IntelliAda reads from the
+       bound node itself (`NodeChain`: outputs, reference scripts at an address, registration, protocol parameters),
+       never the host's answers;
+    4. the required keys are `required_signers` plus the payment key of every spending and collateral input held at a
+       key address; an input the node does not know refuses. The caller's and the chosen co-signers' keys (I11) sign the
+       Blake2b-256 of the body bytes as received; each signature is verified, a missing key refuses, and the witness set
+       is spliced (key 0 added, the received entries kept byte for byte); the id must not change;
+    5. the entry is journaled `approvalPending` (I25), only for a body this host built in this session with the same
+       hash (L42), then recorded `submitted` **before** the POST, so a crash after sending keeps its inputs held (I30);
+    6. it is sent through the bound node (`/tx/submit`). A 4xx means the node did not take it: `Settlement.nodeRefused`
+       releases it, only for a body submitted from this session that a fresh pass still shows prepared (not on chain).
+       A 5xx, a timeout or an interrupt is an unknown outcome: the body stays submitted and settles from the chain, or
+       expires. The id the node answers must be the body's.
+
+    Any refusal before step 5 discards the body (it was never handed out). Keys stay in the IDE process (I10);
+    `SigningKey` never prints them.
+  - **Deploy** (`JoustRunSession.deploy`, D15's order): each outstanding prerequisite is published and must land
+    (shallow or confirmed, read by settlement passes) before the next; then `init`. A publication that does not land in
+    time stops Deploy. Genesis accounts sign only on a devnet; other accounts only on their own network class.
+  - **Registration evidence is deferred** to the first contract that needs it (D15): the Counter fixture has no staking,
+    so M3.3b2 sends none; the checker still reads registration from the node.
+  - **Concurrency model (#38, item 1).** The lock order is: the session's call lock (`clock`, also taken by the idle
+    settlement timer and `awaitInclusion`'s passes), then `Settlement`'s monitor, then the per-chain journal monitor
+    (`ChainJournal.enter`, bounded at 30 s), then the file write. Build, checker, signing, admission, handout, submission
+    and node refusal all run inside one hold of the call lock, so no pass, build or discard interleaves with a
+    transaction between its build and its handout. `Settlement` keeps two in-memory sets: `builtHere` (built in this
+    session, not yet handed out: discardable, admittable) and `submittedHere` (submitted from this session: releasable
+    only on the node's refusal). A restored body is in neither: it is held until chain evidence or expiry.
+  - **#38's deferred findings.** CDX-120, -126, -132, -137, -138, -142, -143, -144 and -145 concern recovery fences,
+    recovered bounds and the chain record, which E12 removed; they no longer apply. CDX-146 (a refusal reporting a
+    discard that did not happen) is fixed: a failed discard says so. Tests: `JoustSignerPlatformTest` (the splice, co-
+    signers, a missing key, existing vkeys, key printing), `SettlementTest` (node refusal releases only this session's
+    submission; a submitted body is never discarded), `JoustArchitectureTest` (nothing in production reaches
+    `submit`, `deploy`, the signer, the node submission or signing keys until M3.3b3), and
+    `JoustSignDevKitPlatformTest` (the exit: a Counter deployed, an `increment` submitted, the host restarted before it
+    settles, the restored host settles it). The dedicated review is one Fable review (L44).
+  - **Found on DevKit:** Yaci DevKit's `/txs/{hash}` has no `block` field; `ProviderChain` reads the block hash from
+    `/blocks/{height}` when it is absent.
+
 | # | Decision | By | Date | Basis |
 |---|---|---|---|---|
 | L36 | Bind Yaci DevKit only in M3.1b; Yano after its reads exist (E2) | delegated | 2026-11-26 | M31B-DES-4; bloxbean/yano#269 |
@@ -1169,6 +1215,7 @@ invariant.
 | L42 | Windows security-descriptor content the JDK does not expose is out of model (E11). Links, junctions and reparse points are refused. #37 (native validation, exercised by the Windows CI job) must close before M3.3b2 merges, or M3.3b2 refuses signing on non-POSIX stores. The signer signs only bodies built in the session, bound to their build hash (E11) | delegated | 2026-11-27 | two advisors (both: option B with a reparse refusal and a gate on signing); CDX-102/103; Windows cannot be tested here |
 | L43 | M3.3b1 blocks only on code production can reach in it (opening, restore, settlement, views, the store). In-model findings on the build, admission and handout paths, which `JoustArchitectureTest` bars and which are `@ApiStatus.Internal`, go to #38. #38 must close before M3.3b2 merges, with a concurrency model, a test for each finding and a dedicated review. Shared-state findings still block | delegated | 2026-11-27 | two advisors (both: option 1 with safeguards); Codex P1s over 22 rounds, the last ~10 all on these paths; Codex r22: "the build and handout findings concern the headless interfaces used by the later signing and panel milestones" |
 | L44 | The journal is simplified for devnets and test networks (E12): a history and restart aid that never blocks; strict only where signing depends on it. Supersedes the fault-model machinery of E10/E11 for M3.3b1 and the three-reviewer process (one Fable review) | maintainer | 2026-11-27 | the maintainer: "developer's convinience rather than typical security", "testnetwork ada or token doesnt have any value", "only Fable review is enough"; the Fable review of #34 (FAB-1..10, S1..S13) |
+| L45 | M3.3b2 (E13): a body is recorded `submitted` before it is sent and released only on a 4xx from the node; a 5xx, timeout or interrupt keeps it for chain evidence. Registration evidence waits for the first contract that needs it. #38 closes on E13's concurrency model, with CDX-120..145 superseded by E12 | author | 2026-11-28 | E12's rule (strict only where signing depends on it); the restart-between-submit-and-settlement exit on DevKit |
 
 ## 10. Review round 1 (head `73969bc`) and where r2 answers it
 
@@ -1362,3 +1409,4 @@ Security and design approved round 8.
 - **r43** (2026-11-27): E11 and L43 (delegated): reachability bounds M3.3b1's blocking set; #38 gates M3.3b2.
 - **r44** (2026-11-27): E11/L43: no release before M3.3b2 is a gate; #38's review scope (M33B1-SEC-16).
 - **r45** (2026-11-27): §12 E12 and L44 (the maintainer's decision): the journal simplified for devnets and test networks.
+- **r46** (2026-11-28): §12 E13 and L45: M3.3b2 as built (signing, submission, Deploy); #38's concurrency model and its deferred findings.
